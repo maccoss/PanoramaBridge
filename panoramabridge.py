@@ -14,8 +14,8 @@ to WebDAV servers (like Panorama) with comprehensive features:
 - Configurable file extensions and directory structure preservation
 - Progress tracking and comprehensive logging
 
-Author: MacCoss Lab
-License: MIT
+Author: Michael MacCoss - MacCoss Lab, University of Washington
+License: Apache License 2.0
 """
 
 # Standard library imports
