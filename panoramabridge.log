@@ -1686,3 +1686,280 @@
 2025-08-06 11:42:13,851 - __main__ - INFO - MKCOL response: 405 - 
 2025-08-06 11:42:13,852 - __main__ - INFO - Directory already exists: /_webdav/MacCoss/maccoss/@files/test-panoramabridge/testsubfolder
 2025-08-06 11:42:13,858 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:00:53,222 - __main__ - WARNING - Missing connection details
+2025-08-06 12:00:56,205 - __main__ - WARNING - Missing connection details
+2025-08-06 12:01:07,959 - __main__ - INFO - Attempting to connect to WebDAV at: https://panoramaweb.org
+2025-08-06 12:01:07,960 - __main__ - INFO - Testing connection to: https://panoramaweb.org
+2025-08-06 12:01:08,144 - __main__ - INFO - OPTIONS request to https://panoramaweb.org returned: 200
+2025-08-06 12:01:08,145 - __main__ - INFO - Connection successful with provided URL
+2025-08-06 12:01:08,146 - __main__ - INFO - Successfully connected to WebDAV server at: https://panoramaweb.org
+2025-08-06 12:01:09,097 - __main__ - INFO - Credentials saved successfully
+2025-08-06 12:01:09,141 - __main__ - INFO - PROPFIND successful for /_webdav, parsing response...
+2025-08-06 12:01:09,141 - __main__ - INFO - Including item: @files (is_dir: True, size: 0)
+2025-08-06 12:01:09,142 - __main__ - INFO - Including item: ABRF sPRG (is_dir: True, size: 0)
+2025-08-06 12:01:09,142 - __main__ - INFO - Including item: BGI - Shenzhen (is_dir: True, size: 0)
+2025-08-06 12:01:09,142 - __main__ - INFO - Including item: Bereman Lab - NCSU (is_dir: True, size: 0)
+2025-08-06 12:01:09,142 - __main__ - INFO - Including item: CPTAC Assay Portal (is_dir: True, size: 0)
+2025-08-06 12:01:09,143 - __main__ - INFO - Including item: Chorus Testing (is_dir: True, size: 0)
+2025-08-06 12:01:09,143 - __main__ - INFO - Including item: Duke Proteomics Core (is_dir: True, size: 0)
+2025-08-06 12:01:09,143 - __main__ - INFO - Including item: GWU (is_dir: True, size: 0)
+2025-08-06 12:01:09,145 - __main__ - INFO - Including item: Hoofnagle (is_dir: True, size: 0)
+2025-08-06 12:01:09,146 - __main__ - INFO - Including item: ICPC (is_dir: True, size: 0)
+2025-08-06 12:01:09,146 - __main__ - INFO - Including item: ISAS Dortmund - Spatial Metabolomics (is_dir: True, size: 0)
+2025-08-06 12:01:09,147 - __main__ - INFO - Including item: Instruction (is_dir: True, size: 0)
+2025-08-06 12:01:09,147 - __main__ - INFO - Including item: Kueltz Lab - UCDavis (is_dir: True, size: 0)
+2025-08-06 12:01:09,148 - __main__ - INFO - Including item: LINCS (is_dir: True, size: 0)
+2025-08-06 12:01:09,148 - __main__ - INFO - Including item: LINCS-DCIC (is_dir: True, size: 0)
+2025-08-06 12:01:09,148 - __main__ - INFO - Including item: MacCoss (is_dir: True, size: 0)
+2025-08-06 12:01:09,149 - __main__ - INFO - Including item: NCSU - METRIC (is_dir: True, size: 0)
+2025-08-06 12:01:09,149 - __main__ - INFO - Including item: Panorama Protocols (is_dir: True, size: 0)
+2025-08-06 12:01:09,149 - __main__ - INFO - Including item: Panorama Public (is_dir: True, size: 0)
+2025-08-06 12:01:09,150 - __main__ - INFO - Including item: Passport (is_dir: True, size: 0)
+2025-08-06 12:01:09,150 - __main__ - INFO - Including item: Services (is_dir: True, size: 0)
+2025-08-06 12:01:09,150 - __main__ - INFO - Including item: Shared (is_dir: True, size: 0)
+2025-08-06 12:01:09,150 - __main__ - INFO - Including item: Skyline Webinars (is_dir: True, size: 0)
+2025-08-06 12:01:09,151 - __main__ - INFO - Including item: TAMADOR (is_dir: True, size: 0)
+2025-08-06 12:01:09,152 - __main__ - INFO - Including item: TEI-REX (is_dir: True, size: 0)
+2025-08-06 12:01:09,152 - __main__ - INFO - Including item: TPAD2.0 (is_dir: True, size: 0)
+2025-08-06 12:01:09,152 - __main__ - INFO - Including item: UC San Diego - Rifkin Lab (is_dir: True, size: 0)
+2025-08-06 12:01:09,153 - __main__ - INFO - Including item: home (is_dir: True, size: 0)
+2025-08-06 12:01:09,153 - __main__ - INFO - Total items returned: 28
+2025-08-06 12:01:12,231 - __main__ - INFO - PROPFIND successful for /_webdav/MacCoss/, parsing response...
+2025-08-06 12:01:12,233 - __main__ - INFO - Including item: 2024_QC_JPR (is_dir: True, size: 0)
+2025-08-06 12:01:12,234 - __main__ - INFO - Including item: @files (is_dir: True, size: 0)
+2025-08-06 12:01:12,235 - __main__ - INFO - Including item: Aaron (is_dir: True, size: 0)
+2025-08-06 12:01:12,236 - __main__ - INFO - Including item: Anais Gentilhomme (is_dir: True, size: 0)
+2025-08-06 12:01:12,237 - __main__ - INFO - Including item: Batool (is_dir: True, size: 0)
+2025-08-06 12:01:12,238 - __main__ - INFO - Including item: Brain-optimization (is_dir: True, size: 0)
+2025-08-06 12:01:12,238 - __main__ - INFO - Including item: Brian Pratt (is_dir: True, size: 0)
+2025-08-06 12:01:12,241 - __main__ - INFO - Including item: Catherine Sniezek (is_dir: True, size: 0)
+2025-08-06 12:01:12,241 - __main__ - INFO - Including item: ChrisWu (is_dir: True, size: 0)
+2025-08-06 12:01:12,242 - __main__ - INFO - Including item: Collaborations (is_dir: True, size: 0)
+2025-08-06 12:01:12,242 - __main__ - INFO - Including item: Courses (is_dir: True, size: 0)
+2025-08-06 12:01:12,242 - __main__ - INFO - Including item: DOE-LowDose-Radiation (is_dir: True, size: 0)
+2025-08-06 12:01:12,243 - __main__ - INFO - Including item: Deanna (is_dir: True, size: 0)
+2025-08-06 12:01:12,244 - __main__ - INFO - Including item: Dry Ice Log (is_dir: True, size: 0)
+2025-08-06 12:01:12,245 - __main__ - INFO - Including item: Eric (is_dir: True, size: 0)
+2025-08-06 12:01:12,246 - __main__ - INFO - Including item: FASTA and Libraries (is_dir: True, size: 0)
+2025-08-06 12:01:12,246 - __main__ - INFO - Including item: Human AD Project (is_dir: True, size: 0)
+2025-08-06 12:01:12,247 - __main__ - INFO - Including item: Instrument Methods (is_dir: True, size: 0)
+2025-08-06 12:01:12,247 - __main__ - INFO - Including item: Jea (is_dir: True, size: 0)
+2025-08-06 12:01:12,247 - __main__ - INFO - Including item: Kristine_Tsantilas (is_dir: True, size: 0)
+2025-08-06 12:01:12,248 - __main__ - INFO - Including item: Kyle (is_dir: True, size: 0)
+2025-08-06 12:01:12,248 - __main__ - INFO - Including item: LK Sample and Freezer Manager (is_dir: True, size: 0)
+2025-08-06 12:01:12,248 - __main__ - INFO - Including item: Lab Folder Template (is_dir: True, size: 0)
+2025-08-06 12:01:12,249 - __main__ - INFO - Including item: Lab Meetings (is_dir: True, size: 0)
+2025-08-06 12:01:12,249 - __main__ - INFO - Including item: Lab Safety (is_dir: True, size: 0)
+2025-08-06 12:01:12,250 - __main__ - INFO - Including item: MaryGrace (is_dir: True, size: 0)
+2025-08-06 12:01:12,250 - __main__ - INFO - Including item: Mouse-AD (is_dir: True, size: 0)
+2025-08-06 12:01:12,250 - __main__ - INFO - Including item: NickSh (is_dir: True, size: 0)
+2025-08-06 12:01:12,251 - __main__ - INFO - Including item: Notebooks (is_dir: True, size: 0)
+2025-08-06 12:01:12,252 - __main__ - INFO - Including item: PROTEOS (is_dir: True, size: 0)
+2025-08-06 12:01:12,252 - __main__ - INFO - Including item: Past Lab Members (is_dir: True, size: 0)
+2025-08-06 12:01:12,253 - __main__ - INFO - Including item: Production (is_dir: True, size: 0)
+2025-08-06 12:01:12,253 - __main__ - INFO - Including item: Protocols (is_dir: True, size: 0)
+2025-08-06 12:01:12,254 - __main__ - INFO - Including item: Rachel Schauer (is_dir: True, size: 0)
+2025-08-06 12:01:12,254 - __main__ - INFO - Including item: Rebeca Kawahara (is_dir: True, size: 0)
+2025-08-06 12:01:12,254 - __main__ - INFO - Including item: Rich (is_dir: True, size: 0)
+2025-08-06 12:01:12,255 - __main__ - INFO - Including item: RitaCh (is_dir: True, size: 0)
+2025-08-06 12:01:12,255 - __main__ - INFO - Including item: SOPs (is_dir: True, size: 0)
+2025-08-06 12:01:12,255 - __main__ - INFO - Including item: Sample Tracker (is_dir: True, size: 0)
+2025-08-06 12:01:12,255 - __main__ - INFO - Including item: Scott (is_dir: True, size: 0)
+2025-08-06 12:01:12,258 - __main__ - INFO - Including item: System_Suitability (is_dir: True, size: 0)
+2025-08-06 12:01:12,258 - __main__ - INFO - Including item: System_Suitability_Archived (is_dir: True, size: 0)
+2025-08-06 12:01:12,258 - __main__ - INFO - Including item: System_Suitability_Retired (is_dir: True, size: 0)
+2025-08-06 12:01:12,259 - __main__ - INFO - Including item: Template Skyline Documents (is_dir: True, size: 0)
+2025-08-06 12:01:12,259 - __main__ - INFO - Including item: Topograph (is_dir: True, size: 0)
+2025-08-06 12:01:12,259 - __main__ - INFO - Including item: Tsantilas_Public (is_dir: True, size: 0)
+2025-08-06 12:01:12,261 - __main__ - INFO - Including item: VectorImages (is_dir: True, size: 0)
+2025-08-06 12:01:12,261 - __main__ - INFO - Including item: bdconnol (is_dir: True, size: 0)
+2025-08-06 12:01:12,262 - __main__ - INFO - Including item: brendan (is_dir: True, size: 0)
+2025-08-06 12:01:12,263 - __main__ - INFO - Including item: bwen (is_dir: True, size: 0)
+2025-08-06 12:01:12,263 - __main__ - INFO - Including item: chrhsu (is_dir: True, size: 0)
+2025-08-06 12:01:12,264 - __main__ - INFO - Including item: dfaivre (is_dir: True, size: 0)
+2025-08-06 12:01:12,264 - __main__ - INFO - Including item: genn (is_dir: True, size: 0)
+2025-08-06 12:01:12,265 - __main__ - INFO - Including item: maccoss (is_dir: True, size: 0)
+2025-08-06 12:01:12,265 - __main__ - INFO - Including item: prudnick (is_dir: True, size: 0)
+2025-08-06 12:01:12,265 - __main__ - INFO - Including item: software (is_dir: True, size: 0)
+2025-08-06 12:01:12,266 - __main__ - INFO - Including item: vsharma (is_dir: True, size: 0)
+2025-08-06 12:01:12,266 - __main__ - INFO - Total items returned: 57
+2025-08-06 12:01:21,399 - __main__ - INFO - PROPFIND successful for /_webdav/MacCoss/maccoss/, parsing response...
+2025-08-06 12:01:21,400 - __main__ - INFO - Including item: 2023-Eclipse EV Test HPLC Conditions (is_dir: True, size: 0)
+2025-08-06 12:01:21,401 - __main__ - INFO - Including item: 2024-03 Astral HPLC Tests (is_dir: True, size: 0)
+2025-08-06 12:01:21,402 - __main__ - INFO - Including item: 2024-04 Astral EV Test (is_dir: True, size: 0)
+2025-08-06 12:01:21,402 - __main__ - INFO - Including item: 2024-05-ADPD-EV Plasma (is_dir: True, size: 0)
+2025-08-06 12:01:21,403 - __main__ - INFO - Including item: 2024-0503-TASSO-EV (is_dir: True, size: 0)
+2025-08-06 12:01:21,403 - __main__ - INFO - Including item: 2024-06 Astral Normal vs Staggered (is_dir: True, size: 0)
+2025-08-06 12:01:21,403 - __main__ - INFO - Including item: 2024-0609-EV-Tests (is_dir: True, size: 0)
+2025-08-06 12:01:21,404 - __main__ - INFO - Including item: 2024-0610-EV-Tests (is_dir: True, size: 0)
+2025-08-06 12:01:21,405 - __main__ - INFO - Including item: 2024-0621 Tasso EV Experiments (is_dir: True, size: 0)
+2025-08-06 12:01:21,406 - __main__ - INFO - Including item: 2024-6 Cascadia (is_dir: True, size: 0)
+2025-08-06 12:01:21,406 - __main__ - INFO - Including item: 2024-Stellar GPF Search Tests (is_dir: True, size: 0)
+2025-08-06 12:01:21,407 - __main__ - INFO - Including item: 2024-ThermoBremen_New_Astral (is_dir: True, size: 0)
+2025-08-06 12:01:21,407 - __main__ - INFO - Including item: 2025-0130 Astral EV Method Optimization (is_dir: True, size: 0)
+2025-08-06 12:01:21,408 - __main__ - INFO - Including item: 2025-02 skin disk method dev (is_dir: True, size: 0)
+2025-08-06 12:01:21,408 - __main__ - INFO - Including item: 2025-0405-Astral_vs_Actis_Comparison (is_dir: True, size: 0)
+2025-08-06 12:01:21,409 - __main__ - INFO - Including item: 2025-05-Hoof103-Total-EV (is_dir: True, size: 0)
+2025-08-06 12:01:21,409 - __main__ - INFO - Including item: 2025-0627-Hoof103-Total-EV (is_dir: True, size: 0)
+2025-08-06 12:01:21,410 - __main__ - INFO - Including item: 2025-07-Opt5-CSF-Plasma (is_dir: True, size: 0)
+2025-08-06 12:01:21,410 - __main__ - INFO - Including item: 2025-0721-BRCA1-BARD1-Targeted (is_dir: True, size: 0)
+2025-08-06 12:01:21,410 - __main__ - INFO - Including item: 2025-0722-CSF-EV-Opt7 (is_dir: True, size: 0)
+2025-08-06 12:01:21,411 - __main__ - INFO - Including item: 2025-0728-CSF-EV-Opt8 (is_dir: True, size: 0)
+2025-08-06 12:01:21,413 - __main__ - INFO - Including item: 2025-0801-CSF-EV-Opt9 (is_dir: True, size: 0)
+2025-08-06 12:01:21,413 - __main__ - INFO - Including item: @files (is_dir: True, size: 0)
+2025-08-06 12:01:21,414 - __main__ - INFO - Including item: Astral Tests (is_dir: True, size: 0)
+2025-08-06 12:01:21,414 - __main__ - INFO - Including item: Carafe (is_dir: True, size: 0)
+2025-08-06 12:01:21,415 - __main__ - INFO - Including item: Collaborations (is_dir: True, size: 0)
+2025-08-06 12:01:21,415 - __main__ - INFO - Including item: DIANN Testing (is_dir: True, size: 0)
+2025-08-06 12:01:21,415 - __main__ - INFO - Including item: Experiments (is_dir: True, size: 0)
+2025-08-06 12:01:21,416 - __main__ - INFO - Including item: FileTransfer (is_dir: True, size: 0)
+2025-08-06 12:01:21,416 - __main__ - INFO - Including item: NCI Proteomics Data Commons (is_dir: True, size: 0)
+2025-08-06 12:01:21,417 - __main__ - INFO - Including item: Shared_w_Nick (is_dir: True, size: 0)
+2025-08-06 12:01:21,417 - __main__ - INFO - Including item: Shared_w_lab (is_dir: True, size: 0)
+2025-08-06 12:01:21,417 - __main__ - INFO - Including item: Test Reproducibility (is_dir: True, size: 0)
+2025-08-06 12:01:21,417 - __main__ - INFO - Total items returned: 33
+2025-08-06 12:01:24,452 - __main__ - INFO - PROPFIND successful for /_webdav/MacCoss/maccoss/@files/, parsing response...
+2025-08-06 12:01:24,453 - __main__ - INFO - Filtering out: .nocrawl (is_dir: False)
+2025-08-06 12:01:24,455 - __main__ - INFO - Including item: 2010-Slides_CSHL_Course_MethodRefine_MethodRefine_WormUnrefined_2012-11-14_10-20-28 (is_dir: True, size: 0)
+2025-08-06 12:01:24,456 - __main__ - INFO - Including item: 2010-Slides_CSHL_Course_MethodRefine_MethodRefine_WormUnrefined_2012-11-14_10-20-28.log (is_dir: False, size: 767)
+2025-08-06 12:01:24,457 - __main__ - INFO - Including item: 2010-Slides_CSHL_Course_MethodRefine_MethodRefine_WormUnrefined_2012-11-14_10-20-28.zip (is_dir: False, size: 16096474)
+2025-08-06 12:01:24,458 - __main__ - INFO - Including item: Kidney-Glom_2018-10-19_17-15-27 (is_dir: True, size: 0)
+2025-08-06 12:01:24,460 - __main__ - INFO - Including item: Kidney-Glom_2018-10-19_17-15-27.sky.zip (is_dir: False, size: 1048650314)
+2025-08-06 12:01:24,460 - __main__ - INFO - Including item: Kidney-Glom_2018-10-19_17-15-27.sky_2018-10-19_17-18-21.log (is_dir: False, size: 481806)
+2025-08-06 12:01:24,460 - __main__ - INFO - Including item: RawFiles (is_dir: True, size: 0)
+2025-08-06 12:01:24,462 - __main__ - INFO - Including item: WormRefined_2012-11-16_05-43-32 (is_dir: True, size: 0)
+2025-08-06 12:01:24,463 - __main__ - INFO - Including item: WormRefined_2012-11-16_05-43-32.log (is_dir: False, size: 507)
+2025-08-06 12:01:24,464 - __main__ - INFO - Including item: WormRefined_2012-11-16_05-43-32.zip (is_dir: False, size: 1382925)
+2025-08-06 12:01:24,464 - __main__ - INFO - Including item: WormRefined_2012-11-16_06-51-13 (is_dir: True, size: 0)
+2025-08-06 12:01:24,464 - __main__ - INFO - Including item: WormRefined_2012-11-16_06-51-13.log (is_dir: False, size: 507)
+2025-08-06 12:01:24,464 - __main__ - INFO - Including item: WormRefined_2012-11-16_06-51-13.zip (is_dir: False, size: 1380158)
+2025-08-06 12:01:24,465 - __main__ - INFO - Including item: folder_load_2015-07-27_11-39-18.log (is_dir: False, size: 1739)
+2025-08-06 12:01:24,465 - __main__ - INFO - Including item: test-panoramabridge (is_dir: True, size: 0)
+2025-08-06 12:01:24,467 - __main__ - INFO - Total items returned: 15
+2025-08-06 12:01:34,937 - __main__ - INFO - PROPFIND successful for /_webdav/MacCoss/maccoss/@files/, parsing response...
+2025-08-06 12:01:34,938 - __main__ - INFO - Filtering out: .nocrawl (is_dir: False)
+2025-08-06 12:01:34,938 - __main__ - INFO - Including item: 2010-Slides_CSHL_Course_MethodRefine_MethodRefine_WormUnrefined_2012-11-14_10-20-28 (is_dir: True, size: 0)
+2025-08-06 12:01:34,938 - __main__ - INFO - Including item: 2010-Slides_CSHL_Course_MethodRefine_MethodRefine_WormUnrefined_2012-11-14_10-20-28.log (is_dir: False, size: 767)
+2025-08-06 12:01:34,939 - __main__ - INFO - Including item: 2010-Slides_CSHL_Course_MethodRefine_MethodRefine_WormUnrefined_2012-11-14_10-20-28.zip (is_dir: False, size: 16096474)
+2025-08-06 12:01:34,939 - __main__ - INFO - Including item: Kidney-Glom_2018-10-19_17-15-27 (is_dir: True, size: 0)
+2025-08-06 12:01:34,939 - __main__ - INFO - Including item: Kidney-Glom_2018-10-19_17-15-27.sky.zip (is_dir: False, size: 1048650314)
+2025-08-06 12:01:34,940 - __main__ - INFO - Including item: Kidney-Glom_2018-10-19_17-15-27.sky_2018-10-19_17-18-21.log (is_dir: False, size: 481806)
+2025-08-06 12:01:34,940 - __main__ - INFO - Including item: RawFiles (is_dir: True, size: 0)
+2025-08-06 12:01:34,940 - __main__ - INFO - Including item: WormRefined_2012-11-16_05-43-32 (is_dir: True, size: 0)
+2025-08-06 12:01:34,942 - __main__ - INFO - Including item: WormRefined_2012-11-16_05-43-32.log (is_dir: False, size: 507)
+2025-08-06 12:01:34,942 - __main__ - INFO - Including item: WormRefined_2012-11-16_05-43-32.zip (is_dir: False, size: 1382925)
+2025-08-06 12:01:34,943 - __main__ - INFO - Including item: WormRefined_2012-11-16_06-51-13 (is_dir: True, size: 0)
+2025-08-06 12:01:34,943 - __main__ - INFO - Including item: WormRefined_2012-11-16_06-51-13.log (is_dir: False, size: 507)
+2025-08-06 12:01:34,944 - __main__ - INFO - Including item: WormRefined_2012-11-16_06-51-13.zip (is_dir: False, size: 1380158)
+2025-08-06 12:01:34,944 - __main__ - INFO - Including item: folder_load_2015-07-27_11-39-18.log (is_dir: False, size: 1739)
+2025-08-06 12:01:34,944 - __main__ - INFO - Including item: test-panoramabridge (is_dir: True, size: 0)
+2025-08-06 12:01:34,945 - __main__ - INFO - Total items returned: 15
+2025-08-06 12:01:41,533 - __main__ - INFO - PROPFIND successful for /_webdav/MacCoss/maccoss/@files/test-panoramabridge/, parsing response...
+2025-08-06 12:01:41,535 - __main__ - INFO - Including item: 20200710_QEHF_lkp_histone-speclib_dda_007.raw (is_dir: False, size: 905233042)
+2025-08-06 12:01:41,537 - __main__ - INFO - Including item: 20200710_QEHF_lkp_histone-speclib_dda_007.raw.checksum (is_dir: False, size: 64)
+2025-08-06 12:01:41,539 - __main__ - INFO - Including item: 20200710_QEHF_lkp_histone-speclib_dda_008.raw (is_dir: False, size: 0)
+2025-08-06 12:01:41,540 - __main__ - INFO - Including item: 20200710_QEHF_lkp_histone-speclib_dda_008.raw.checksum (is_dir: False, size: 64)
+2025-08-06 12:01:41,541 - __main__ - INFO - Including item: 2025-05-Ast-Carroll-EV-B1-CarrollPool-013-1ul.raw (is_dir: False, size: 4672142596)
+2025-08-06 12:01:41,542 - __main__ - INFO - Including item: 2025-05-Ast-Carroll-EV-B1-CarrollPool-013-1ul.raw.checksum (is_dir: False, size: 64)
+2025-08-06 12:01:41,543 - __main__ - INFO - Including item: 2025-05-Ast-Carroll-EV-B1-CarrollPool-013.raw (is_dir: False, size: 7323298011)
+2025-08-06 12:01:41,544 - __main__ - INFO - Including item: 2025-05-Ast-Carroll-EV-B1-CarrollPool-013.raw.checksum (is_dir: False, size: 64)
+2025-08-06 12:01:41,547 - __main__ - INFO - Including item: E20250430-18.raw (is_dir: False, size: 1164134181)
+2025-08-06 12:01:41,549 - __main__ - INFO - Including item: E20250430-18.raw.checksum (is_dir: False, size: 64)
+2025-08-06 12:01:41,550 - __main__ - INFO - Including item: E20250430-20.raw (is_dir: False, size: 1206614002)
+2025-08-06 12:01:41,551 - __main__ - INFO - Including item: E20250430-20.raw.checksum (is_dir: False, size: 64)
+2025-08-06 12:01:41,552 - __main__ - INFO - Including item: test-new-file.raw (is_dir: False, size: 0)
+2025-08-06 12:01:41,553 - __main__ - INFO - Including item: test-new-file.raw.checksum (is_dir: False, size: 64)
+2025-08-06 12:01:41,553 - __main__ - INFO - Including item: testsubfolder (is_dir: True, size: 0)
+2025-08-06 12:01:41,554 - __main__ - INFO - Total items returned: 15
+2025-08-06 12:01:46,958 - __main__ - INFO - Attempting to connect to WebDAV at: https://panoramaweb.org
+2025-08-06 12:01:46,959 - __main__ - INFO - Testing connection to: https://panoramaweb.org
+2025-08-06 12:01:47,105 - __main__ - INFO - OPTIONS request to https://panoramaweb.org returned: 200
+2025-08-06 12:01:47,106 - __main__ - INFO - Connection successful with provided URL
+2025-08-06 12:01:47,106 - __main__ - INFO - Successfully connected to WebDAV server at: https://panoramaweb.org
+2025-08-06 12:01:47,111 - __main__ - INFO - Credentials saved successfully
+2025-08-06 12:01:50,982 - __main__ - INFO - FileMonitorHandler initialized with extensions: ['.raw', '.sld']
+2025-08-06 12:01:50,982 - __main__ - INFO - Monitor subdirectories: True
+2025-08-06 12:01:50,990 - __main__ - INFO - Scanning existing files in /mnt/c/Users/macco/Documents/test-panoramabridge-local
+2025-08-06 12:01:50,990 - __main__ - INFO - Recursive scanning: True
+2025-08-06 12:01:50,991 - __main__ - INFO - Scanning for extensions: ['.raw', '.sld']
+2025-08-06 12:01:50,991 - __main__ - INFO - Starting recursive scan using os.walk
+2025-08-06 12:01:50,994 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/20200710_QEHF_lkp_histone-speclib_dda_007.raw
+2025-08-06 12:01:50,994 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/20200710_QEHF_lkp_histone-speclib_dda_008.raw
+2025-08-06 12:01:50,995 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/2025-05-Ast-Carroll-EV-B1-CarrollPool-013-1ul.raw
+2025-08-06 12:01:50,995 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/2025-05-Ast-Carroll-EV-B1-CarrollPool-013.raw
+2025-08-06 12:01:50,996 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/E20250430-18.raw
+2025-08-06 12:01:50,997 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/E20250430-20.raw
+2025-08-06 12:01:50,997 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/test-new-file.raw
+2025-08-06 12:01:51,001 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/testsubfolder/20200710_QEHF_lkp_histone-speclib_dda_007.raw
+2025-08-06 12:01:51,001 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/testsubfolder/2025-05-Ast-Carroll-EV-B1-CarrollPool-013-1ul.raw
+2025-08-06 12:01:51,001 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/testsubfolder/test-subdir-file.raw
+2025-08-06 12:01:51,002 - __main__ - INFO - Scan complete: 10 existing files queued
+2025-08-06 12:01:51,002 - __main__ - INFO - Scan complete: 10 existing files queued
+2025-08-06 12:01:54,695 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:01:54,703 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:02:12,101 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:02:40,006 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:02:44,826 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:02:50,559 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:02:50,571 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:02:54,393 - __main__ - INFO - Creating directory at: https://panoramaweb.org/_webdav/MacCoss/maccoss/%40files/test-panoramabridge/testsubfolder
+2025-08-06 12:02:54,396 - __main__ - INFO - MKCOL response: 405 - 
+2025-08-06 12:02:54,396 - __main__ - INFO - Directory already exists: /_webdav/MacCoss/maccoss/@files/test-panoramabridge/testsubfolder
+2025-08-06 12:02:54,405 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:03:13,034 - __main__ - INFO - Creating directory at: https://panoramaweb.org/_webdav/MacCoss/maccoss/%40files/test-panoramabridge/testsubfolder
+2025-08-06 12:03:13,048 - __main__ - INFO - MKCOL response: 405 - 
+2025-08-06 12:03:13,048 - __main__ - INFO - Directory already exists: /_webdav/MacCoss/maccoss/@files/test-panoramabridge/testsubfolder
+2025-08-06 12:03:13,058 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:03:13,059 - __main__ - INFO - Creating directory at: https://panoramaweb.org/_webdav/MacCoss/maccoss/%40files/test-panoramabridge/testsubfolder
+2025-08-06 12:03:13,061 - __main__ - INFO - MKCOL response: 405 - 
+2025-08-06 12:03:13,061 - __main__ - INFO - Directory already exists: /_webdav/MacCoss/maccoss/@files/test-panoramabridge/testsubfolder
+2025-08-06 12:03:13,068 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:09:52,749 - __main__ - INFO - Attempting to connect to WebDAV at: https://panoramaweb.org
+2025-08-06 12:09:52,750 - __main__ - INFO - Testing connection to: https://panoramaweb.org
+2025-08-06 12:09:52,904 - __main__ - INFO - OPTIONS request to https://panoramaweb.org returned: 200
+2025-08-06 12:09:52,905 - __main__ - INFO - Connection successful with provided URL
+2025-08-06 12:09:52,905 - __main__ - INFO - Successfully connected to WebDAV server at: https://panoramaweb.org
+2025-08-06 12:09:52,907 - __main__ - INFO - Credentials saved successfully
+2025-08-06 12:09:57,390 - __main__ - INFO - FileMonitorHandler initialized with extensions: ['.raw', '.sld']
+2025-08-06 12:09:57,391 - __main__ - INFO - Monitor subdirectories: True
+2025-08-06 12:09:57,397 - __main__ - INFO - Scanning existing files in /mnt/c/Users/macco/Documents/test-panoramabridge-local
+2025-08-06 12:09:57,397 - __main__ - INFO - Recursive scanning: True
+2025-08-06 12:09:57,397 - __main__ - INFO - Scanning for extensions: ['.raw', '.sld']
+2025-08-06 12:09:57,398 - __main__ - INFO - Starting recursive scan using os.walk
+2025-08-06 12:09:57,400 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/20200710_QEHF_lkp_histone-speclib_dda_007.raw
+2025-08-06 12:09:57,401 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/20200710_QEHF_lkp_histone-speclib_dda_008.raw
+2025-08-06 12:09:57,401 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/2025-05-Ast-Carroll-EV-B1-CarrollPool-013-1ul.raw
+2025-08-06 12:09:57,402 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/2025-05-Ast-Carroll-EV-B1-CarrollPool-013.raw
+2025-08-06 12:09:57,402 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/E20250430-18.raw
+2025-08-06 12:09:57,402 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/E20250430-20.raw
+2025-08-06 12:09:57,403 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/test-new-file.raw
+2025-08-06 12:09:57,406 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/testsubfolder/20200710_QEHF_lkp_histone-speclib_dda_007.raw
+2025-08-06 12:09:57,406 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/testsubfolder/2025-05-Ast-Carroll-EV-B1-CarrollPool-013-1ul.raw
+2025-08-06 12:09:57,406 - __main__ - INFO - Queued existing file: /mnt/c/Users/macco/Documents/test-panoramabridge-local/testsubfolder/test-subdir-file.raw
+2025-08-06 12:09:57,406 - __main__ - INFO - Scan complete: 10 existing files queued
+2025-08-06 12:09:57,406 - __main__ - INFO - Scan complete: 10 existing files queued
+2025-08-06 12:10:01,505 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:10:01,513 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:10:22,380 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:10:56,487 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:11:00,692 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:11:05,002 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:11:05,017 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:11:08,718 - __main__ - INFO - Creating directory at: https://panoramaweb.org/_webdav/MacCoss/maccoss/%40files/test-panoramabridge/testsubfolder
+2025-08-06 12:11:08,721 - __main__ - INFO - MKCOL response: 405 - 
+2025-08-06 12:11:08,722 - __main__ - INFO - Directory already exists: /_webdav/MacCoss/maccoss/@files/test-panoramabridge/testsubfolder
+2025-08-06 12:11:08,732 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:11:27,059 - __main__ - INFO - Creating directory at: https://panoramaweb.org/_webdav/MacCoss/maccoss/%40files/test-panoramabridge/testsubfolder
+2025-08-06 12:11:27,074 - __main__ - INFO - MKCOL response: 405 - 
+2025-08-06 12:11:27,074 - __main__ - INFO - Directory already exists: /_webdav/MacCoss/maccoss/@files/test-panoramabridge/testsubfolder
+2025-08-06 12:11:27,097 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:11:27,099 - __main__ - INFO - Creating directory at: https://panoramaweb.org/_webdav/MacCoss/maccoss/%40files/test-panoramabridge/testsubfolder
+2025-08-06 12:11:27,101 - __main__ - INFO - MKCOL response: 405 - 
+2025-08-06 12:11:27,101 - __main__ - INFO - Directory already exists: /_webdav/MacCoss/maccoss/@files/test-panoramabridge/testsubfolder
+2025-08-06 12:11:27,127 - __main__ - INFO - Files match via stored checksum
+2025-08-06 12:18:27,485 - __main__ - INFO - Attempting to connect to WebDAV at: https://panoramaweb.org
+2025-08-06 12:18:27,486 - __main__ - INFO - Testing connection to: https://panoramaweb.org
+2025-08-06 12:18:27,650 - __main__ - INFO - OPTIONS request to https://panoramaweb.org returned: 200
+2025-08-06 12:18:27,652 - __main__ - INFO - Connection successful with provided URL
+2025-08-06 12:18:27,653 - __main__ - INFO - Successfully connected to WebDAV server at: https://panoramaweb.org
+2025-08-06 12:18:27,660 - __main__ - INFO - Credentials saved successfully

@@ -169,8 +169,8 @@ The executable will be in the `dist` folder.
 
 Settings are automatically saved in:
 
-- **Windows**: `%USERPROFILE%\.file_monitor_webdav\config.json`
-- **Linux/Mac**: `~/.file_monitor_webdav/config.json`
+- **Windows**: `%USERPROFILE%\.panoramabridge\config.json`
+- **Linux/Mac**: `~/.panoramabridge/config.json`
 
 Credentials are stored securely in the system keyring.
 

@@ -1733,8 +1733,8 @@ class MainWindow(QMainWindow):
                 if self.save_creds_check.isChecked():
                     if KEYRING_AVAILABLE and keyring is not None:
                         try:
-                            keyring.set_password("FileMonitorWebDAV", f"{url}_username", username)
-                            keyring.set_password("FileMonitorWebDAV", f"{url}_password", password)
+                            keyring.set_password("PanoramaBridge", f"{url}_username", username)
+                            keyring.set_password("PanoramaBridge", f"{url}_password", password)
                             logger.info("Credentials saved successfully")
                         except Exception as e:
                             logger.warning(f"Failed to save credentials: {e}")
@@ -2089,7 +2089,7 @@ class MainWindow(QMainWindow):
 
     def load_config(self) -> dict:
         """Load configuration from file"""
-        config_file = Path.home() / ".file_monitor_webdav" / "config.json"
+        config_file = Path.home() / ".panoramabridge" / "config.json"
         
         if config_file.exists():
             try:
@@ -2097,12 +2097,32 @@ class MainWindow(QMainWindow):
                     return json.load(f)
             except:
                 pass
+        else:
+            # Check for old config file and migrate if found
+            old_config_file = Path.home() / ".file_monitor_webdav" / "config.json"
+            if old_config_file.exists():
+                logger.info("Found old configuration, migrating to new location...")
+                try:
+                    with open(old_config_file, 'r') as f:
+                        config = json.load(f)
+                    
+                    # Create new config directory and save
+                    config_dir = Path.home() / ".panoramabridge"
+                    config_dir.mkdir(exist_ok=True)
+                    
+                    with open(config_file, 'w') as f:
+                        json.dump(config, f, indent=2)
+                    
+                    logger.info("Configuration migrated successfully")
+                    return config
+                except Exception as e:
+                    logger.warning(f"Failed to migrate old configuration: {e}")
         
         return {}
     
     def save_config(self):
         """Save configuration to file"""
-        config_dir = Path.home() / ".file_monitor_webdav"
+        config_dir = Path.home() / ".panoramabridge"
         config_dir.mkdir(exist_ok=True)
         config_file = config_dir / "config.json"
         
@@ -2156,8 +2176,8 @@ class MainWindow(QMainWindow):
                 if KEYRING_AVAILABLE and keyring is not None:
                     try:
                         url = self.url_input.text()
-                        username = keyring.get_password("FileMonitorWebDAV", f"{url}_username")
-                        password = keyring.get_password("FileMonitorWebDAV", f"{url}_password")
+                        username = keyring.get_password("PanoramaBridge", f"{url}_username")
+                        password = keyring.get_password("PanoramaBridge", f"{url}_password")
                         
                         if username:
                             self.username_input.setText(username)
