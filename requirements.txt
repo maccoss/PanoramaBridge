@@ -1,0 +1,7 @@
+# to install: pip install -r requirements.txt
+
+PyQt6>=6.4.0
+watchdog>=3.0.0
+requests>=2.31.0
+keyring>=24.0.0
+keyrings.alt>=5.0.0
