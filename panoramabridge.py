@@ -1,22 +1,38 @@
 #!/usr/bin/env python3
 """
-PanoramaBridge -  A Python Qt6 Application for Directory Monitoring and WebDAV File Transfer
-Monitors directories for new files and transfers them to WebDAV server with checksums
+PanoramaBridge - A Python Qt6 Application for Directory Monitoring and WebDAV File Transfer
+
+This application monitors local directories for new files and automatically transfers them 
+to WebDAV servers (like Panorama) with comprehensive features:
+
+- Real-time file monitoring using watchdog
+- Chunked upload support for large files  
+- SHA256 checksum calculation and verification
+- Conflict resolution with user interaction
+- Secure credential storage using system keyring
+- Remote directory browsing and management
+- Configurable file extensions and directory structure preservation
+- Progress tracking and comprehensive logging
+
+Author: MacCoss Lab
+License: MIT
 """
 
+# Standard library imports
 import sys
 import os
-import hashlib
-import json
-import time
-import threading
-import queue
+import hashlib           # For calculating SHA256 checksums
+import json             # For configuration file storage
+import time             # For file stability checks and timestamps
+import threading        # For background operations
+import queue            # For thread-safe file processing queue
+import tempfile         # For temporary file operations during verification
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 import logging
 
-# Third-party imports (need to be installed)
+# Third-party imports (must be installed via pip)
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QPushButton, QLabel, QLineEdit, QTextEdit,
@@ -28,61 +44,95 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, pyqtSlot
 from PyQt6.QtGui import QIcon, QFont
 
-# File monitoring
+# File monitoring using watchdog library
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-# WebDAV client
+# WebDAV client using requests library
 import requests
 from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 from urllib.parse import urljoin, quote, unquote
 import xml.etree.ElementTree as ET
 
-# Logging setup
-import logging
+# Configure comprehensive logging to both console and file
 logging.basicConfig(
-    level=logging.INFO,  # Back to INFO level
+    level=logging.INFO,  
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(),  # Console output
-        logging.FileHandler('panoramabridge.log', mode='a')  # File output
+        logging.StreamHandler(),  # Console output for real-time monitoring
+        logging.FileHandler('panoramabridge.log', mode='a')  # Persistent log file
     ]
 )
 logger = logging.getLogger(__name__)
 
-# For secure credential storage (optional)
+# Secure credential storage setup (optional dependency)
+# If keyring is not available, credentials won't be saved but app will still work
 KEYRING_AVAILABLE = False
 keyring = None
 try:
     import keyring
     KEYRING_AVAILABLE = True
+    logger.info("Keyring available for secure credential storage")
 except ImportError:
     KEYRING_AVAILABLE = False
     logger.warning("Keyring not available - credential saving will be disabled")
 
 
 class WebDAVClient:
-    """WebDAV client with chunked upload support"""
+    """
+    WebDAV client with chunked upload support and comprehensive file operations.
+    
+    This class handles all WebDAV server interactions including:
+    - Connection testing with automatic endpoint detection
+    - Directory listing and browsing
+    - File upload with chunked transfer for large files
+    - File download and verification
+    - Checksum storage and retrieval for integrity verification
+    - Directory creation with proper error handling
+    
+    Supports both Basic and Digest authentication methods.
+    """
     
     def __init__(self, url: str, username: str, password: str, auth_type: str = "basic"):
-        self.url = url.rstrip('/')
+        """
+        Initialize WebDAV client with connection parameters.
+        
+        Args:
+            url: WebDAV server URL (e.g., "https://panoramaweb.org")
+            username: Username for authentication
+            password: Password for authentication
+            auth_type: Authentication type ("basic" or "digest")
+        """
+        self.url = url.rstrip('/')  # Remove trailing slash for consistency
         self.username = username
         self.password = password
         
+        # Configure authentication based on type
         if auth_type == "digest":
             self.auth = HTTPDigestAuth(username, password)
         else:
             self.auth = HTTPBasicAuth(username, password)
         
+        # Create persistent session for connection reuse
         self.session = requests.Session()
         self.session.auth = self.auth
-        self.chunk_size = 10 * 1024 * 1024  # 10MB chunks
+        self.chunk_size = 10 * 1024 * 1024  # 10MB chunks for efficient large file uploads
     
     def test_connection(self) -> bool:
-        """Test if we can connect to the WebDAV server"""
+        """
+        Test WebDAV server connectivity with automatic endpoint detection.
+        
+        First tries the provided URL, then attempts common WebDAV endpoints
+        like /webdav if the initial connection fails. Updates self.url if
+        a working endpoint is found.
+        
+        Returns:
+            bool: True if connection successful, False otherwise
+        """
         try:
             logger.info(f"Testing connection to: {self.url}")
-            # First try with the exact URL provided
+            
+            # First try with the exact URL provided by user
             response = self.session.request('OPTIONS', self.url, timeout=10)
             logger.info(f"OPTIONS request to {self.url} returned: {response.status_code}")
             if response.status_code in [200, 204, 207]:
@@ -495,37 +545,68 @@ class WebDAVClient:
 
 
 class FileMonitorHandler(FileSystemEventHandler):
-    """Handles file system events"""
+    """
+    Handles file system events for real-time file monitoring.
+    
+    This class extends watchdog's FileSystemEventHandler to monitor directory
+    changes and queue files for upload when they meet criteria:
+    - File extension matches configured list
+    - File is stable (not being written to)
+    - File is not a system/hidden file
+    
+    Implements intelligent file stability detection to avoid uploading
+    files that are still being written by other processes.
+    """
     
     def __init__(self, extensions: List[str], file_queue: queue.Queue, 
                  monitor_subdirs: bool = True):
+        """
+        Initialize file monitor with configuration.
+        
+        Args:
+            extensions: List of file extensions to monitor (e.g., ['raw', 'mzML'])
+            file_queue: Thread-safe queue for passing files to processor
+            monitor_subdirs: Whether to monitor subdirectories recursively
+        """
+        # Normalize extensions to lowercase with leading dots
         self.extensions = [ext.lower() if ext.startswith('.') else f'.{ext.lower()}' 
                           for ext in extensions]
         self.file_queue = file_queue
         self.monitor_subdirs = monitor_subdirs
-        self.pending_files = {}  # Track files being written
+        self.pending_files = {}  # Track files being written with timestamps
         
-        # Log the extensions being monitored
+        # Log configuration for debugging
         logger.info(f"FileMonitorHandler initialized with extensions: {self.extensions}")
         logger.info(f"Monitor subdirectories: {monitor_subdirs}")
         
     def on_created(self, event):
+        """Handle file creation events."""
         if not event.is_directory:
             self._handle_file(event.src_path)
     
     def on_modified(self, event):
+        """Handle file modification events."""
         if not event.is_directory:
             self._handle_file(event.src_path)
     
     def _handle_file(self, filepath):
-        """Check if file matches criteria and add to queue when stable"""
-        # Skip hidden files and system files
+        """
+        Process file events and queue stable files for upload.
+        
+        Implements file stability detection by tracking file size changes
+        over time. Only queues files when they haven't changed size for
+        a specified period, indicating the write operation is complete.
+        
+        Args:
+            filepath: Absolute path to the file that triggered the event
+        """
+        # Skip hidden files and system files (start with . or ~)
         filename = os.path.basename(filepath)
         if filename.startswith('.') or filename.startswith('~'):
             return
             
+        # Check if file extension matches our monitored list
         if any(filepath.lower().endswith(ext) for ext in self.extensions):
-            # Start monitoring file stability
             current_time = time.time()
             logger.info(f"File event detected: {filepath}")
             
@@ -585,36 +666,81 @@ class FileMonitorHandler(FileSystemEventHandler):
 
 
 class FileProcessor(QThread):
-    """Background thread for processing file transfers"""
+    """
+    Background thread for processing file transfers to WebDAV server.
     
-    progress_update = pyqtSignal(str, int, int)  # filename, current, total
-    status_update = pyqtSignal(str, str, str)  # filename, status, filepath
-    transfer_complete = pyqtSignal(str, bool, str)  # filename, success, message
-    conflict_detected = pyqtSignal(str, dict, str)  # filepath, remote_info, local_checksum
+    This QThread-based class handles the core file processing workflow:
+    1. Retrieves files from the monitoring queue
+    2. Calculates SHA256 checksums for integrity verification
+    3. Checks for conflicts with existing remote files
+    4. Handles user conflict resolution decisions
+    5. Uploads files with progress tracking
+    6. Verifies successful uploads
+    7. Stores checksums for future reference
+    
+    Runs continuously in background to process files without blocking UI.
+    Communicates with main thread via Qt signals for progress updates.
+    """
+    
+    # Qt signals for communicating with main UI thread
+    progress_update = pyqtSignal(str, int, int)      # filename, bytes_transferred, total_bytes
+    status_update = pyqtSignal(str, str, str)        # filename, status_message, filepath
+    transfer_complete = pyqtSignal(str, bool, str)   # filename, success, result_message
+    conflict_detected = pyqtSignal(str, dict, str)   # filepath, remote_info, local_checksum
     conflict_resolution_needed = pyqtSignal(str, str, str, dict)  # filename, filepath, remote_path, conflict_details
     
     def __init__(self, file_queue: queue.Queue):
+        """
+        Initialize file processor thread.
+        
+        Args:
+            file_queue: Thread-safe queue containing files to process
+        """
         super().__init__()
         self.file_queue = file_queue
-        self.webdav_client = None
-        self.remote_base_path = "/"
-        self.running = True
-        self.preserve_structure = True
-        self.local_base_path = ""
-        self.conflict_resolution: Optional[str] = None  # 'skip', 'overwrite', 'rename', or None
-        self.apply_to_all = False
+        self.webdav_client = None                      # Set later via set_webdav_client()
+        self.remote_base_path = "/"                   # Remote directory base path
+        self.running = True                           # Control flag for thread loop
+        self.preserve_structure = True                # Whether to preserve local directory structure
+        self.local_base_path = ""                     # Local directory base path
+        self.conflict_resolution: Optional[str] = None  # User's conflict resolution choice
+        self.apply_to_all = False                     # Apply resolution to all conflicts
         
     def set_webdav_client(self, client: WebDAVClient, remote_path: str):
-        """Set the WebDAV client for transfers"""
+        """
+        Configure WebDAV client and remote path for transfers.
+        
+        Args:
+            client: Configured WebDAVClient instance
+            remote_path: Base remote directory path for uploads
+        """
         self.webdav_client = client
         self.remote_base_path = remote_path.rstrip('/')
         
     def set_local_base(self, path: str):
-        """Set the local base path for preserving directory structure"""
+        """
+        Set local base path for directory structure preservation.
+        
+        Args:
+            path: Local directory path to use as base for relative paths
+        """
         self.local_base_path = path
         
     def calculate_checksum(self, filepath: str, algorithm: str = 'sha256', chunk_size: Optional[int] = None) -> str:
-        """Calculate file checksum with optimized chunk size"""
+        """
+        Calculate file checksum for integrity verification.
+        
+        Uses chunked reading to handle large files efficiently without
+        loading entire file into memory.
+        
+        Args:
+            filepath: Path to file to checksum
+            algorithm: Hash algorithm to use (default: sha256)
+            chunk_size: Bytes to read per chunk (default: 256KB)
+            
+        Returns:
+            Hexadecimal checksum string
+        """
         if chunk_size is None:
             chunk_size = 256 * 1024  # 256KB chunks - optimal balance of speed and memory
         
@@ -1308,39 +1434,56 @@ class RemoteBrowserDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    """Main application window"""
+    """
+    Main application window for PanoramaBridge.
+    
+    This is the primary UI class that manages the complete application workflow:
+    - Creates tabbed interface for configuration and monitoring
+    - Manages file monitoring setup and control
+    - Handles WebDAV connection configuration
+    - Displays transfer progress and status
+    - Coordinates between UI components and background processing
+    - Manages application configuration and settings persistence
+    
+    The UI is organized into three main tabs:
+    1. Local Monitoring - Configure directory monitoring and file settings
+    2. Remote Settings - Configure WebDAV connection and upload settings  
+    3. Transfer Status - View active transfers and progress
+    """
     
     def __init__(self):
+        """Initialize the main application window and components."""
         super().__init__()
         self.setWindowTitle("PanoramaBridge - File Monitor and WebDAV Transfer Tool")
         self.setGeometry(100, 100, 900, 600)
         
-        # Core components
-        self.file_queue = queue.Queue()
-        self.file_processor = FileProcessor(self.file_queue)
-        self.monitor_handler = None
-        self.observer = None
-        self.webdav_client = None
-        self.transfer_rows = {}  # Track table rows for updates
+        # Core application components
+        self.file_queue = queue.Queue()                    # Thread-safe queue for file processing
+        self.file_processor = FileProcessor(self.file_queue)  # Background processing thread
+        self.monitor_handler = None                        # File system event handler
+        self.observer = None                              # Watchdog observer for file monitoring
+        self.webdav_client = None                         # WebDAV client instance
+        self.transfer_rows = {}                           # Track UI table rows for updates
         
-        # Configuration
+        # Load application configuration from disk
         self.config = self.load_config()
         
+        # Initialize UI components and layout
         self.setup_ui()
         self.setup_menu()
         self.load_settings()
         
-        # Start file processor thread
+        # Connect background processor signals to UI handlers
         self.file_processor.progress_update.connect(self.on_progress_update)
         self.file_processor.status_update.connect(self.on_status_update)
         self.file_processor.transfer_complete.connect(self.on_transfer_complete)
         self.file_processor.conflict_resolution_needed.connect(self.on_conflict_resolution_needed)
         self.file_processor.start()
         
-        # Queue size timer
+        # Setup periodic UI updates
         self.queue_timer = QTimer()
         self.queue_timer.timeout.connect(self.update_queue_size)
-        self.queue_timer.start(1000)  # Update every second
+        self.queue_timer.start(1000)  # Update queue size display every second
     
     def setup_ui(self):
         central_widget = QWidget()
@@ -2148,45 +2291,53 @@ class MainWindow(QMainWindow):
             logger.error(f"Failed to save config: {e}")
     
     def load_settings(self):
-        """Load settings from config"""
-        if self.config:
-            self.dir_input.setText(self.config.get("local_directory", ""))
-            self.subdirs_check.setChecked(self.config.get("monitor_subdirs", True))
-            self.extensions_input.setText(self.config.get("extensions", "raw, sld, csv"))
-            self.preserve_structure_check.setChecked(self.config.get("preserve_structure", True))
-            self.url_input.setText(self.config.get("webdav_url", "https://panoramaweb.org"))
-            self.username_input.setText(self.config.get("webdav_username", ""))
-            
-            auth_type = self.config.get("webdav_auth_type", "Basic")
-            index = self.auth_combo.findText(auth_type)
-            if index >= 0:
-                self.auth_combo.setCurrentIndex(index)
-            
-            self.remote_path_input.setText(self.config.get("remote_path", "/_webdav"))
-            self.chunk_spin.setValue(self.config.get("chunk_size_mb", 10))
-            self.verify_uploads_check.setChecked(self.config.get("verify_uploads", True))
-            self.save_creds_check.setChecked(self.config.get("save_credentials", False))
-            
-            # Load conflict resolution setting
-            conflict_setting = self.config.get("conflict_resolution", "ask")
-            self.set_conflict_resolution_setting(conflict_setting)
-            
-            # Try to load saved credentials
-            if self.save_creds_check.isChecked() and self.url_input.text():
-                if KEYRING_AVAILABLE and keyring is not None:
-                    try:
-                        url = self.url_input.text()
-                        username = keyring.get_password("PanoramaBridge", f"{url}_username")
-                        password = keyring.get_password("PanoramaBridge", f"{url}_password")
-                        
-                        if username:
-                            self.username_input.setText(username)
-                        if password:
-                            self.password_input.setText(password)
-                    except Exception as e:
-                        logger.warning(f"Failed to load saved credentials: {e}")
-                else:
-                    logger.info("Keyring not available - cannot load saved credentials")
+        """
+        Load settings from configuration file or apply defaults for new installations.
+        
+        This method populates all UI fields with either saved configuration values
+        or sensible defaults for first-time users. Ensures that default values
+        are actual field values, not just placeholder text.
+        """
+        # Always apply settings, even if config is empty (new installation)
+        # The .get() method will return defaults for missing keys
+        self.dir_input.setText(self.config.get("local_directory", ""))
+        self.subdirs_check.setChecked(self.config.get("monitor_subdirs", True))
+        self.extensions_input.setText(self.config.get("extensions", "raw, sld, csv"))
+        self.preserve_structure_check.setChecked(self.config.get("preserve_structure", True))
+        self.url_input.setText(self.config.get("webdav_url", "https://panoramaweb.org"))
+        self.username_input.setText(self.config.get("webdav_username", ""))
+        
+        # Set authentication type combo box
+        auth_type = self.config.get("webdav_auth_type", "Basic")
+        index = self.auth_combo.findText(auth_type)
+        if index >= 0:
+            self.auth_combo.setCurrentIndex(index)
+        
+        self.remote_path_input.setText(self.config.get("remote_path", "/_webdav"))
+        self.chunk_spin.setValue(self.config.get("chunk_size_mb", 10))
+        self.verify_uploads_check.setChecked(self.config.get("verify_uploads", True))
+        self.save_creds_check.setChecked(self.config.get("save_credentials", False))
+        
+        # Load conflict resolution setting
+        conflict_setting = self.config.get("conflict_resolution", "ask")
+        self.set_conflict_resolution_setting(conflict_setting)
+        
+        # Try to load saved credentials if enabled
+        if self.save_creds_check.isChecked() and self.url_input.text():
+            if KEYRING_AVAILABLE and keyring is not None:
+                try:
+                    url = self.url_input.text()
+                    username = keyring.get_password("PanoramaBridge", f"{url}_username")
+                    password = keyring.get_password("PanoramaBridge", f"{url}_password")
+                    
+                    if username:
+                        self.username_input.setText(username)
+                    if password:
+                        self.password_input.setText(password)
+                except Exception as e:
+                    logger.warning(f"Failed to load saved credentials: {e}")
+            else:
+                logger.info("Keyring not available - cannot load saved credentials")
     
     def save_settings(self):
         """Save current settings"""
