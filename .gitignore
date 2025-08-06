@@ -1,2 +1,7 @@
 .venv/*
 panoramabridge.log
+test_imports.py
+.gitignore
+build/*
+dist/*
+*.spec

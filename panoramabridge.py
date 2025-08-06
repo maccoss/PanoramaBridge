@@ -39,7 +39,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QCheckBox, QGroupBox, QGridLayout, QTreeWidget,
     QTreeWidgetItem, QProgressBar, QMessageBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QSplitter, QComboBox,
-    QSpinBox, QInputDialog, QDialog, QRadioButton
+    QSpinBox, QInputDialog, QDialog, QRadioButton, QMenu
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, pyqtSlot
 from PyQt6.QtGui import QIcon, QFont
@@ -159,7 +159,9 @@ class WebDAVClient:
     
     def list_directory(self, path: str = "/") -> List[Dict]:
         """List contents of a WebDAV directory"""
+        logger.info(f"list_directory called with path: {path}")
         url = urljoin(self.url, quote(path))
+        logger.info(f"Requesting directory listing for URL: {url}")
         
         headers = {
             'Depth': '1',
@@ -178,15 +180,20 @@ class WebDAVClient:
         </propfind>'''
         
         try:
+            logger.info(f"Sending PROPFIND request to: {url}")
             response = self.session.request('PROPFIND', url, headers=headers, data=body)
+            logger.info(f"PROPFIND response status: {response.status_code}")
             if response.status_code == 207:  # Multi-Status
                 logger.info(f"PROPFIND successful for {path}, parsing response...")
-                return self._parse_propfind_response(response.text, path)
+                items = self._parse_propfind_response(response.text, path)
+                logger.info(f"Directory listing for {path} returned {len(items)} items")
+                return items
             else:
-                logger.error(f"Failed to list directory: {response.status_code}")
+                logger.error(f"Failed to list directory {path}: HTTP {response.status_code}")
+                logger.error(f"Response body: {response.text[:500]}")  # First 500 chars
                 return []
         except Exception as e:
-            logger.error(f"Error listing directory: {e}")
+            logger.error(f"Error listing directory {path}: {e}")
             return []
     
     def _should_show_item(self, item_name: str, is_dir: bool) -> bool:
@@ -238,6 +245,7 @@ class WebDAVClient:
 
     def _parse_propfind_response(self, xml_response: str, base_path: str) -> List[Dict]:
         """Parse PROPFIND XML response"""
+        logger.info(f"Parsing PROPFIND response for base_path: {base_path}")
         items = []
         try:
             root = ET.fromstring(xml_response)
@@ -245,25 +253,39 @@ class WebDAVClient:
             # Define namespace
             ns = {'d': 'DAV:'}
             
-            for response in root.findall('.//d:response', ns):
+            responses = root.findall('.//d:response', ns)
+            logger.info(f"Found {len(responses)} response elements in XML")
+            
+            for i, response in enumerate(responses):
                 href = response.find('d:href', ns)
                 if href is None:
+                    logger.debug(f"Response {i}: No href element found, skipping")
                     continue
                     
                 href_text = href.text
                 if href_text is None:
+                    logger.debug(f"Response {i}: href text is None, skipping")
                     continue
                     
+                logger.debug(f"Response {i}: Processing href: {href_text}")
+                
                 # Skip the base path itself (compare unquoted paths)
-                if unquote(href_text.rstrip('/')) == base_path.rstrip('/'):
+                unquoted_href = unquote(href_text.rstrip('/'))
+                unquoted_base = base_path.rstrip('/')
+                if unquoted_href == unquoted_base:
+                    logger.debug(f"Response {i}: Skipping base path itself: {unquoted_href}")
                     continue
                 
                 props = response.find('.//d:prop', ns)
                 if props is None:
+                    logger.debug(f"Response {i}: No properties found, skipping")
                     continue
                 
+                item_name = os.path.basename(unquoted_href)
+                logger.debug(f"Response {i}: Item name extracted: '{item_name}'")
+                
                 item = {
-                    'name': os.path.basename(unquote(href_text.rstrip('/'))),
+                    'name': item_name,
                     'path': unquote(href_text),
                     'is_dir': False,
                     'size': 0
@@ -280,6 +302,8 @@ class WebDAVClient:
                 if size is not None and size.text:
                     item['size'] = int(size.text)
                 
+                logger.debug(f"Response {i}: Item details: name='{item['name']}', is_dir={item['is_dir']}, size={item['size']}")
+                
                 # Filter out system files and directories
                 if not self._should_show_item(item['name'], item['is_dir']):
                     logger.info(f"Filtering out: {item['name']} (is_dir: {item['is_dir']})")
@@ -290,8 +314,9 @@ class WebDAVClient:
                 
         except Exception as e:
             logger.error(f"Error parsing PROPFIND response: {e}")
+            logger.error(f"XML response (first 1000 chars): {xml_response[:1000]}")
         
-        logger.info(f"Total items returned: {len(items)}")
+        logger.info(f"Total items returned for {base_path}: {len(items)}")
         return items
     
     def get_file_info(self, path: str) -> Optional[Dict]:
@@ -559,7 +584,7 @@ class FileMonitorHandler(FileSystemEventHandler):
     """
     
     def __init__(self, extensions: List[str], file_queue: queue.Queue, 
-                 monitor_subdirs: bool = True):
+                 monitor_subdirs: bool = True, app_instance=None):
         """
         Initialize file monitor with configuration.
         
@@ -567,12 +592,14 @@ class FileMonitorHandler(FileSystemEventHandler):
             extensions: List of file extensions to monitor (e.g., ['raw', 'mzML'])
             file_queue: Thread-safe queue for passing files to processor
             monitor_subdirs: Whether to monitor subdirectories recursively
+            app_instance: Reference to main application for duplicate tracking
         """
         # Normalize extensions to lowercase with leading dots
         self.extensions = [ext.lower() if ext.startswith('.') else f'.{ext.lower()}' 
                           for ext in extensions]
         self.file_queue = file_queue
         self.monitor_subdirs = monitor_subdirs
+        self.app_instance = app_instance
         self.pending_files = {}  # Track files being written with timestamps
         
         # Log configuration for debugging
@@ -581,13 +608,21 @@ class FileMonitorHandler(FileSystemEventHandler):
         
     def on_created(self, event):
         """Handle file creation events."""
+        logger.info(f"FileMonitor: File created event: {event.src_path}")
         if not event.is_directory:
             self._handle_file(event.src_path)
     
     def on_modified(self, event):
         """Handle file modification events."""
+        logger.info(f"FileMonitor: File modified event: {event.src_path}")
         if not event.is_directory:
             self._handle_file(event.src_path)
+            
+    def on_moved(self, event):
+        """Handle file move events."""
+        logger.info(f"FileMonitor: File moved event: {event.dest_path}")
+        if not event.is_directory:
+            self._handle_file(event.dest_path)
     
     def _handle_file(self, filepath):
         """
@@ -618,10 +653,14 @@ class FileMonitorHandler(FileSystemEventHandler):
                     
                     # Reduced stability timeout for faster detection
                     if current_size == last_size and current_time - last_time > 1:
-                        # File is stable, add to queue
-                        self.file_queue.put(filepath)
-                        del self.pending_files[filepath]
-                        logger.info(f"File queued for transfer: {filepath}")
+                        # File is stable, check for duplicates before queueing
+                        if self._should_queue_file(filepath):
+                            self.file_queue.put(filepath)
+                            del self.pending_files[filepath]
+                            logger.info(f"File queued for transfer: {filepath}")
+                        else:
+                            del self.pending_files[filepath]
+                            logger.info(f"File already queued or processing, skipping: {filepath}")
                     else:
                         # Update tracking
                         self.pending_files[filepath] = (current_size, current_time)
@@ -646,10 +685,14 @@ class FileMonitorHandler(FileSystemEventHandler):
                                 current_size = os.path.getsize(filepath)
                                 stored_size, _ = self.pending_files[filepath]
                                 if current_size == stored_size:
-                                    # File hasn't changed, queue it
-                                    self.file_queue.put(filepath)
-                                    del self.pending_files[filepath]
-                                    logger.info(f"File queued for transfer after stability check: {filepath}")
+                                    # File hasn't changed, check for duplicates before queueing
+                                    if self._should_queue_file(filepath):
+                                        self.file_queue.put(filepath)
+                                        del self.pending_files[filepath]
+                                        logger.info(f"File queued for transfer after stability check: {filepath}")
+                                    else:
+                                        del self.pending_files[filepath]
+                                        logger.info(f"File already queued or processing, skipping: {filepath}")
                             except Exception as e:
                                 logger.error(f"Error in delayed stability check for {filepath}: {e}")
                     
@@ -663,6 +706,30 @@ class FileMonitorHandler(FileSystemEventHandler):
             # Log files that don't match extensions for debugging
             ext = os.path.splitext(filepath)[1]
             logger.debug(f"File ignored (extension '{ext}' not in {self.extensions}): {filepath}")
+
+    def _should_queue_file(self, filepath: str) -> bool:
+        """
+        Check if a file should be queued, preventing duplicates.
+        
+        Args:
+            filepath: Path to the file being considered for queueing
+            
+        Returns:
+            True if file should be queued, False if already queued/processing
+        """
+        if self.app_instance:
+            # Check if file is already queued or being processed
+            if filepath in self.app_instance.queued_files:
+                return False
+            if filepath in self.app_instance.processing_files:
+                return False
+            
+            # Add to queued files tracking
+            self.app_instance.queued_files.add(filepath)
+            return True
+        else:
+            # Fallback if no app instance - always queue (original behavior)
+            return True
 
 
 class FileProcessor(QThread):
@@ -683,21 +750,23 @@ class FileProcessor(QThread):
     """
     
     # Qt signals for communicating with main UI thread
-    progress_update = pyqtSignal(str, int, int)      # filename, bytes_transferred, total_bytes
+    progress_update = pyqtSignal(str, int, int)      # filepath, bytes_transferred, total_bytes
     status_update = pyqtSignal(str, str, str)        # filename, status_message, filepath
-    transfer_complete = pyqtSignal(str, bool, str)   # filename, success, result_message
+    transfer_complete = pyqtSignal(str, str, bool, str)   # filename, filepath, success, result_message
     conflict_detected = pyqtSignal(str, dict, str)   # filepath, remote_info, local_checksum
     conflict_resolution_needed = pyqtSignal(str, str, str, dict)  # filename, filepath, remote_path, conflict_details
     
-    def __init__(self, file_queue: queue.Queue):
+    def __init__(self, file_queue: queue.Queue, app_instance=None):
         """
         Initialize file processor thread.
         
         Args:
             file_queue: Thread-safe queue containing files to process
+            app_instance: Reference to main application for tracking file states
         """
         super().__init__()
         self.file_queue = file_queue
+        self.app_instance = app_instance
         self.webdav_client = None                      # Set later via set_webdav_client()
         self.remote_base_path = "/"                   # Remote directory base path
         self.running = True                           # Control flag for thread loop
@@ -915,11 +984,16 @@ class FileProcessor(QThread):
                 if self.webdav_client:
                     # Handle both string paths and dict objects with resolution info
                     if isinstance(file_item, dict):
+                        logger.info(f"Processing conflict resolution item: {file_item}")
                         self.process_file_with_resolution(file_item)
                     else:
+                        logger.info(f"Processing regular file item: {file_item}")
                         self.process_file(file_item)
                 else:
                     logger.warning("No WebDAV client configured")
+                    # Remove from queued files if processing failed
+                    if isinstance(file_item, str) and self.app_instance:
+                        self.app_instance.queued_files.discard(file_item)
                     
             except queue.Empty:
                 continue
@@ -934,10 +1008,15 @@ class FileProcessor(QThread):
         resolution = file_item['resolution']
         new_name = file_item.get('new_name')
         
+        # Track that this file is now being processed
+        if self.app_instance:
+            self.app_instance.queued_files.discard(filepath)
+            self.app_instance.processing_files.add(filepath)
+        
         try:
             # Apply resolution
             if resolution == 'skip':
-                self.transfer_complete.emit(filename, True, "Skipped due to user choice")
+                self.transfer_complete.emit(filename, filepath, True, "Skipped due to user choice")
                 return
             elif resolution == 'rename' and new_name:
                 # Update remote path and filename for rename
@@ -951,7 +1030,11 @@ class FileProcessor(QThread):
             
         except Exception as e:
             logger.error(f"Error processing file with resolution {filepath}: {e}")
-            self.transfer_complete.emit(filename, False, f"Error: {str(e)}")
+            self.transfer_complete.emit(filename, filepath, False, f"Error: {str(e)}")
+        finally:
+            # Always remove from processing files when done
+            if self.app_instance:
+                self.app_instance.processing_files.discard(filepath)
     
     def upload_file(self, filepath: str, remote_path: str, filename: str):
         """Upload file to remote path"""
@@ -960,17 +1043,19 @@ class FileProcessor(QThread):
             self.status_update.emit(filename, "Calculating checksum...", filepath)
             local_checksum = self.calculate_checksum(filepath)
             
-            # Create remote directory if needed
+            # Create remote directory if needed (check cache to avoid redundant attempts)
             remote_dir = os.path.dirname(remote_path)
-            if remote_dir and remote_dir != '/':
+            if remote_dir and remote_dir != '/' and self._should_create_directory(remote_dir):
                 logger.info(f"Creating remote directory: {remote_dir}")
-                self.webdav_client.create_directory(remote_dir)
+                success = self.webdav_client.create_directory(remote_dir)
+                if success and self.app_instance:
+                    self.app_instance.created_directories.add(remote_dir)
             
             # Upload file
             self.status_update.emit(filename, "Uploading...", filepath)
             
             def progress_callback(current, total):
-                self.progress_update.emit(filename, current, total)
+                self.progress_update.emit(filepath, current, total)
             
             success, error = self.webdav_client.upload_file_chunked(
                 filepath, remote_path, progress_callback
@@ -986,30 +1071,43 @@ class FileProcessor(QThread):
                 # Verify upload if enabled
                 if hasattr(self, 'verify_uploads') and self.verify_uploads:
                     self.status_update.emit(filename, "Verifying upload...", filepath)
-                    if self.verify_uploaded_file(filepath, remote_path, local_checksum):
+                    is_verified, verify_message = self.verify_uploaded_file(filepath, remote_path, local_checksum)
+                    if is_verified:
                         self.transfer_complete.emit(
-                            filename, True, 
+                            filename, filepath, True, 
                             f"Upload verified successfully (checksum: {local_checksum[:8]}...)"
                         )
                     else:
                         self.transfer_complete.emit(
-                            filename, False, "Upload verification failed - checksums don't match"
+                            filename, filepath, False, f"Upload verification failed: {verify_message}"
                         )
                 else:
                     self.transfer_complete.emit(
-                        filename, True, 
+                        filename, filepath, True, 
                         f"Uploaded successfully (checksum: {local_checksum[:8]}...)"
                     )
             else:
-                self.transfer_complete.emit(filename, False, f"Upload failed: {error}")
+                self.transfer_complete.emit(filename, filepath, False, f"Upload failed: {error}")
                 
         except Exception as e:
             logger.error(f"Error uploading file {filepath}: {e}")
-            self.transfer_complete.emit(filename, False, f"Error: {str(e)}")
+            self.transfer_complete.emit(filename, filepath, False, f"Error: {str(e)}")
     
     def process_file(self, filepath: str):
         """Process a single file with conflict detection"""
         filename = os.path.basename(filepath)
+        
+        # Track that this file is now being processed
+        if self.app_instance:
+            self.app_instance.queued_files.discard(filepath)
+            self.app_instance.processing_files.add(filepath)
+            logger.info(f"File tracking: {filepath} moved from queued to processing")
+        
+        # Add debugging for path calculation
+        logger.info(f"Processing file: {filepath}")
+        logger.info(f"Preserve structure: {self.preserve_structure}")
+        logger.info(f"Local base path: {self.local_base_path}")
+        logger.info(f"Remote base path: {self.remote_base_path}")
         
         try:
             # Calculate local checksum
@@ -1020,13 +1118,31 @@ class FileProcessor(QThread):
             if self.preserve_structure and self.local_base_path:
                 rel_path = os.path.relpath(filepath, self.local_base_path)
                 remote_path = f"{self.remote_base_path}/{rel_path}".replace('\\', '/')
+                logger.info(f"Preserve structure: {filepath} -> {remote_path} (rel_path: {rel_path})")
                 
-                # Create remote directories if needed
+                # Create remote directories if needed (check cache to avoid redundant attempts)
                 remote_dir = os.path.dirname(remote_path)
-                if remote_dir != self.remote_base_path:
-                    self.webdav_client.create_directory(remote_dir)
+                if remote_dir != self.remote_base_path and self._should_create_directory(remote_dir):
+                    success = self.webdav_client.create_directory(remote_dir)
+                    if success and self.app_instance:
+                        self.app_instance.created_directories.add(remote_dir)
             else:
                 remote_path = f"{self.remote_base_path}/{filename}"
+                logger.info(f"No structure preservation: {filepath} -> {remote_path}")
+            
+            # Check for duplicate upload attempts to same remote path
+            if self.app_instance:
+                if filepath in self.app_instance.file_remote_paths:
+                    existing_remote_path = self.app_instance.file_remote_paths[filepath]
+                    if existing_remote_path == remote_path:
+                        logger.warning(f"File {filepath} already processed/processing to {remote_path}, skipping duplicate")
+                        self.transfer_complete.emit(filename, filepath, True, "Skipped - already processed")
+                        return
+                    else:
+                        logger.error(f"File {filepath} being uploaded to different paths: existing={existing_remote_path}, new={remote_path}")
+                
+                # Track this file -> remote path mapping
+                self.app_instance.file_remote_paths[filepath] = remote_path
             
             # Check if remote file exists and get info
             self.status_update.emit(filename, "Checking remote file...", filepath)
@@ -1047,7 +1163,7 @@ class FileProcessor(QThread):
             if comparison_result == 'identical':
                 # Files are identical, skip upload
                 self.transfer_complete.emit(
-                    filename, True, 
+                    filename, filepath, True, 
                     f"File already exists with same content (checksum: {local_checksum[:8]}...)"
                 )
                 return
@@ -1078,7 +1194,7 @@ class FileProcessor(QThread):
                 
                 if resolution == 'skip':
                     self.transfer_complete.emit(
-                        filename, True, "Skipped due to conflict"
+                        filename, filepath, True, "Skipped due to conflict"
                     )
                     return
                 elif resolution == 'rename' and new_name:
@@ -1093,7 +1209,30 @@ class FileProcessor(QThread):
                 
         except Exception as e:
             logger.error(f"Error processing file {filepath}: {e}")
-            self.transfer_complete.emit(filename, False, f"Error: {str(e)}")
+            self.transfer_complete.emit(filename, filepath, False, f"Error: {str(e)}")
+        finally:
+            # Always remove from processing files when done
+            if self.app_instance:
+                self.app_instance.processing_files.discard(filepath)
+                logger.info(f"File tracking: {filepath} removed from processing")
+                # Keep the remote path mapping until transfer is complete
+                # It will be cleaned up in on_transfer_complete
+
+    def _should_create_directory(self, remote_dir: str) -> bool:
+        """
+        Check if a remote directory should be created, using cache to avoid redundant attempts.
+        
+        Args:
+            remote_dir: Remote directory path
+            
+        Returns:
+            True if directory should be created, False if already exists in cache
+        """
+        if self.app_instance:
+            return remote_dir not in self.app_instance.created_directories
+        else:
+            # Fallback if no app instance - always attempt creation (original behavior)
+            return True
     
     def stop(self):
         """Stop the processor thread"""
@@ -1341,8 +1480,10 @@ class RemoteBrowserDialog(QDialog):
         
         # Get directory listing
         items = self.webdav_client.list_directory(self.current_path)
+        logging.info(f"GUI: Retrieved {len(items)} items from list_directory for {self.current_path}")
         
-        for item in items:
+        for i, item in enumerate(items):
+            logging.info(f"GUI: Processing item {i}: {item['name']} (is_dir: {item['is_dir']}, size: {item['size']})")
             if item['is_dir']:
                 tree_item = QTreeWidgetItem(self.tree, [
                     item['name'],
@@ -1350,6 +1491,7 @@ class RemoteBrowserDialog(QDialog):
                     ""
                 ])
                 tree_item.setData(0, Qt.ItemDataRole.UserRole, item['path'])
+                logging.info(f"GUI: Added folder item: {item['name']}")
             else:
                 size_mb = item['size'] / (1024 * 1024)
                 tree_item = QTreeWidgetItem(self.tree, [
@@ -1358,6 +1500,9 @@ class RemoteBrowserDialog(QDialog):
                     f"{size_mb:.2f} MB"
                 ])
                 tree_item.setData(0, Qt.ItemDataRole.UserRole, item['path'])
+                logging.info(f"GUI: Added file item: {item['name']} ({size_mb:.2f} MB)")
+        
+        logging.info(f"GUI: Tree widget now has {self.tree.topLevelItemCount()} total items")
     
     def on_item_double_click(self, item, column):
         """Handle double-click on item"""
@@ -1459,11 +1604,16 @@ class MainWindow(QMainWindow):
         
         # Core application components
         self.file_queue = queue.Queue()                    # Thread-safe queue for file processing
-        self.file_processor = FileProcessor(self.file_queue)  # Background processing thread
+        self.file_processor = FileProcessor(self.file_queue, self)  # Background processing thread
         self.monitor_handler = None                        # File system event handler
         self.observer = None                              # Watchdog observer for file monitoring
         self.webdav_client = None                         # WebDAV client instance
         self.transfer_rows = {}                           # Track UI table rows for updates
+        self.queued_files = set()                         # Track files already queued to prevent duplicates
+        self.processing_files = set()                     # Track files currently being processed
+        self.created_directories = set()                  # Cache of successfully created remote directories
+        self.failed_files = {}                           # Track files that failed verification for re-upload
+        self.file_remote_paths = {}                      # Track filepath -> remote_path mappings to prevent duplicate uploads
         
         # Load application configuration from disk
         self.config = self.load_config()
@@ -1484,6 +1634,11 @@ class MainWindow(QMainWindow):
         self.queue_timer = QTimer()
         self.queue_timer.timeout.connect(self.update_queue_size)
         self.queue_timer.start(1000)  # Update queue size display every second
+        
+        # Setup periodic file polling as backup to watchdog events
+        self.poll_timer = QTimer()
+        self.poll_timer.timeout.connect(self.poll_for_new_files)
+        # Timer will be started when monitoring begins
     
     def setup_ui(self):
         central_widget = QWidget()
@@ -1520,6 +1675,11 @@ class MainWindow(QMainWindow):
         self.rescan_btn.setEnabled(False)  # Only enabled when monitoring
         self.rescan_btn.setToolTip("Manually scan directory for files to upload")
         control_layout.addWidget(self.rescan_btn)
+
+        self.test_monitoring_btn = QPushButton("Test Monitoring")
+        self.test_monitoring_btn.clicked.connect(self.test_monitoring_setup)
+        self.test_monitoring_btn.setToolTip("Test if file system monitoring is working in current environment")
+        control_layout.addWidget(self.test_monitoring_btn)
 
         self.test_connection_btn = QPushButton("Test Connection")
         self.test_connection_btn.clicked.connect(self.test_connection)
@@ -1594,7 +1754,7 @@ class MainWindow(QMainWindow):
         ext_layout.addWidget(ext_info)
         
         self.extensions_input = QLineEdit()
-        self.extensions_input.setPlaceholderText("raw, sld, csv")
+        # Default values are set via load_settings() method, not placeholder text
         ext_layout.addWidget(self.extensions_input)
         
         ext_group.setLayout(ext_layout)
@@ -1740,6 +1900,11 @@ class MainWindow(QMainWindow):
         queue_layout.addWidget(self.queue_label)
         queue_layout.addStretch()
         
+        reupload_btn = QPushButton("Re-upload Failed")
+        reupload_btn.clicked.connect(self.reupload_failed_files)
+        reupload_btn.setToolTip("Re-upload files that failed checksum verification")
+        queue_layout.addWidget(reupload_btn)
+        
         clear_btn = QPushButton("Clear Completed")
         clear_btn.clicked.connect(self.clear_completed_transfers)
         queue_layout.addWidget(clear_btn)
@@ -1758,6 +1923,10 @@ class MainWindow(QMainWindow):
         header.resizeSection(2, 80)   # Status
         header.resizeSection(3, 100)  # Progress
         header.setStretchLastSection(True)  # Message column stretches
+        
+        # Add context menu for re-upload
+        self.transfer_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.transfer_table.customContextMenuRequested.connect(self.show_transfer_context_menu)
         
         layout.addWidget(self.transfer_table)
         
@@ -1910,11 +2079,19 @@ class MainWindow(QMainWindow):
             self.observer.stop()
             self.observer.join()
             self.observer = None
+            self.poll_timer.stop()  # Stop polling timer
             self.start_btn.setText("Start Monitoring")
             self.rescan_btn.setEnabled(False)
             self.status_label.setText("Not monitoring")
             self.status_label.setStyleSheet("font-weight: bold; color: red;")
             self.log_text.append(f"{datetime.now().strftime('%H:%M:%S')} - Stopped monitoring")
+            
+            # Clear tracking sets when stopping monitoring
+            self.queued_files.clear()
+            self.created_directories.clear()
+            self.failed_files.clear()
+            self.file_remote_paths.clear()
+            # Note: Keep processing_files and transfer_rows intact as files may still be transferring
         else:
             # Start monitoring
             directory = self.dir_input.text()
@@ -1956,7 +2133,8 @@ class MainWindow(QMainWindow):
             self.monitor_handler = FileMonitorHandler(
                 extensions, 
                 self.file_queue,
-                self.subdirs_check.isChecked()
+                self.subdirs_check.isChecked(),
+                self  # Pass app instance for duplicate tracking
             )
             
             self.observer = Observer()
@@ -1968,6 +2146,9 @@ class MainWindow(QMainWindow):
             
             self.observer.start()
             
+            # Start periodic polling as backup (every 30 seconds)
+            self.poll_timer.start(30000)  # 30 seconds
+            
             # Scan for existing files in the directory
             self.scan_existing_files(directory, extensions, self.subdirs_check.isChecked())
             
@@ -1978,6 +2159,89 @@ class MainWindow(QMainWindow):
             
             self.log_text.append(f"{datetime.now().strftime('%H:%M:%S')} - Started monitoring {directory}")
             self.log_text.append(f"Extensions: {', '.join(extensions)}")
+            self.log_text.append(f"{datetime.now().strftime('%H:%M:%S')} - File system events + periodic polling (30s) enabled")
+    
+    def test_monitoring_setup(self):
+        """Test if file monitoring will work in the current environment"""
+        directory = self.dir_input.text()
+        
+        if not directory:
+            QMessageBox.warning(self, "No Directory", "Please select a directory to test first.")
+            return
+        
+        if not os.path.exists(directory):
+            QMessageBox.warning(self, "Invalid Directory", "Selected directory does not exist.")
+            return
+        
+        try:
+            from watchdog.observers import Observer
+            from watchdog.events import FileSystemEventHandler
+            
+            class TestHandler(FileSystemEventHandler):
+                def __init__(self):
+                    self.events = []
+                
+                def on_created(self, event):
+                    if not event.is_directory:
+                        self.events.append(f"Created: {os.path.basename(event.src_path)}")
+                
+                def on_modified(self, event):
+                    if not event.is_directory:
+                        self.events.append(f"Modified: {os.path.basename(event.src_path)}")
+                
+                def on_moved(self, event):
+                    if not event.is_directory:
+                        self.events.append(f"Moved: {os.path.basename(event.dest_path)}")
+            
+            # Set up test observer
+            handler = TestHandler()
+            observer = Observer()
+            observer.schedule(handler, directory, recursive=False)
+            observer.start()
+            
+            # Create a test file
+            test_filename = f"panoramabridge_test_{int(time.time())}.tmp"
+            test_filepath = os.path.join(directory, test_filename)
+            
+            try:
+                with open(test_filepath, 'w') as f:
+                    f.write("PanoramaBridge monitoring test file")
+                
+                # Wait for events
+                time.sleep(2)
+                
+                # Clean up test file
+                os.remove(test_filepath)
+                
+                observer.stop()
+                observer.join()
+                
+                if handler.events:
+                    msg = f"✓ File system monitoring is working!\n\nEvents detected:\n"
+                    for event in handler.events:
+                        msg += f"  • {event}\n"
+                    msg += "\nNew files in this directory should be detected automatically."
+                    QMessageBox.information(self, "Monitoring Test - SUCCESS", msg)
+                else:
+                    msg = ("✗ File system events were not detected.\n\n"
+                          "This is common on:\n"
+                          "• Network drives\n"
+                          "• Some virtual file systems\n"
+                          "• Certain WSL configurations\n\n"
+                          "The periodic polling backup (every 30 seconds) will be used instead.")
+                    QMessageBox.warning(self, "Monitoring Test - Limited Functionality", msg)
+                    
+            except Exception as e:
+                observer.stop()
+                observer.join()
+                QMessageBox.critical(self, "Test Error", f"Error during monitoring test: {e}")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Test Error", f"Failed to set up monitoring test: {e}")
+        
+        # Log the test
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        self.log_text.append(f"{timestamp} - Monitoring test completed for {directory}")
     
     def manual_rescan(self):
         """Manually rescan directory for files"""
@@ -2019,10 +2283,13 @@ class MainWindow(QMainWindow):
                             continue
                             
                         if any(filepath.lower().endswith(ext) for ext in formatted_extensions):
-                            # Add existing file to queue
-                            self.file_queue.put(filepath)
-                            files_found += 1
-                            logger.info(f"Queued existing file: {filepath}")
+                            # Check for duplicates before queueing
+                            if self._should_queue_file_scan(filepath):
+                                self.file_queue.put(filepath)
+                                files_found += 1
+                                logger.info(f"Queued existing file: {filepath}")
+                            else:
+                                logger.debug(f"File already queued or processing, skipping: {filepath}")
                         else:
                             logger.debug(f"File {filepath} doesn't match extensions")
             else:
@@ -2038,10 +2305,13 @@ class MainWindow(QMainWindow):
                                 continue
                                 
                             if any(filepath.lower().endswith(ext) for ext in formatted_extensions):
-                                # Add existing file to queue
-                                self.file_queue.put(filepath)
-                                files_found += 1
-                                logger.info(f"Queued existing file: {filepath}")
+                                # Check for duplicates before queueing
+                                if self._should_queue_file_scan(filepath):
+                                    self.file_queue.put(filepath)
+                                    files_found += 1
+                                    logger.info(f"Queued existing file: {filepath}")
+                                else:
+                                    logger.debug(f"File already queued or processing, skipping: {filepath}")
                 except OSError as e:
                     logger.error(f"Error listing directory {directory}: {e}")
         except Exception as e:
@@ -2056,15 +2326,152 @@ class MainWindow(QMainWindow):
             self.log_text.append(f"{datetime.now().strftime('%H:%M:%S')} - No existing files found matching criteria")
             logger.info("Scan complete: no existing files found")
 
+    def _should_queue_file_scan(self, filepath: str) -> bool:
+        """
+        Check if a file should be queued during scanning, preventing duplicates.
+        
+        Args:
+            filepath: Path to the file being considered for queueing
+            
+        Returns:
+            True if file should be queued, False if already queued/processing
+        """
+        # Check if file is already queued or being processed
+        if filepath in self.queued_files:
+            return False
+        if filepath in self.processing_files:
+            return False
+        
+        # Add to queued files tracking
+        self.queued_files.add(filepath)
+        return True
+
     def update_queue_size(self):
         """Update queue size display"""
         size = self.file_queue.qsize()
         self.queue_label.setText(f"{size} files")
     
+    def poll_for_new_files(self):
+        """
+        Periodic polling for new files as backup to file system events.
+        
+        This method serves as a fallback when file system events aren't 
+        working properly (common on network mounts, WSL, etc.). It scans
+        the monitored directory for new files that haven't been processed.
+        """
+        if not self.observer or not self.observer.is_alive():
+            return
+            
+        try:
+            directory = self.dir_input.text()
+            extensions = [e.strip() for e in self.extensions_input.text().split(',') if e.strip()]
+            
+            if not directory or not extensions:
+                return
+                
+            # Convert extensions to the same format as FileMonitorHandler
+            formatted_extensions = [ext.lower() if ext.startswith('.') else f'.{ext.lower()}' 
+                                   for ext in extensions]
+            
+            logger.debug(f"Polling for new files in {directory}")
+            files_found = 0
+            
+            if self.subdirs_check.isChecked():
+                # Recursively scan all subdirectories
+                for root, dirs, files in os.walk(directory):
+                    for file in files:
+                        filepath = os.path.join(root, file)
+                        
+                        # Skip hidden/system files
+                        if file.startswith('.') or file.startswith('~'):
+                            continue
+                            
+                        if any(filepath.lower().endswith(ext) for ext in formatted_extensions):
+                            # Check if this is a new file we haven't seen
+                            if self._should_queue_file_poll(filepath):
+                                # Check if file is stable (not being written)
+                                if self._is_file_stable(filepath):
+                                    self.file_queue.put(filepath)
+                                    files_found += 1
+                                    logger.info(f"Polling: Queued new file: {filepath}")
+            else:
+                # Scan only the top-level directory
+                try:
+                    for item in os.listdir(directory):
+                        filepath = os.path.join(directory, item)
+                        if os.path.isfile(filepath):
+                            # Skip hidden/system files
+                            if item.startswith('.') or item.startswith('~'):
+                                continue
+                                
+                            if any(filepath.lower().endswith(ext) for ext in formatted_extensions):
+                                # Check if this is a new file we haven't seen
+                                if self._should_queue_file_poll(filepath):
+                                    # Check if file is stable (not being written)
+                                    if self._is_file_stable(filepath):
+                                        self.file_queue.put(filepath)
+                                        files_found += 1
+                                        logger.info(f"Polling: Queued new file: {filepath}")
+                except OSError as e:
+                    logger.error(f"Error polling directory {directory}: {e}")
+                    
+            if files_found > 0:
+                logger.info(f"Polling: Found {files_found} new files to process")
+                
+        except Exception as e:
+            logger.error(f"Error in periodic file polling: {e}")
+    
+    def _should_queue_file_poll(self, filepath: str) -> bool:
+        """
+        Check if a file should be queued during polling, preventing duplicates.
+        
+        Args:
+            filepath: Path to the file being considered for queueing
+            
+        Returns:
+            True if file should be queued, False if already queued/processing
+        """
+        # Check if file is already queued or being processed
+        if filepath in self.queued_files:
+            return False
+        if filepath in self.processing_files:
+            return False
+        
+        # Add to queued files tracking
+        self.queued_files.add(filepath)
+        return True
+    
+    def _is_file_stable(self, filepath: str, stability_time: float = 2.0) -> bool:
+        """
+        Check if a file is stable (not being written to).
+        
+        Args:
+            filepath: Path to the file to check
+            stability_time: Time in seconds to wait for size stability
+            
+        Returns:
+            True if file appears stable, False otherwise
+        """
+        try:
+            # Get initial file stats
+            stat1 = os.stat(filepath)
+            time.sleep(0.1)  # Brief pause
+            stat2 = os.stat(filepath)
+            
+            # Check if size and modification time are stable
+            return (stat1.st_size == stat2.st_size and 
+                    stat1.st_mtime == stat2.st_mtime and
+                    time.time() - stat1.st_mtime > stability_time)
+        except (OSError, IOError):
+            return False
+    
     @pyqtSlot(str, str, str)
     def on_status_update(self, filename: str, status: str, filepath: str):
         """Handle status updates from processor"""
-        if filename not in self.transfer_rows:
+        # Create unique key for files with same name in different directories
+        unique_key = f"{filename}|{hash(filepath)}"
+        
+        if unique_key not in self.transfer_rows:
             # Add new row at the bottom (chronological order - oldest first, newest last)
             row = self.transfer_table.rowCount()
             self.transfer_table.insertRow(row)
@@ -2098,17 +2505,19 @@ class MainWindow(QMainWindow):
             
             self.transfer_table.setItem(row, 4, QTableWidgetItem(""))
             
-            self.transfer_rows[filename] = row
+            self.transfer_rows[unique_key] = row
         else:
             # Update existing row
-            row = self.transfer_rows[filename]
+            row = self.transfer_rows[unique_key]
             self.transfer_table.item(row, 2).setText(status)
     
     @pyqtSlot(str, int, int)
-    def on_progress_update(self, filename: str, current: int, total: int):
+    def on_progress_update(self, filepath: str, current: int, total: int):
         """Handle progress updates from processor"""
-        if filename in self.transfer_rows:
-            row = self.transfer_rows[filename]
+        filename = os.path.basename(filepath)
+        unique_key = f"{filename}|{hash(filepath)}"
+        if unique_key in self.transfer_rows:
+            row = self.transfer_rows[unique_key]
             progress_bar = self.transfer_table.cellWidget(row, 3)
             if progress_bar:
                 # Always use percentage (0-100) for consistent progress bar display
@@ -2118,15 +2527,32 @@ class MainWindow(QMainWindow):
                 else:
                     progress_bar.setValue(0)
     
-    @pyqtSlot(str, bool, str)
-    def on_transfer_complete(self, filename: str, success: bool, message: str):
+    @pyqtSlot(str, str, bool, str)
+    def on_transfer_complete(self, filename: str, filepath: str, success: bool, message: str):
         """Handle transfer completion"""
-        if filename in self.transfer_rows:
-            row = self.transfer_rows[filename]
+        unique_key = f"{filename}|{hash(filepath)}"
+        if unique_key in self.transfer_rows:
+            row = self.transfer_rows[unique_key]
             
             status = "Complete" if success else "Failed"
             self.transfer_table.item(row, 2).setText(status)
             self.transfer_table.item(row, 4).setText(message)
+            
+            # Track failed files for re-upload (specifically verification failures)
+            if not success and ("verification failed" in message.lower() or "checksum" in message.lower()):
+                self.failed_files[unique_key] = {
+                    'filepath': filepath,
+                    'filename': filename,
+                    'message': message,
+                    'row': row
+                }
+            elif success and unique_key in self.failed_files:
+                # Remove from failed files if now successful
+                del self.failed_files[unique_key]
+            
+            # Clean up remote path tracking when transfer is complete
+            if filepath in self.file_remote_paths:
+                del self.file_remote_paths[filepath]
             
             # Update progress bar - ensure it shows 100% when complete
             progress_bar = self.transfer_table.cellWidget(row, 3)
@@ -2158,26 +2584,37 @@ class MainWindow(QMainWindow):
             self.file_processor.conflict_resolution = resolution
             self.file_processor.apply_to_all = apply_to_all
             
-            # Re-queue the file for processing with the resolution
-            self.file_queue.put({
-                'filepath': filepath,
-                'filename': filename,
-                'remote_path': remote_path,
-                'resolution': resolution,
-                'new_name': new_name
-            })
-            
-            # Log the resolution
-            timestamp = datetime.now().strftime('%H:%M:%S')
-            action_text = {
-                'overwrite': 'overwrite remote file',
-                'rename': 'rename and upload',
-                'skip': 'skip upload'
-            }.get(resolution, resolution)
-            
-            self.log_text.append(f"{timestamp} - Conflict resolved for {filename}: {action_text}")
-            if apply_to_all:
-                self.log_text.append(f"{timestamp} - Resolution will be applied to all future conflicts")
+            # Check for duplicates before re-queueing
+            if filepath not in self.queued_files and filepath not in self.processing_files:
+                # Re-queue the file for processing with the resolution
+                self.file_queue.put({
+                    'filepath': filepath,
+                    'filename': filename,
+                    'remote_path': remote_path,
+                    'resolution': resolution,
+                    'new_name': new_name
+                })
+                
+                # Add to tracking (conflict resolution files bypass normal duplicate detection)
+                self.queued_files.add(filepath)
+                
+                logger.info(f"Conflict resolution: Re-queuing {filepath} with remote_path={remote_path}, resolution={resolution}")
+                
+                # Log the resolution
+                timestamp = datetime.now().strftime('%H:%M:%S')
+                action_text = {
+                    'overwrite': 'overwrite remote file',
+                    'rename': 'rename and upload',
+                    'skip': 'skip upload'
+                }.get(resolution, resolution)
+                
+                self.log_text.append(f"{timestamp} - Conflict resolved for {filename}: {action_text}")
+                if apply_to_all:
+                    self.log_text.append(f"{timestamp} - Resolution will be applied to all future conflicts")
+            else:
+                # File already being processed
+                timestamp = datetime.now().strftime('%H:%M:%S')
+                self.log_text.append(f"{timestamp} - Conflict resolution skipped for {filename}: already being processed")
         else:
             # User cancelled - skip this file
             timestamp = datetime.now().strftime('%H:%M:%S')
@@ -2187,22 +2624,163 @@ class MainWindow(QMainWindow):
         """Clear completed transfers from the table"""
         rows_to_remove = []
         
-        for filename, row in self.transfer_rows.items():
+        for unique_key, row in self.transfer_rows.items():
             status_item = self.transfer_table.item(row, 2)  # Status is now column 2
             if status_item and status_item.text() in ["Complete", "Failed"]:
-                rows_to_remove.append((row, filename))
+                rows_to_remove.append((row, unique_key))
         
         # Sort in reverse order to remove from bottom up
         rows_to_remove.sort(reverse=True)
         
-        for row, filename in rows_to_remove:
+        for row, unique_key in rows_to_remove:
             self.transfer_table.removeRow(row)
-            del self.transfer_rows[filename]
+            del self.transfer_rows[unique_key]
+            
+            # Remove from failed files tracking if present
+            if unique_key in self.failed_files:
+                del self.failed_files[unique_key]
             
             # Update remaining row numbers
-            for fname, r in self.transfer_rows.items():
+            for key, r in self.transfer_rows.items():
                 if r > row:
-                    self.transfer_rows[fname] = r - 1
+                    self.transfer_rows[key] = r - 1
+    
+    def reupload_failed_files(self):
+        """Re-upload all files that failed verification"""
+        if not self.failed_files:
+            QMessageBox.information(self, "No Failed Files", 
+                                  "There are no files that failed verification to re-upload.")
+            return
+        
+        failed_count = len(self.failed_files)
+        reply = QMessageBox.question(self, "Re-upload Failed Files",
+                                   f"Re-upload {failed_count} file(s) that failed verification?",
+                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            requeued = 0
+            for unique_key, failed_info in list(self.failed_files.items()):
+                filepath = failed_info['filepath']
+                filename = failed_info['filename']
+                
+                # Check if file still exists
+                if os.path.exists(filepath):
+                    # Check for duplicates before re-queueing
+                    if filepath not in self.queued_files and filepath not in self.processing_files:
+                        # Reset the row status
+                        row = failed_info['row']
+                        if row < self.transfer_table.rowCount():
+                            status_item = self.transfer_table.item(row, 2)
+                            message_item = self.transfer_table.item(row, 4)
+                            if status_item:
+                                status_item.setText("Queued")
+                            if message_item:
+                                message_item.setText("Re-upload requested")
+                            
+                            # Reset progress bar
+                            progress_bar = self.transfer_table.cellWidget(row, 3)
+                            if progress_bar:
+                                progress_bar.setValue(0)
+                                progress_bar.setStyleSheet("")  # Clear any error styling
+                        
+                        # Add to queue for re-processing and tracking
+                        self.file_queue.put(filepath)
+                        self.queued_files.add(filepath)  # Add to tracking
+                        requeued += 1
+                        
+                        # Remove from failed files (will be re-added if it fails again)
+                        del self.failed_files[unique_key]
+                    else:
+                        # File already queued/processing, remove from failed files
+                        del self.failed_files[unique_key]
+                else:
+                    # File no longer exists, remove from tracking
+                    del self.failed_files[unique_key]
+            
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            self.log_text.append(f"{timestamp} - Re-queued {requeued} failed file(s) for upload")
+    
+    def show_transfer_context_menu(self, position):
+        """Show context menu for transfer table"""
+        item = self.transfer_table.itemAt(position)
+        if item is None:
+            return
+        
+        row = item.row()
+        status_item = self.transfer_table.item(row, 2)
+        
+        if not status_item:
+            return
+            
+        status = status_item.text()
+        
+        menu = QMenu(self)
+        
+        if status == "Failed":
+            # Find the unique key for this row
+            unique_key = None
+            for key, r in self.transfer_rows.items():
+                if r == row:
+                    unique_key = key
+                    break
+            
+            if unique_key and unique_key in self.failed_files:
+                reupload_action = menu.addAction("Re-upload File")
+                reupload_action.triggered.connect(lambda: self.reupload_single_file(unique_key))
+        
+        if menu.actions():
+            menu.exec(self.transfer_table.mapToGlobal(position))
+    
+    def reupload_single_file(self, unique_key: str):
+        """Re-upload a single failed file"""
+        if unique_key not in self.failed_files:
+            return
+        
+        failed_info = self.failed_files[unique_key]
+        filepath = failed_info['filepath']
+        filename = failed_info['filename']
+        
+        # Check if file still exists
+        if not os.path.exists(filepath):
+            QMessageBox.warning(self, "File Not Found", 
+                              f"The file {filename} no longer exists and cannot be re-uploaded.")
+            # Remove from failed files tracking
+            del self.failed_files[unique_key]
+            return
+        
+        # Check for duplicates before re-queueing
+        if filepath in self.queued_files or filepath in self.processing_files:
+            QMessageBox.information(self, "File Already Queued", 
+                                  f"The file {filename} is already queued or being processed.")
+            # Remove from failed files since it's being handled
+            del self.failed_files[unique_key]
+            return
+        
+        # Reset the row status
+        row = failed_info['row']
+        if row < self.transfer_table.rowCount():
+            status_item = self.transfer_table.item(row, 2)
+            message_item = self.transfer_table.item(row, 4)
+            if status_item:
+                status_item.setText("Queued")
+            if message_item:
+                message_item.setText("Re-upload requested")
+            
+            # Reset progress bar
+            progress_bar = self.transfer_table.cellWidget(row, 3)
+            if progress_bar:
+                progress_bar.setValue(0)
+                progress_bar.setStyleSheet("")  # Clear any error styling
+        
+        # Add to queue for re-processing and tracking
+        self.file_queue.put(filepath)
+        self.queued_files.add(filepath)  # Add to tracking
+        
+        # Remove from failed files (will be re-added if it fails again)
+        del self.failed_files[unique_key]
+        
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        self.log_text.append(f"{timestamp} - Re-queued {filename} for upload")
     
     def get_conflict_resolution_setting(self) -> str:
         """Get the current conflict resolution setting"""

@@ -77,6 +77,8 @@ python panoramabridge.py
 
 ## Creating a Windows Executable (Optional)
 
+> **📋 For detailed Windows build instructions, see [BUILD_WINDOWS.md](BUILD_WINDOWS.md)**
+
 To create a standalone .exe file:
 
 ### 1. Install PyInstaller
@@ -92,6 +94,15 @@ pyinstaller --onefile --windowed --name "PanoramaBridge" panoramabridge.py
 ```
 
 The executable will be in the `dist` folder.
+
+### Alternative: Use Build Scripts
+
+For easier building on Windows, use the provided build scripts:
+
+- **Command Prompt**: Run `build_windows.bat`
+- **PowerShell**: Run `build_windows.ps1`
+
+These scripts automatically handle virtual environment setup, dependency installation, and executable creation. See [BUILD_WINDOWS.md](BUILD_WINDOWS.md) for complete details.
 
 ## User Interface
 
