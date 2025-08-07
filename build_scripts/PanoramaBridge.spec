@@ -1,5 +1,4 @@
 # -*- mode: python ; coding: utf-8 -*-
-import os
 
 
 a = Analysis(
@@ -36,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=os.path.join(os.path.dirname(__file__), '..', 'screenshots', 'panoramabridge-logo.ico'),
+    icon='../screenshots/panoramabridge-logo.ico',
 )
