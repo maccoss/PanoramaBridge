@@ -1138,29 +1138,30 @@ class FileProcessor(QThread):
             # Give up after max retries
             self.transfer_complete.emit(
                 filename, filepath, False, 
-                f"File locked after {max_retries} retries: {access_error}"
+                f"File remained locked after {max_retries} attempts over {int((self.app_instance.initial_wait_spin.value() * 60 + max_retries * self.app_instance.retry_interval_spin.value()) / 60)} minutes. File may still be in use by instrument or analysis software."
             )
             self.locked_file_retries.pop(retry_key, None)
             return
         
-        # Calculate wait time
+        # Calculate wait time and create user-friendly status messages
         if retry_count == 0:
             # First attempt - use initial wait time
             wait_time_ms = self.app_instance.initial_wait_spin.value() * 60 * 1000  # Convert minutes to ms
-            status_msg = f"File locked, waiting {self.app_instance.initial_wait_spin.value()} minutes (LC-MS run)..."
+            wait_minutes = self.app_instance.initial_wait_spin.value()
+            status_msg = f"File locked - waiting {wait_minutes} minutes for instrument to finish writing..."
         else:
             # Subsequent attempts - use retry interval
             wait_time_ms = self.app_instance.retry_interval_spin.value() * 1000  # Convert seconds to ms
+            wait_seconds = self.app_instance.retry_interval_spin.value()
             remaining_retries = max_retries - retry_count
-            status_msg = f"File locked, retrying in {self.app_instance.retry_interval_spin.value()}s ({remaining_retries} retries left)..."
+            status_msg = f"File still locked - trying again in {wait_seconds}s (attempt {retry_count + 1} of {max_retries})"
         
-        # Update status
+        # Update status with clear, user-friendly message
         self.status_update.emit(filename, status_msg, filepath)
         
-        # Schedule retry
+        # Schedule retry using QTimer
         self.locked_file_retries[retry_key] = retry_count + 1
         
-        # Use QTimer for the retry
         retry_timer = QTimer()
         retry_timer.setSingleShot(True)
         retry_timer.timeout.connect(
@@ -1168,18 +1169,110 @@ class FileProcessor(QThread):
         )
         retry_timer.start(wait_time_ms)
         
-        logger.info(f"Scheduled locked file retry for {filename} (attempt {retry_count + 1}) in {wait_time_ms/1000}s")
+        # Create a progress timer that updates status during wait (for initial long wait only)
+        if retry_count == 0:  
+            wait_minutes = self.app_instance.initial_wait_spin.value()
+            self._start_progress_countdown(filepath, filename, wait_time_ms, wait_minutes, "minutes")
+        
+        logger.info(f"Scheduled locked file retry for {filename} (attempt {retry_count + 1}) in {wait_time_ms/1000:.1f}s")
+    
+    def _start_progress_countdown(self, filepath: str, filename: str, total_wait_ms: int, total_time_value: int, time_unit: str):
+        """Start a countdown timer to show progress during file lock wait"""
+        if not hasattr(self, 'progress_timers'):
+            self.progress_timers = {}
+        
+        # Update every 10 seconds for minutes, every second for seconds
+        update_interval_ms = 10000 if time_unit == "minutes" else 1000
+        elapsed_time = 0
+        
+        progress_timer = QTimer()
+        progress_timer.timeout.connect(lambda: self._update_progress_countdown(
+            filepath, filename, elapsed_time, total_wait_ms, total_time_value, time_unit, progress_timer
+        ))
+        
+        self.progress_timers[filepath] = {
+            'timer': progress_timer,
+            'elapsed': 0,
+            'total_ms': total_wait_ms,
+            'total_value': total_time_value,
+            'unit': time_unit
+        }
+        
+        progress_timer.start(update_interval_ms)
+    
+    def _update_progress_countdown(self, filepath: str, filename: str, elapsed_ms: int, total_ms: int, total_value: int, unit: str, timer: QTimer):
+        """Update the countdown progress display"""
+        if filepath not in self.progress_timers:
+            timer.stop()
+            return
+            
+        progress_info = self.progress_timers[filepath]
+        progress_info['elapsed'] += 10000 if unit == "minutes" else 1000
+        
+        remaining_ms = total_ms - progress_info['elapsed']
+        
+        if remaining_ms <= 0:
+            # Time's up, stop progress timer
+            timer.stop()
+            self.progress_timers.pop(filepath, None)
+            return
+        
+        if unit == "minutes":
+            remaining_minutes = max(1, int(remaining_ms / 60000))
+            elapsed_minutes = int(progress_info['elapsed'] / 60000)
+            progress_msg = f"File locked - waiting for instrument ({elapsed_minutes}/{total_value} minutes elapsed)"
+        else:
+            remaining_seconds = max(1, int(remaining_ms / 1000))
+            progress_msg = f"File still locked - trying again in {remaining_seconds}s..."
+        
+        self.status_update.emit(filename, progress_msg, filepath)
     
     def retry_locked_file(self, filepath: str, remote_path: str, filename: str, timer: QTimer):
         """Retry uploading a previously locked file"""
         timer.deleteLater()  # Clean up timer
         
+        retry_key = filepath
+        
         # Check if file still exists
         if not os.path.exists(filepath):
             self.transfer_complete.emit(filename, filepath, False, "File no longer exists")
-            retry_key = filepath
             self.locked_file_retries.pop(retry_key, None)
             return
+        
+        # Check if we still have retry info
+        if retry_key not in self.locked_file_retries:
+            logger.warning(f"No retry info found for {filename}, attempting upload anyway")
+            self.upload_file(filepath, remote_path, filename)
+            return
+            
+        retry_info = self.locked_file_retries[retry_key]
+        retry_info['attempts'] += 1
+        
+        # Clean up any existing progress timer
+        if 'progress_timer_id' in retry_info:
+            timer_id = retry_info.pop('progress_timer_id')
+            if hasattr(self.app_instance, 'progress_timers') and timer_id in self.app_instance.progress_timers:
+                self.app_instance.progress_timers[timer_id].stop()
+                del self.app_instance.progress_timers[timer_id]
+        
+        # Check if file is still accessible
+        accessible, access_error = self.is_file_accessible(filepath)
+        if not accessible:
+            # Still locked, check max retries
+            if retry_info['attempts'] >= retry_info['max_retries']:
+                # Clean up retry info
+                self.locked_file_retries.pop(retry_key, None)
+                # Update status to failed
+                self.status_update.emit(filename, "File locked - max retries exceeded", filepath)
+                self.transfer_complete.emit(filename, filepath, False, f"File remained locked after {retry_info['attempts']} attempts: {access_error}")
+                return
+            else:
+                # Schedule another retry
+                self.schedule_locked_file_retry(filepath, remote_path, filename, access_error)
+                return
+        
+        # File is now accessible, clean up retry tracking
+        self.locked_file_retries.pop(retry_key, None)
         
         # Try uploading again
         logger.info(f"Retrying locked file: {filename}")
@@ -1212,9 +1305,21 @@ class FileProcessor(QThread):
                     self.schedule_locked_file_retry(filepath, remote_path, filename, access_error)
                     return
             
-            # Calculate checksum for verification
+            # Calculate checksum for verification - this will also fail if file is locked
             self.status_update.emit(filename, "Calculating checksum...", filepath)
-            local_checksum = self.calculate_checksum(filepath)
+            try:
+                local_checksum = self.calculate_checksum(filepath)
+            except (PermissionError, IOError) as e:
+                # File became locked during checksum calculation
+                if hasattr(self.app_instance, 'enable_locked_retry_check') and \
+                   self.app_instance.enable_locked_retry_check.isChecked():
+                    error_msg = f"File locked during checksum: {str(e)}"
+                    self.schedule_locked_file_retry(filepath, remote_path, filename, error_msg)
+                    return
+                else:
+                    # Locked file handling disabled, treat as error
+                    self.transfer_complete.emit(filename, filepath, False, f"Cannot access file: {str(e)}")
+                    return
             
             # Create remote directory if needed (check cache to avoid redundant attempts)
             remote_dir = os.path.dirname(remote_path)
@@ -1283,25 +1388,47 @@ class FileProcessor(QThread):
         logger.info(f"Remote base path: {self.remote_base_path}")
         
         try:
-            # Calculate local checksum
-            self.status_update.emit(filename, "Calculating checksum...", filepath)
-            local_checksum = self.calculate_checksum(filepath)
-            
-            # Determine remote path
+            # Determine remote path first (needed for locked file retry)
             if self.preserve_structure and self.local_base_path:
                 rel_path = os.path.relpath(filepath, self.local_base_path)
                 remote_path = f"{self.remote_base_path}/{rel_path}".replace('\\', '/')
                 logger.info(f"Preserve structure: {filepath} -> {remote_path} (rel_path: {rel_path})")
-                
-                # Create remote directories if needed (check cache to avoid redundant attempts)
-                remote_dir = os.path.dirname(remote_path)
-                if remote_dir != self.remote_base_path and self._should_create_directory(remote_dir):
-                    success = self.webdav_client.create_directory(remote_dir)
-                    if success and self.app_instance:
-                        self.app_instance.created_directories.add(remote_dir)
             else:
                 remote_path = f"{self.remote_base_path}/{filename}"
                 logger.info(f"No structure preservation: {filepath} -> {remote_path}")
+            
+            # Check if locked file retry is enabled and file is inaccessible
+            if hasattr(self.app_instance, 'enable_locked_retry_check') and \
+               self.app_instance.enable_locked_retry_check.isChecked():
+                
+                accessible, access_error = self.is_file_accessible(filepath)
+                if not accessible:
+                    # File is locked, schedule retry
+                    self.schedule_locked_file_retry(filepath, remote_path, filename, access_error)
+                    return
+            
+            # Calculate local checksum
+            self.status_update.emit(filename, "Calculating checksum...", filepath)
+            try:
+                local_checksum = self.calculate_checksum(filepath)
+            except (PermissionError, IOError) as e:
+                # File became locked during checksum calculation
+                if hasattr(self.app_instance, 'enable_locked_retry_check') and \
+                   self.app_instance.enable_locked_retry_check.isChecked():
+                    error_msg = f"File locked during checksum: {str(e)}"
+                    self.schedule_locked_file_retry(filepath, remote_path, filename, error_msg)
+                    return
+                else:
+                    # Locked file handling disabled, treat as error
+                    self.transfer_complete.emit(filename, filepath, False, f"Cannot access file: {str(e)}")
+                    return
+            
+            # Create remote directories if needed (check cache to avoid redundant attempts)
+            remote_dir = os.path.dirname(remote_path)
+            if self.preserve_structure and remote_dir != self.remote_base_path and self._should_create_directory(remote_dir):
+                success = self.webdav_client.create_directory(remote_dir)
+                if success and self.app_instance:
+                    self.app_instance.created_directories.add(remote_dir)
             
             # Check for duplicate upload attempts to same remote path
             if self.app_instance:
@@ -1944,8 +2071,9 @@ class MainWindow(QMainWindow):
             "Enable periodic directory scanning as backup to OS file events.\n"
             "OS events are faster and more efficient. Only enable polling if:\n"
             "• Files aren't being detected automatically\n"
-            "• Working with network drives or special file systems\n"
-            "• Running on WSL or virtual machines"
+            "• Monitoring remote filesystems (network drives, SMB/CIFS shares, NFS)\n"
+            "• Working with special file systems or cloud storage mounts\n"
+            "• Running on WSL2 or virtual machines where OS events may be unreliable"
         )
         adv_layout.addWidget(self.enable_polling_check, 2, 0, 1, 2)
         
@@ -1964,8 +2092,14 @@ class MainWindow(QMainWindow):
         self.enable_locked_retry_check = QCheckBox("Handle locked files (e.g., from mass spectrometers)")
         self.enable_locked_retry_check.setChecked(True)  # Default enabled for MS workflows
         self.enable_locked_retry_check.setToolTip(
-            "Wait for locked files to be fully written before uploading.\n"
-            "Useful for mass spectrometer files that take time to write completely."
+            "Wait for locked files to be fully written before uploading.\n\n"
+            "This prevents failed uploads when files are:\n"
+            "• Being written by mass spectrometers during data acquisition\n"
+            "• Locked by other software (analysis tools, file converters)\n"
+            "• Large files that take time to complete transfer/copy\n"
+            "• Generated by instruments that write data over extended periods\n\n"
+            "When enabled, locked files will wait for the configured time period\n"
+            "then retry periodically until accessible or max retries reached."
         )
         adv_layout.addWidget(self.enable_locked_retry_check, 4, 0, 1, 2)
         

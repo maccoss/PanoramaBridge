@@ -1,17 +1,29 @@
 # PanoramaBridge
 
-A Python Qt6 application for monitoring local directories and automatically transferring files to Panorama WebDAV servers. This tool provides real-time file monitoring with secure credential storage and robust upload capabilities.
+A Python Qt6 application for monitoring local directories and automatically transferring files to Panorama WebDAV servers. This tool provides intelligent file monitoring with secure credential storage, robust upload capabilities, and advanced features specifically designed for mass spectrometer workflows.
 
 ## Features
 
-- **Real-time File Monitoring**: Automatically detects new files in specified directories
+### Core Features
+- **Intelligent File Monitoring**: OS-level file system events with optional backup polling
 - **WebDAV Integration**: Seamless integration with Panorama WebDAV servers
 - **Secure Credential Storage**: Uses system keyring for safe password storage
 - **Chunked Upload**: Efficient handling of large files with progress tracking
 - **Directory Structure Preservation**: Maintains folder hierarchy on remote server
 - **Remote Directory Browser**: Navigate and create folders on the WebDAV server
+
+### Advanced Features
+- **Smart Locked File Handling**: Automatically detects and retries locked files from mass spectrometers
+- **Checksum Caching**: Dramatic performance improvements (up to 1700x faster for unchanged files)
+- **Progress Indication**: Real-time progress bars with elapsed time and countdown timers
+- **Windows Native Support**: Optimized .venv-win virtual environment for better file system event detection
+- **Configurable Retry Logic**: Customizable wait times and retry attempts for locked files
+
+### Performance & Reliability
+- **OS Event-Driven Monitoring**: Immediate file detection without polling overhead
+- **Intelligent Conflict Resolution**: Smart file comparison and duplicate handling
 - **Comprehensive Logging**: Detailed logs with menu-based access for troubleshooting
-- **Cross-platform**: Works on Windows, Linux, and macOS
+- **Cross-platform**: Works on Windows, Linux, and macOS (Windows native recommended)
 
 ## Requirements
 
@@ -36,6 +48,16 @@ keyrings.alt>=5.0.0
 
 ### 2. Create Virtual Environment (Recommended)
 
+#### For Windows (Native Performance):
+```bash
+# Create Windows-optimized virtual environment
+python -m venv .venv-win
+
+# Activate it
+.venv-win\Scripts\activate
+```
+
+#### For General Use:
 ```bash
 # Create virtual environment
 python -m venv .venv
@@ -115,6 +137,26 @@ These scripts automatically handle virtual environment setup, dependency install
 - **File Stability**: Configure how long to wait before considering a file complete
 
 ![Local Monitoring](screenshots/localmonitoring.png)
+
+### Advanced Settings Tab
+
+- **File Monitoring Optimization**:
+  - **OS Events vs Polling**: Uses efficient OS-level file system events by default
+  - **Backup Polling**: Optional backup polling for unreliable file systems (disabled by default)
+  - **Polling Interval**: Configurable 1-30 minute intervals when backup polling is enabled
+
+- **Locked File Handling** (Mass Spectrometer Workflows):
+  - **Smart Detection**: Automatically detects when files are locked by instruments during data acquisition
+  - **Intelligent Retry**: Configurable wait times and retry intervals for locked files
+  - **Progress Indication**: Shows elapsed wait time with countdown timers
+  - **Initial Wait Time**: Default 30 minutes before first retry (configurable)
+  - **Retry Interval**: Default 30 seconds between retry attempts (configurable)
+  - **Max Retries**: Default 20 attempts before giving up (configurable)
+
+- **Performance Settings**:
+  - **Checksum Caching**: Local caching for dramatic performance improvements (up to 1700x faster)
+  - **Cache Management**: Automatic cleanup and memory management
+  - **Upload Verification**: Configurable post-upload integrity checking
 
 ### Remote Settings Tab
 
@@ -214,10 +256,19 @@ Application logs are saved to: `panoramabridge.log`
    - Ensure files are being created in the monitored directory
    - Check subdirectory monitoring setting if files are in subfolders
    - File stability timeout may need adjustment for large files
+   - **WSL2 Users**: For better file system event detection on Windows, use the native Windows build with `.venv-win`
+
+4. **Locked File Handling (Mass Spectrometer Workflows)**
+   - **"File locked - waiting for instrument"**: This is normal behavior when instruments are writing data
+   - **Progress indication**: Status shows elapsed wait time like "File locked - waiting for instrument (5/30 minutes elapsed)"
+   - **Configuration**: Adjust wait times in Advanced Settings → Locked File Handling
+   - **Immediate retry**: If you know a file is ready, restart monitoring to retry immediately
+   - **Max retries exceeded**: Increase max retries or check if instrument finished writing
+   - **Troubleshooting**: Check logs for "File locked during checksum" messages
 
 #### Upload Problems
 
-4. **Upload Verification Issues**
+5. **Upload Verification Issues**
    - **"Verification failed" after successful upload**: 
      - Check network stability during verification download
      - For files > 50MB, verification uses size/ETag comparison only
