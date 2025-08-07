@@ -1,8 +1,9 @@
 .venv/*
 .venv-win/*
 panoramabridge.log
-test_imports.py
-.gitignore
 build/*
 dist/*
 *.spec
+.pytest_cache/*
+htmlcov/*
+.coverage

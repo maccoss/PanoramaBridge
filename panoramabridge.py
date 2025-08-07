@@ -675,9 +675,7 @@ class FileMonitorHandler(FileSystemEventHandler):
                     
                     # For moved/copied files that are already complete, 
                     # schedule a stability check in a few seconds
-                    import threading
                     def delayed_check():
-                        import time
                         time.sleep(1.5)  # Reduced from 3 to 1.5 seconds for faster response
                         if filepath in self.pending_files:
                             try:
@@ -885,7 +883,6 @@ class FileProcessor(QThread):
                 logger.info(f"Downloading file for checksum verification: {os.path.basename(remote_path)}")
                 
                 # Download the remote file to a temporary location
-                import tempfile
                 with tempfile.NamedTemporaryFile(delete=False) as temp_file:
                     temp_path = temp_file.name
                 

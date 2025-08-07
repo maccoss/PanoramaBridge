@@ -1,0 +1,38 @@
+{
+    "python.testing.pytestArgs": [
+        "tests",
+        "-v"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "python.testing.autoTestDiscoverOnSaveEnabled": true,
+    "python.defaultInterpreterPath": ".venv/bin/python",
+    "python.terminal.activateEnvironment": true,
+    
+    // Test discovery and execution settings
+    "python.testing.pytestPath": ".venv/bin/pytest",
+    "python.testing.cwd": "${workspaceFolder}",
+    
+    // Additional pytest configuration
+    "python.testing.debugPort": 3000,
+    "python.testing.promptToConfigure": false,
+    
+    // File associations
+    "files.associations": {
+        "pytest.ini": "ini",
+        "conftest.py": "python"
+    },
+    
+    // Python path for imports
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}"
+    ],
+    
+    // Exclude patterns for better performance
+    "files.exclude": {
+        "**/.pytest_cache": true,
+        "**/__pycache__": true,
+        "**/build": true,
+        "**/dist": true
+    }
+}

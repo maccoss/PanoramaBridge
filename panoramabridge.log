@@ -6288,3 +6288,4 @@
 2025-08-06 19:15:27,521 - __main__ - INFO - Preserve structure: C:/Users/macco/Documents/test-panoramabridge-local\testsubfolder\E20250430-20.raw -> /_webdav/MacCoss/maccoss/@files/test-panoramabridge/testsubfolder/E20250430-20.raw (rel_path: testsubfolder\E20250430-20.raw)
 2025-08-06 19:15:31,244 - __main__ - INFO - New file detected: E20250430-20.raw
 2025-08-06 19:15:41,568 - __main__ - INFO - File tracking: C:/Users/macco/Documents/test-panoramabridge-local\testsubfolder\E20250430-20.raw removed from processing
+2025-08-06 19:41:10,913 - __main__ - INFO - Keyring available for secure credential storage
