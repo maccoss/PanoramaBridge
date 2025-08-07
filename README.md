@@ -2,6 +2,12 @@
 
 A Python Qt6 application for monitoring local directories and automatically transferring files to Panorama WebDAV servers. This tool provides intelligent file monitoring with secure credential storage, robust upload capabilities, and advanced features specifically designed for mass spectrometer workflows.
 
+## Quick Links
+- **[Installation](#installation-steps)** - Get started with setup
+- **[User Guide](#user-interface)** - How to use the application
+- **[Windows Build](build_scripts/BUILD_WINDOWS.md)** - Create executable
+- **[Technical Docs](#additional-documentation)** - Performance and optimization details
+
 ## Features
 
 ### Core Features
@@ -359,6 +365,16 @@ Application logs are saved to: `panoramabridge.log`
 - Check for network restrictions or firewalls
 - Monitor server load and availability
 - Consider VPN if accessing from outside institution
+
+## Additional Documentation
+
+### Technical Documentation
+- **[Checksum Caching Implementation](CHECKSUM_CACHING_SUMMARY.md)** - Details about the local checksum caching system that provides dramatic performance improvements
+- **[File Monitoring Optimization](FILE_MONITORING_OPTIMIZATION.md)** - Technical details about the optimized file monitoring system and performance benchmarks
+
+### Build and Deployment
+- **[Windows Build Instructions](build_scripts/BUILD_WINDOWS.md)** - Complete guide for building Windows executables
+- **[Build Scripts](build_scripts/)** - PyInstaller specs and build automation scripts
 
 ## Support and Resources
 

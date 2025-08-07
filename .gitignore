@@ -3,7 +3,6 @@
 panoramabridge.log
 build/*
 dist/*
-*.spec
 .pytest_cache/*
 tests/__pycache__/*
 htmlcov/*

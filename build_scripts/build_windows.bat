@@ -1,9 +1,16 @@
 @echo off
 REM Windows batch script to build PanoramaBridge executable
-REM Run this from Windows Command Prompt or PowerShell
+REM Run this from the build_scripts directory with: build_windows.bat
+REM Or from the root directory with: build_scripts\build_windows.bat
 
 echo Building PanoramaBridge Windows Executable...
 echo.
+
+REM Change to the root directory if we're in build_scripts
+if "%CD:~-13%"=="build_scripts" (
+    cd ..
+    echo Changed to root directory: %CD%
+)
 
 REM Check if Python is available
 python --version >nul 2>&1

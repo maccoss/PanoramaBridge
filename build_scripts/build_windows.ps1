@@ -1,8 +1,16 @@
 # PowerShell script to build PanoramaBridge executable
-# Run this from PowerShell with: .\build_windows.ps1
+# Run this from the build_scripts directory with: .\build_windows.ps1
+# Or from the root directory with: .\build_scripts\build_windows.ps1
 
 Write-Host "Building PanoramaBridge Windows Executable..." -ForegroundColor Green
 Write-Host ""
+
+# Change to the root directory if we're in build_scripts
+$currentDir = Get-Location
+if ($currentDir.Path.EndsWith("build_scripts")) {
+    Set-Location ".."
+    Write-Host "Changed to root directory: $(Get-Location)" -ForegroundColor Yellow
+}
 
 # Check if Python is available
 try {
