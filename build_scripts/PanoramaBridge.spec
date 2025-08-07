@@ -5,7 +5,7 @@ a = Analysis(
     ['../panoramabridge.py'],
     pathex=['..'],
     binaries=[],
-    datas=[],
+    datas=[('../screenshots/panoramabridge-logo.png', 'screenshots'), ('../screenshots/panoramabridge-logo.ico', 'screenshots')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,4 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='../screenshots/panoramabridge-logo.ico',
 )

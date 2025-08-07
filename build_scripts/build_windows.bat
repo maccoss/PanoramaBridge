@@ -62,9 +62,9 @@ echo Cleaning previous builds...
 if exist "dist" rmdir /s /q dist
 if exist "build" rmdir /s /q build
 
-REM Build executable
-echo Building executable...
-.venv-win\Scripts\pyinstaller.exe --onefile --windowed --name "PanoramaBridge" panoramabridge.py
+REM Build executable using spec file
+echo Building executable using spec file...
+.venv-win\Scripts\pyinstaller.exe "build_scripts\PanoramaBridge.spec"
 
 REM Check if build was successful
 if exist "dist\PanoramaBridge.exe" (

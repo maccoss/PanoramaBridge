@@ -68,9 +68,9 @@ Write-Host "Cleaning previous builds..." -ForegroundColor Yellow
 if (Test-Path "dist") { Remove-Item -Recurse -Force dist }
 if (Test-Path "build") { Remove-Item -Recurse -Force build }
 
-# Build executable
-Write-Host "Building executable..." -ForegroundColor Yellow
-& ".\.venv-win\Scripts\pyinstaller.exe" --onefile --windowed --name "PanoramaBridge" panoramabridge.py
+# Build executable using spec file
+Write-Host "Building executable using spec file..." -ForegroundColor Yellow
+& ".\.venv-win\Scripts\pyinstaller.exe" "build_scripts\PanoramaBridge.spec"
 
 # Check if build was successful
 if (Test-Path "dist\PanoramaBridge.exe") {

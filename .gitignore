@@ -1,11 +1,11 @@
-.venv/*
-.venv-win/*
+/.venv
+/.venv-win
 panoramabridge.log
 build/*
 dist/*
-.pytest_cache/*
-tests/__pycache__/*
-htmlcov/*
+/.pytest_cache
+/tests/__pycache__
+/htmlcov
 .coverage
 /__pycache__
 *.pyc

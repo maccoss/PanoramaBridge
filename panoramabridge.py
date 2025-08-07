@@ -1979,6 +1979,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("PanoramaBridge - File Monitor and WebDAV Transfer Tool")
         self.setGeometry(100, 100, 900, 600)
         
+        # Set application icon
+        self.setup_application_icon()
+        
         # Core application components
         self.file_queue = queue.Queue()                    # Thread-safe queue for file processing
         self.file_processor = FileProcessor(self.file_queue, self)  # Background processing thread
@@ -2018,6 +2021,29 @@ class MainWindow(QMainWindow):
         self.poll_timer.timeout.connect(self.poll_for_new_files)
         # Timer will be started when monitoring begins
     
+    def setup_application_icon(self):
+        """Setup the application icon from the logo file"""
+        try:
+            # Get the path to the logo file - handle both development and bundled modes
+            if getattr(sys, 'frozen', False):
+                # Running as bundled executable
+                base_path = sys._MEIPASS
+                logo_path = os.path.join(base_path, 'screenshots', 'panoramabridge-logo.png')
+            else:
+                # Running in development
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                logo_path = os.path.join(script_dir, 'screenshots', 'panoramabridge-logo.png')
+            
+            if os.path.exists(logo_path):
+                icon = QIcon(logo_path)
+                self.setWindowIcon(icon)
+                    
+                logger.info(f"Application icon set from: {logo_path}")
+            else:
+                logger.warning(f"Logo file not found at: {logo_path}")
+        except Exception as e:
+            logger.error(f"Failed to set application icon: {e}")
+
     def setup_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -2080,16 +2106,88 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self.show_about)
     
     def show_about(self):
-        """Show about dialog"""
-        QMessageBox.about(self, "About PanoramaBridge", 
-                         "PanoramaBridge v1.0\n\n"
-                         "A file monitoring and WebDAV transfer application\n"
-                         "for syncing files to Panorama servers.\n\n"
-                         "Developed in the MacCoss Lab\n"
-                         "Department of Genome Sciences\n"
-                         "University of Washington\n\n"
-                         "Lab website: https://maccosslab.org\n\n"
-                         "Logs are saved to: panoramabridge.log")
+        """Show about dialog with logo"""
+        try:
+            # Create custom about dialog
+            dialog = QDialog(self)
+            dialog.setWindowTitle("About PanoramaBridge")
+            dialog.setFixedSize(400, 450)
+            
+            layout = QVBoxLayout()
+            
+            # Add logo - handle both development and bundled modes
+            if getattr(sys, 'frozen', False):
+                # Running as bundled executable
+                base_path = sys._MEIPASS
+                logo_path = os.path.join(base_path, 'screenshots', 'panoramabridge-logo.png')
+            else:
+                # Running in development
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                logo_path = os.path.join(script_dir, 'screenshots', 'panoramabridge-logo.png')
+            
+            if os.path.exists(logo_path):
+                logo_label = QLabel()
+                pixmap = QIcon(logo_path).pixmap(128, 128)  # Scale to 128x128
+                logo_label.setPixmap(pixmap)
+                logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                layout.addWidget(logo_label)
+            
+            # Add title
+            title_label = QLabel("PanoramaBridge")
+            title_font = QFont()
+            title_font.setPointSize(18)
+            title_font.setBold(True)
+            title_label.setFont(title_font)
+            title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(title_label)
+            
+            # Add version
+            version_label = QLabel("Version 1.0")
+            version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(version_label)
+            
+            layout.addWidget(QLabel(""))  # Spacer
+            
+            # Add description
+            desc_label = QLabel(
+                "A file monitoring and WebDAV transfer application\n"
+                "for syncing files to Panorama servers.\n\n"
+                "Developed in the MacCoss Lab\n"
+                "Department of Genome Sciences\n"
+                "University of Washington\n\n"
+                "Lab website: https://maccosslab.org\n\n"
+                "Logs are saved to: panoramabridge.log"
+            )
+            desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            desc_label.setWordWrap(True)
+            layout.addWidget(desc_label)
+            
+            layout.addStretch()
+            
+            # Add OK button
+            button_layout = QHBoxLayout()
+            button_layout.addStretch()
+            ok_button = QPushButton("OK")
+            ok_button.clicked.connect(dialog.accept)
+            button_layout.addWidget(ok_button)
+            button_layout.addStretch()
+            layout.addLayout(button_layout)
+            
+            dialog.setLayout(layout)
+            dialog.exec()
+            
+        except Exception as e:
+            logger.error(f"Error showing about dialog: {e}")
+            # Fallback to simple message box
+            QMessageBox.about(self, "About PanoramaBridge", 
+                             "PanoramaBridge v1.0\n\n"
+                             "A file monitoring and WebDAV transfer application\n"
+                             "for syncing files to Panorama servers.\n\n"
+                             "Developed in the MacCoss Lab\n"
+                             "Department of Genome Sciences\n"
+                             "University of Washington\n\n"
+                             "Lab website: https://maccosslab.org\n\n"
+                             "Logs are saved to: panoramabridge.log")
     
     def create_local_tab(self):
         """Create the local monitoring settings tab"""
@@ -3279,6 +3377,16 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle('Fusion')  # Modern look
+    
+    # Set application icon for the executable
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        logo_path = os.path.join(script_dir, 'screenshots', 'panoramabridge-logo.png')
+        if os.path.exists(logo_path):
+            icon = QIcon(logo_path)
+            app.setWindowIcon(icon)
+    except Exception as e:
+        logger.error(f"Failed to set application icon in main: {e}")
     
     window = MainWindow()
     window.show()
