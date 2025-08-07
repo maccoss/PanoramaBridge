@@ -476,22 +476,36 @@ class WebDAVClient:
                     return response.status_code in [200, 201, 204], ""
             
             # For larger files, use chunked upload with better progress tracking
-            bytes_uploaded = 0
+            response = None
             
             with open(local_path, 'rb') as f:
-                # Create a custom file-like object that tracks progress
+                if progress_callback:
+                    progress_callback(0, file_size)  # Initialize progress
+                
+                # Create a progress-tracking file wrapper for frequent updates
                 class ProgressFile:
                     def __init__(self, file_obj, total_size, callback):
                         self.file_obj = file_obj
                         self.total_size = total_size
                         self.callback = callback
                         self.bytes_read = 0
+                        self._chunk_size = 64 * 1024  # 64KB chunks for frequent progress updates
+                        self._last_update = time.time()
+                        self._update_interval = 0.1  # Update at least every 100ms
                     
                     def read(self, size=-1):
+                        # Force smaller read chunks to get more frequent progress updates
+                        if size == -1 or size > self._chunk_size:
+                            size = self._chunk_size
+                        
                         data = self.file_obj.read(size)
                         if data and self.callback:
                             self.bytes_read += len(data)
-                            self.callback(self.bytes_read, self.total_size)
+                            # Update progress for every chunk read OR every 100ms, whichever comes first
+                            current_time = time.time()
+                            if current_time - self._last_update >= self._update_interval:
+                                self.callback(self.bytes_read, self.total_size)
+                                self._last_update = current_time
                         return data
                     
                     def __len__(self):
@@ -511,9 +525,6 @@ class WebDAVClient:
                         return self.file_obj.tell()
                 
                 progress_file = ProgressFile(f, file_size, progress_callback)
-                if progress_callback:
-                    progress_callback(0, file_size)  # Initialize progress
-                
                 response = self.session.put(url, data=progress_file)
                 
             return response.status_code in [200, 201, 204], ""
@@ -2005,6 +2016,10 @@ class MainWindow(QMainWindow):
                          "PanoramaBridge v1.0\n\n"
                          "A file monitoring and WebDAV transfer application\n"
                          "for syncing files to Panorama servers.\n\n"
+                         "Developed in the MacCoss Lab\n"
+                         "Department of Genome Sciences\n"
+                         "University of Washington\n\n"
+                         "Lab website: https://maccosslab.org\n\n"
                          "Logs are saved to: panoramabridge.log")
     
     def create_local_tab(self):
