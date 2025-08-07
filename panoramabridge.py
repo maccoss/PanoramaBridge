@@ -465,69 +465,94 @@ class WebDAVClient:
             file_size = os.path.getsize(local_path)
             url = urljoin(self.url, quote(remote_path))
             
-            # For files smaller than chunk size, upload directly
-            if file_size <= self.chunk_size:
-                with open(local_path, 'rb') as f:
-                    if progress_callback:
-                        progress_callback(0, file_size)  # Start progress
-                    response = self.session.put(url, data=f)
-                    if progress_callback:
-                        progress_callback(file_size, file_size)  # Complete progress
-                    return response.status_code in [200, 201, 204], ""
+            # Determine optimal chunk size based on file size
+            def get_optimal_chunk_size(total_size):
+                if total_size > 10 * 1024 * 1024 * 1024:  # > 10GB
+                    return 4 * 1024 * 1024  # 4MB chunks for massive files
+                elif total_size > 5 * 1024 * 1024 * 1024:  # > 5GB
+                    return 2 * 1024 * 1024  # 2MB chunks for huge files
+                elif total_size > 1024 * 1024 * 1024:  # > 1GB
+                    return 1024 * 1024      # 1MB chunks for very large files
+                elif total_size > 100 * 1024 * 1024:  # > 100MB  
+                    return 256 * 1024       # 256KB chunks for large files
+                else:
+                    return 64 * 1024        # 64KB chunks for smaller files
             
-            # For larger files, use chunked upload with better progress tracking
-            response = None
+            chunk_size = get_optimal_chunk_size(file_size)
+            chunk_size_mb = chunk_size / (1024 * 1024)
+            total_size_mb = file_size / (1024 * 1024)
+            logger.info(f"Upload chunking: {total_size_mb:.1f}MB file using {chunk_size_mb:.1f}MB chunks ({chunk_size:,} bytes)")
             
-            with open(local_path, 'rb') as f:
-                if progress_callback:
-                    progress_callback(0, file_size)  # Initialize progress
-                
-                # Create a progress-tracking file wrapper for frequent updates
-                class ProgressFile:
-                    def __init__(self, file_obj, total_size, callback):
-                        self.file_obj = file_obj
-                        self.total_size = total_size
-                        self.callback = callback
-                        self.bytes_read = 0
-                        self._chunk_size = 64 * 1024  # 64KB chunks for frequent progress updates
-                        self._last_update = time.time()
-                        self._update_interval = 0.1  # Update at least every 100ms
+            # Initialize progress
+            if progress_callback:
+                progress_callback(0, file_size)
+            
+            # Create a custom file-like object that tracks progress during actual network transmission
+            class ProgressTrackingFile:
+                def __init__(self, filepath, callback, total_size, chunk_size):
+                    self.filepath = filepath
+                    self.callback = callback
+                    self.total_size = total_size
+                    self.chunk_size = chunk_size
+                    self.bytes_read = 0
+                    self._file = None
+                    self._last_progress_report = 0
                     
-                    def read(self, size=-1):
-                        # Force smaller read chunks to get more frequent progress updates
-                        if size == -1 or size > self._chunk_size:
-                            size = self._chunk_size
+                def __enter__(self):
+                    self._file = open(self.filepath, 'rb')
+                    return self
+                    
+                def __exit__(self, exc_type, exc_val, exc_tb):
+                    if self._file:
+                        self._file.close()
+                
+                def read(self, size=-1):
+                    if not self._file:
+                        return b''
+                    
+                    # Use our optimal chunk size
+                    if size == -1 or size > self.chunk_size:
+                        size = self.chunk_size
+                    
+                    data = self._file.read(size)
+                    if data:
+                        self.bytes_read += len(data)
                         
-                        data = self.file_obj.read(size)
-                        if data and self.callback:
-                            self.bytes_read += len(data)
-                            # Update progress for every chunk read OR every 100ms, whichever comes first
-                            current_time = time.time()
-                            if current_time - self._last_update >= self._update_interval:
+                        # Only report progress every 1% or every 10MB to reduce callback overhead
+                        progress_threshold = max(self.total_size // 100, 10 * 1024 * 1024)  # 1% or 10MB
+                        if (self.bytes_read - self._last_progress_report) >= progress_threshold or self.bytes_read == self.total_size:
+                            if self.callback:
                                 self.callback(self.bytes_read, self.total_size)
-                                self._last_update = current_time
-                        return data
+                            self._last_progress_report = self.bytes_read
                     
-                    def __len__(self):
-                        return self.total_size
-                    
-                    def seek(self, pos, whence=0):
-                        result = self.file_obj.seek(pos, whence)
-                        if whence == 0:  # SEEK_SET
-                            self.bytes_read = pos
-                        elif whence == 1:  # SEEK_CUR
-                            self.bytes_read += pos
-                        elif whence == 2:  # SEEK_END
-                            self.bytes_read = self.total_size + pos
-                        return result
-                    
-                    def tell(self):
-                        return self.file_obj.tell()
+                    return data
                 
-                progress_file = ProgressFile(f, file_size, progress_callback)
+                def __len__(self):
+                    return self.total_size
+                
+                def __iter__(self):
+                    return self
+                    
+                def __next__(self):
+                    chunk = self.read(self.chunk_size)
+                    if not chunk:
+                        raise StopIteration
+                    return chunk
+            
+            # Upload with progress tracking
+            with ProgressTrackingFile(local_path, progress_callback, file_size, chunk_size) as progress_file:
                 response = self.session.put(url, data=progress_file)
+            
+            # Ensure we show 100% completion
+            if progress_callback:
+                progress_callback(file_size, file_size)
                 
             return response.status_code in [200, 201, 204], ""
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error uploading file: {error_msg}")
+            return False, error_msg
             
         except Exception as e:
             error_msg = str(e)
@@ -1303,31 +1328,22 @@ class FileProcessor(QThread):
     def upload_file(self, filepath: str, remote_path: str, filename: str):
         """Upload file to remote path"""
         try:
-            # Check if locked file retry is enabled and file is inaccessible
-            if hasattr(self.app_instance, 'enable_locked_retry_check') and \
-               self.app_instance.enable_locked_retry_check.isChecked():
-                
-                accessible, access_error = self.is_file_accessible(filepath)
-                if not accessible:
-                    # File is locked, schedule retry
-                    self.schedule_locked_file_retry(filepath, remote_path, filename, access_error)
-                    return
+            # Always check if file is accessible (locked file handling always enabled)
+            accessible, access_error = self.is_file_accessible(filepath)
+            if not accessible:
+                # File is locked, schedule retry
+                self.schedule_locked_file_retry(filepath, remote_path, filename, access_error)
+                return
             
             # Calculate checksum for verification - this will also fail if file is locked
             self.status_update.emit(filename, "Calculating checksum...", filepath)
             try:
                 local_checksum = self.calculate_checksum(filepath)
             except (PermissionError, IOError) as e:
-                # File became locked during checksum calculation
-                if hasattr(self.app_instance, 'enable_locked_retry_check') and \
-                   self.app_instance.enable_locked_retry_check.isChecked():
-                    error_msg = f"File locked during checksum: {str(e)}"
-                    self.schedule_locked_file_retry(filepath, remote_path, filename, error_msg)
-                    return
-                else:
-                    # Locked file handling disabled, treat as error
-                    self.transfer_complete.emit(filename, filepath, False, f"Cannot access file: {str(e)}")
-                    return
+                # File became locked during checksum calculation (locked file handling always enabled)
+                error_msg = f"File locked during checksum: {str(e)}"
+                self.schedule_locked_file_retry(filepath, remote_path, filename, error_msg)
+                return
             
             # Create remote directory if needed (check cache to avoid redundant attempts)
             remote_dir = os.path.dirname(remote_path)
@@ -1337,11 +1353,16 @@ class FileProcessor(QThread):
                 if success and self.app_instance:
                     self.app_instance.created_directories.add(remote_dir)
             
-            # Upload file
-            self.status_update.emit(filename, "Uploading...", filepath)
+            # Upload file with simple progress tracking
+            self.status_update.emit(filename, "Reading file...", filepath)
             
             def progress_callback(current, total):
+                # Simply pass through the actual progress from WebDAV client
                 self.progress_update.emit(filepath, current, total)
+                
+                # Update status message when upload starts
+                if current > 0 and current < total:
+                    self.status_update.emit(filename, "Uploading...", filepath)
             
             success, error = self.webdav_client.upload_file_chunked(
                 filepath, remote_path, progress_callback
@@ -1405,31 +1426,22 @@ class FileProcessor(QThread):
                 remote_path = f"{self.remote_base_path}/{filename}"
                 logger.info(f"No structure preservation: {filepath} -> {remote_path}")
             
-            # Check if locked file retry is enabled and file is inaccessible
-            if hasattr(self.app_instance, 'enable_locked_retry_check') and \
-               self.app_instance.enable_locked_retry_check.isChecked():
-                
-                accessible, access_error = self.is_file_accessible(filepath)
-                if not accessible:
-                    # File is locked, schedule retry
-                    self.schedule_locked_file_retry(filepath, remote_path, filename, access_error)
-                    return
+            # Always check if file is accessible (locked file handling always enabled)
+            accessible, access_error = self.is_file_accessible(filepath)
+            if not accessible:
+                # File is locked, schedule retry
+                self.schedule_locked_file_retry(filepath, remote_path, filename, access_error)
+                return
             
             # Calculate local checksum
             self.status_update.emit(filename, "Calculating checksum...", filepath)
             try:
                 local_checksum = self.calculate_checksum(filepath)
             except (PermissionError, IOError) as e:
-                # File became locked during checksum calculation
-                if hasattr(self.app_instance, 'enable_locked_retry_check') and \
-                   self.app_instance.enable_locked_retry_check.isChecked():
-                    error_msg = f"File locked during checksum: {str(e)}"
-                    self.schedule_locked_file_retry(filepath, remote_path, filename, error_msg)
-                    return
-                else:
-                    # Locked file handling disabled, treat as error
-                    self.transfer_complete.emit(filename, filepath, False, f"Cannot access file: {str(e)}")
-                    return
+                # File became locked during checksum calculation - always handle locked files
+                error_msg = f"File locked during checksum: {str(e)}"
+                self.schedule_locked_file_retry(filepath, remote_path, filename, error_msg)
+                return
             
             # Create remote directories if needed (check cache to avoid redundant attempts)
             remote_dir = os.path.dirname(remote_path)
@@ -2072,10 +2084,6 @@ class MainWindow(QMainWindow):
         self.stability_spin.setValue(2)
         adv_layout.addWidget(self.stability_spin, 0, 1)
         
-        self.preserve_structure_check = QCheckBox("Preserve directory structure on remote")
-        self.preserve_structure_check.setChecked(True)
-        adv_layout.addWidget(self.preserve_structure_check, 1, 0, 1, 2)
-        
         # OS Event vs Polling settings
         self.enable_polling_check = QCheckBox("Enable backup file polling")
         self.enable_polling_check.setChecked(False)  # Default to OS events only
@@ -2087,63 +2095,44 @@ class MainWindow(QMainWindow):
             "• Working with special file systems or cloud storage mounts\n"
             "• Running on WSL2 or virtual machines where OS events may be unreliable"
         )
-        adv_layout.addWidget(self.enable_polling_check, 2, 0, 1, 2)
+        adv_layout.addWidget(self.enable_polling_check, 1, 0, 1, 2)
         
-        adv_layout.addWidget(QLabel("Polling interval (minutes):"), 3, 0)
+        adv_layout.addWidget(QLabel("Polling interval (minutes):"), 2, 0)
         self.polling_interval_spin = QSpinBox()
         self.polling_interval_spin.setRange(1, 30)
         self.polling_interval_spin.setValue(2)  # Default to 2 minutes instead of 30 seconds
         self.polling_interval_spin.setEnabled(False)  # Disabled by default
         self.polling_interval_spin.setToolTip("How often to scan directory when polling is enabled")
-        adv_layout.addWidget(self.polling_interval_spin, 3, 1)
+        adv_layout.addWidget(self.polling_interval_spin, 2, 1)
         
         # Connect polling checkbox to enable/disable interval setting
         self.enable_polling_check.toggled.connect(self.polling_interval_spin.setEnabled)
         
-        # Locked file handling settings
-        self.enable_locked_retry_check = QCheckBox("Handle locked files (e.g., from mass spectrometers)")
-        self.enable_locked_retry_check.setChecked(True)  # Default enabled for MS workflows
-        self.enable_locked_retry_check.setToolTip(
-            "Wait for locked files to be fully written before uploading.\n\n"
-            "This prevents failed uploads when files are:\n"
-            "• Being written by mass spectrometers during data acquisition\n"
-            "• Locked by other software (analysis tools, file converters)\n"
-            "• Large files that take time to complete transfer/copy\n"
-            "• Generated by instruments that write data over extended periods\n\n"
-            "When enabled, locked files will wait for the configured time period\n"
-            "then retry periodically until accessible or max retries reached."
-        )
-        adv_layout.addWidget(self.enable_locked_retry_check, 4, 0, 1, 2)
+        # Locked file handling settings (always enabled, but configurable timing)
+        locked_info = QLabel("Locked File Handling - Wait for files to be fully written (e.g., mass spectrometers)")
+        locked_info.setStyleSheet("font-weight: bold; color: #444;")
+        adv_layout.addWidget(locked_info, 3, 0, 1, 2)
         
-        adv_layout.addWidget(QLabel("Initial wait time (minutes):"), 5, 0)
+        adv_layout.addWidget(QLabel("Initial wait time (minutes) for locked files:"), 4, 0)
         self.initial_wait_spin = QSpinBox()
         self.initial_wait_spin.setRange(1, 180)  # 1 minute to 3 hours
         self.initial_wait_spin.setValue(30)  # Default 30 minutes (typical LC-MS run)
         self.initial_wait_spin.setToolTip("Wait time before first retry (e.g., LC-MS run duration)")
-        adv_layout.addWidget(self.initial_wait_spin, 5, 1)
+        adv_layout.addWidget(self.initial_wait_spin, 4, 1)
         
-        adv_layout.addWidget(QLabel("Retry interval (seconds):"), 6, 0)
+        adv_layout.addWidget(QLabel("Retry interval (seconds):"), 5, 0)
         self.retry_interval_spin = QSpinBox()
         self.retry_interval_spin.setRange(10, 300)  # 10 seconds to 5 minutes
         self.retry_interval_spin.setValue(30)  # Default 30 seconds
         self.retry_interval_spin.setToolTip("How often to retry after initial wait period")
-        adv_layout.addWidget(self.retry_interval_spin, 6, 1)
+        adv_layout.addWidget(self.retry_interval_spin, 5, 1)
         
-        adv_layout.addWidget(QLabel("Maximum retries:"), 7, 0)
+        adv_layout.addWidget(QLabel("Maximum retries:"), 6, 0)
         self.max_retries_spin = QSpinBox()
         self.max_retries_spin.setRange(1, 100)
         self.max_retries_spin.setValue(20)  # Default 20 retries = ~10 minutes of additional waiting
         self.max_retries_spin.setToolTip("Maximum retry attempts after initial wait")
-        adv_layout.addWidget(self.max_retries_spin, 7, 1)
-        
-        # Connect locked file checkbox to enable/disable related settings
-        def toggle_locked_settings(enabled):
-            self.initial_wait_spin.setEnabled(enabled)
-            self.retry_interval_spin.setEnabled(enabled)
-            self.max_retries_spin.setEnabled(enabled)
-        
-        self.enable_locked_retry_check.toggled.connect(toggle_locked_settings)
-        toggle_locked_settings(self.enable_locked_retry_check.isChecked())  # Set initial state
+        adv_layout.addWidget(self.max_retries_spin, 6, 1)
         
         adv_group.setLayout(adv_layout)
         layout.addWidget(adv_group)
@@ -2487,7 +2476,7 @@ class MainWindow(QMainWindow):
             
             # Update processor settings
             self.file_processor.set_local_base(directory)
-            self.file_processor.preserve_structure = self.preserve_structure_check.isChecked()
+            self.file_processor.preserve_structure = True  # Always preserve directory structure
             self.file_processor.verify_uploads = self.verify_uploads_check.isChecked()
             
             # Set conflict resolution preference
@@ -3143,7 +3132,7 @@ class MainWindow(QMainWindow):
             "local_directory": self.dir_input.text(),
             "monitor_subdirs": self.subdirs_check.isChecked(),
             "extensions": self.extensions_input.text(),
-            "preserve_structure": self.preserve_structure_check.isChecked(),
+            "preserve_structure": True,  # Always preserve directory structure
             "webdav_url": self.url_input.text(),
             "webdav_username": self.username_input.text() if not self.save_creds_check.isChecked() else "",
             "webdav_auth_type": self.auth_combo.currentText(),
@@ -3173,7 +3162,7 @@ class MainWindow(QMainWindow):
         self.dir_input.setText(self.config.get("local_directory", ""))
         self.subdirs_check.setChecked(self.config.get("monitor_subdirs", True))
         self.extensions_input.setText(self.config.get("extensions", "raw, sld, csv"))
-        self.preserve_structure_check.setChecked(self.config.get("preserve_structure", True))
+        # Note: preserve_structure is always True (removed checkbox), locked file handling always enabled
         self.url_input.setText(self.config.get("webdav_url", "https://panoramaweb.org"))
         self.username_input.setText(self.config.get("webdav_username", ""))
         
