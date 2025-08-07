@@ -460,7 +460,7 @@ class WebDAVClient:
     
     def upload_file_chunked(self, local_path: str, remote_path: str, 
                           progress_callback=None) -> Tuple[bool, str]:
-        """Upload a file in chunks with progress callback"""
+        """Upload a file in chunks with progress callback using manual HTTP chunking"""
         try:
             file_size = os.path.getsize(local_path)
             url = urljoin(self.url, quote(remote_path))
@@ -487,16 +487,86 @@ class WebDAVClient:
             if progress_callback:
                 progress_callback(0, file_size)
             
-            # Create a custom file-like object that tracks progress during actual network transmission
-            class ProgressTrackingFile:
-                def __init__(self, filepath, callback, total_size, chunk_size):
+            # Use manual chunked upload with multiple HTTP requests for true progress tracking
+            # This approach sends the file in multiple smaller HTTP PUT requests
+            bytes_uploaded = 0
+            
+            # For files larger than 100MB, use Range uploads if server supports it
+            # Otherwise fall back to single upload
+            if file_size > 100 * 1024 * 1024:
+                # Try chunked upload approach - send file in multiple requests
+                logger.info(f"Attempting chunked upload for large file ({total_size_mb:.1f}MB)")
+                
+                # Test if server supports Range requests by trying a small upload first
+                try:
+                    with open(local_path, 'rb') as file:
+                        # Read first chunk
+                        first_chunk = file.read(chunk_size)
+                        
+                        # Send first chunk with Range header
+                        headers = {
+                            'Content-Range': f'bytes 0-{len(first_chunk)-1}/{file_size}',
+                            'Content-Length': str(len(first_chunk))
+                        }
+                        
+                        response = self.session.put(url, data=first_chunk, headers=headers)
+                        
+                        if response.status_code in [200, 201, 204, 206, 308]:
+                            # Server accepts Range uploads, continue with chunks
+                            bytes_uploaded = len(first_chunk)
+                            if progress_callback:
+                                progress_callback(bytes_uploaded, file_size)
+                            
+                            # Upload remaining chunks
+                            while bytes_uploaded < file_size:
+                                chunk = file.read(chunk_size)
+                                if not chunk:
+                                    break
+                                
+                                start_byte = bytes_uploaded
+                                end_byte = start_byte + len(chunk) - 1
+                                
+                                headers = {
+                                    'Content-Range': f'bytes {start_byte}-{end_byte}/{file_size}',
+                                    'Content-Length': str(len(chunk))
+                                }
+                                
+                                response = self.session.put(url, data=chunk, headers=headers)
+                                
+                                if response.status_code not in [200, 201, 204, 206, 308]:
+                                    # Chunk failed, fall back to regular upload
+                                    logger.warning(f"Chunk upload failed at byte {start_byte}, falling back to regular upload")
+                                    break
+                                
+                                bytes_uploaded += len(chunk)
+                                if progress_callback:
+                                    progress_callback(bytes_uploaded, file_size)
+                            
+                            # Check if we completed the chunked upload
+                            if bytes_uploaded >= file_size:
+                                logger.info("Chunked upload completed successfully")
+                                return True, ""
+                        
+                        # If we get here, chunked upload failed, fall back to regular upload
+                        logger.info("Server doesn't support chunked upload, falling back to regular upload")
+                        
+                except Exception as e:
+                    logger.warning(f"Chunked upload failed: {e}, falling back to regular upload")
+            
+            # Fall back to regular single-request upload
+            # Use a simpler approach that at least shows some progress
+            logger.info("Using regular upload with estimated progress")
+            
+            # Create a file-like object that gives periodic progress updates
+            class TimedProgressFile:
+                def __init__(self, filepath, callback, total_size):
                     self.filepath = filepath
                     self.callback = callback
                     self.total_size = total_size
-                    self.chunk_size = chunk_size
                     self.bytes_read = 0
                     self._file = None
-                    self._last_progress_report = 0
+                    self.last_report_time = time.time()
+                    self.report_interval = 1.0  # Report every 1 second
                     
                 def __enter__(self):
                     self._file = open(self.filepath, 'rb')
@@ -510,37 +580,24 @@ class WebDAVClient:
                     if not self._file:
                         return b''
                     
-                    # Use our optimal chunk size
-                    if size == -1 or size > self.chunk_size:
-                        size = self.chunk_size
-                    
-                    data = self._file.read(size)
+                    data = self._file.read(size if size > 0 else 8192)
                     if data:
                         self.bytes_read += len(data)
                         
-                        # Only report progress every 1% or every 10MB to reduce callback overhead
-                        progress_threshold = max(self.total_size // 100, 10 * 1024 * 1024)  # 1% or 10MB
-                        if (self.bytes_read - self._last_progress_report) >= progress_threshold or self.bytes_read == self.total_size:
+                        # Report progress every second instead of every chunk
+                        current_time = time.time()
+                        if (current_time - self.last_report_time) >= self.report_interval:
                             if self.callback:
                                 self.callback(self.bytes_read, self.total_size)
-                            self._last_progress_report = self.bytes_read
+                            self.last_report_time = current_time
                     
                     return data
                 
                 def __len__(self):
                     return self.total_size
-                
-                def __iter__(self):
-                    return self
-                    
-                def __next__(self):
-                    chunk = self.read(self.chunk_size)
-                    if not chunk:
-                        raise StopIteration
-                    return chunk
             
-            # Upload with progress tracking
-            with ProgressTrackingFile(local_path, progress_callback, file_size, chunk_size) as progress_file:
+            # Upload with timed progress tracking
+            with TimedProgressFile(local_path, progress_callback, file_size) as progress_file:
                 response = self.session.put(url, data=progress_file)
             
             # Ensure we show 100% completion
