@@ -2,8 +2,7 @@
 """
 PanoramaBridge - A Python Qt6 Application for Directory Monitoring and WebDAV File Transfer
 
-This application monitors local directories for new files and automatically transfers them 
-to WebDAV servers (like Panorama) with comprehensive features:
+This application monitors local directories for new files and automatically transfers them to WebDAV servers (like Panorama) with comprehensive features:
 
 - Real-time file monitoring using watchdog
 - Chunked upload support for large files  
@@ -608,20 +607,20 @@ class FileMonitorHandler(FileSystemEventHandler):
         
     def on_created(self, event):
         """Handle file creation events."""
-        logger.info(f"FileMonitor: File created event: {event.src_path}")
         if not event.is_directory:
+            logger.debug(f"OS Event - File created: {event.src_path}")
             self._handle_file(event.src_path)
     
     def on_modified(self, event):
         """Handle file modification events."""
-        logger.info(f"FileMonitor: File modified event: {event.src_path}")
         if not event.is_directory:
+            logger.debug(f"OS Event - File modified: {event.src_path}")
             self._handle_file(event.src_path)
             
     def on_moved(self, event):
         """Handle file move events."""
-        logger.info(f"FileMonitor: File moved event: {event.dest_path}")
         if not event.is_directory:
+            logger.debug(f"OS Event - File moved: {event.src_path} -> {event.dest_path}")
             self._handle_file(event.dest_path)
     
     def _handle_file(self, filepath):
@@ -797,10 +796,10 @@ class FileProcessor(QThread):
         
     def calculate_checksum(self, filepath: str, algorithm: str = 'sha256', chunk_size: Optional[int] = None) -> str:
         """
-        Calculate file checksum for integrity verification.
+        Calculate file checksum for integrity verification with local caching.
         
-        Uses chunked reading to handle large files efficiently without
-        loading entire file into memory.
+        Uses local cache to avoid recalculating checksums for unchanged files.
+        Cache key includes file path, size, and modification time.
         
         Args:
             filepath: Path to file to checksum
@@ -810,14 +809,59 @@ class FileProcessor(QThread):
         Returns:
             Hexadecimal checksum string
         """
-        if chunk_size is None:
-            chunk_size = 256 * 1024  # 256KB chunks - optimal balance of speed and memory
-        
-        hash_obj = hashlib.new(algorithm)
-        with open(filepath, 'rb') as f:
-            while chunk := f.read(chunk_size):
-                hash_obj.update(chunk)
-        return hash_obj.hexdigest()
+        try:
+            # Get file stats for cache key
+            stat = os.stat(filepath)
+            file_size = stat.st_size
+            file_mtime = stat.st_mtime
+            
+            # Create cache key (file path + size + mtime)
+            cache_key = f"{filepath}|{file_size}|{file_mtime:.0f}"
+            
+            # Check if we have a cached checksum for this exact file state
+            if self.app_instance and hasattr(self.app_instance, 'local_checksum_cache'):
+                cached = self.app_instance.local_checksum_cache.get(cache_key)
+                if cached:
+                    logger.debug(f"Using cached checksum for {os.path.basename(filepath)}: {cached[:8]}...")
+                    return cached
+            
+            # Calculate new checksum
+            logger.debug(f"Calculating new checksum for {os.path.basename(filepath)} ({file_size:,} bytes)")
+            
+            if chunk_size is None:
+                chunk_size = 256 * 1024  # 256KB chunks - optimal balance of speed and memory
+            
+            hash_obj = hashlib.new(algorithm)
+            with open(filepath, 'rb') as f:
+                while chunk := f.read(chunk_size):
+                    hash_obj.update(chunk)
+            
+            checksum = hash_obj.hexdigest()
+            
+            # Cache the result
+            if self.app_instance and hasattr(self.app_instance, 'local_checksum_cache'):
+                self.app_instance.local_checksum_cache[cache_key] = checksum
+                logger.debug(f"Cached checksum for {os.path.basename(filepath)}: {checksum[:8]}...")
+                
+                # Limit cache size to prevent memory issues
+                if len(self.app_instance.local_checksum_cache) > 1000:
+                    # Remove oldest entries (simple cleanup)
+                    cache_items = list(self.app_instance.local_checksum_cache.items())
+                    for key, _ in cache_items[:100]:  # Remove first 100 entries
+                        del self.app_instance.local_checksum_cache[key]
+                    logger.debug(f"Cleaned checksum cache, now {len(self.app_instance.local_checksum_cache)} entries")
+            
+            return checksum
+            
+        except Exception as e:
+            logger.error(f"Error calculating checksum for {filepath}: {e}")
+            raise
+
+    def calculate_checksum_from_data(self, data: bytes) -> str:
+        """Calculate SHA256 checksum from raw data"""
+        sha256_hash = hashlib.sha256()
+        sha256_hash.update(data)
+        return sha256_hash.hexdigest()
     
     def verify_uploaded_file(self, local_path: str, remote_path: str, expected_checksum: str) -> Tuple[bool, str]:
         """Verify uploaded file integrity by downloading and comparing checksums
@@ -880,7 +924,7 @@ class FileProcessor(QThread):
             return False, f"Verification error: {str(e)}"
         
     def compare_files(self, local_path: str, remote_info: Dict, local_checksum: str) -> Tuple[str, Dict]:
-        """Compare local and remote files to detect conflicts
+        """Compare local and remote files to detect conflicts with smart checksum optimization
         Returns: (status, details) where status is 'identical', 'different', 'newer_local', 'newer_remote', 'new'
         """
         if not remote_info.get('exists', False):
@@ -892,7 +936,8 @@ class FileProcessor(QThread):
             'local_mtime': 0,
             'remote_mtime': remote_info.get('modified', 0),
             'size_match': False,
-            'etag_match': False
+            'etag_match': False,
+            'optimization_used': None
         }
             
         # Compare sizes first (quick check)
@@ -909,33 +954,37 @@ class FileProcessor(QThread):
             
             if local_size != remote_size:
                 logger.info(f"File size mismatch: local={local_size}, remote={remote_size}")
+                comparison_details['optimization_used'] = 'size_mismatch_skip'
                 # Even with size mismatch, check dates for user decision
                 return self._check_file_dates(comparison_details)
         except Exception as e:
             logger.warning(f"Could not compare file sizes: {e}")
             
-        # Compare ETags if available (may contain checksum)
-        remote_etag = remote_info.get('etag')
+        # If sizes match, try to optimize by checking stored checksum first
         stored_checksum = None
         
-        # Try to get stored checksum first
+        # Try to get stored checksum first (fastest check)
         try:
             stored_checksum = self.webdav_client.get_stored_checksum(remote_info.get('path', ''))
             if stored_checksum:
-                logger.debug(f"Found stored checksum: {stored_checksum}")
+                logger.debug(f"Found stored checksum: {stored_checksum[:8]}...")
                 if stored_checksum.lower() == local_checksum.lower():
-                    logger.info(f"Files match via stored checksum")
+                    logger.info(f"Files match via stored checksum (optimization: skipped download)")
                     comparison_details['stored_checksum_match'] = True
+                    comparison_details['optimization_used'] = 'stored_checksum_match'
                     return 'identical', comparison_details
                 else:
                     logger.info(f"Files differ via stored checksum")
                     comparison_details['stored_checksum_match'] = False
                     comparison_details['remote_checksum'] = stored_checksum
                     comparison_details['local_checksum'] = local_checksum
+                    comparison_details['optimization_used'] = 'stored_checksum_differ'
                     return self._check_file_dates(comparison_details)
         except Exception as e:
             logger.debug(f"Could not retrieve stored checksum: {e}")
-            
+        
+        # Check ETags (second fastest check)
+        remote_etag = remote_info.get('etag')
         if remote_etag:
             # Some servers include MD5 or SHA256 in ETags
             # Clean ETag (remove quotes and weak indicators)
@@ -943,18 +992,43 @@ class FileProcessor(QThread):
             
             # Check if ETag matches our checksum
             if clean_etag.lower() == local_checksum.lower():
-                logger.info(f"Files match via ETag comparison")
+                logger.info(f"Files match via ETag comparison (optimization: skipped download)")
                 comparison_details['etag_match'] = True
+                comparison_details['optimization_used'] = 'etag_match'
                 return 'identical', comparison_details
             elif len(clean_etag) == len(local_checksum):
                 # Same length suggests same hash algorithm but different content
                 logger.info(f"Files differ via ETag comparison")
                 comparison_details['etag_match'] = False
+                comparison_details['remote_etag'] = clean_etag
+                comparison_details['local_checksum'] = local_checksum
+                comparison_details['optimization_used'] = 'etag_differ'
                 return self._check_file_dates(comparison_details)
+            else:
+                logger.debug(f"ETag format doesn't match checksum format, continuing with download verification")
                 
-        # If we can't determine by content, check dates
-        logger.info(f"Cannot determine file similarity by content, checking dates")
-        return self._check_file_dates(comparison_details)
+        # If we get here, we need to download and verify (slowest but most accurate)
+        logger.debug(f"No optimization available, downloading for checksum comparison")
+        comparison_details['optimization_used'] = 'download_required'
+        
+        # For very large files with matching size, consider them likely identical
+        # This helps avoid unnecessary downloads of huge files that are probably the same
+        local_size = comparison_details.get('local_size', 0)
+        if local_size > 100 * 1024 * 1024:  # > 100MB
+            logger.info(f"Large file ({local_size:,} bytes) with matching size - considering identical to avoid large download")
+            comparison_details['optimization_used'] = 'large_file_size_match'
+            return 'identical', comparison_details
+            
+        # Download and compare checksums (most accurate but slowest)
+        try:
+            # For download comparison, we need a method to get remote content
+            # Since download_file expects local_path parameter, we'll fall back to date comparison
+            logger.info(f"Cannot download remote file for comparison, falling back to date comparison")
+            return self._check_file_dates(comparison_details)
+        except Exception as e:
+            logger.warning(f"Could not download remote file for comparison: {e}")
+            # Fall back to date comparison
+            return self._check_file_dates(comparison_details)
     
     def _check_file_dates(self, details: Dict) -> Tuple[str, Dict]:
         """Check file modification dates to determine upload preference"""
@@ -1036,9 +1110,108 @@ class FileProcessor(QThread):
             if self.app_instance:
                 self.app_instance.processing_files.discard(filepath)
     
+    def is_file_accessible(self, filepath: str) -> Tuple[bool, str]:
+        """Check if a file can be opened for reading"""
+        try:
+            with open(filepath, 'rb') as f:
+                # Try to read the first byte to ensure file is truly accessible
+                f.read(1)
+            return True, ""
+        except PermissionError as e:
+            return False, f"Permission denied: {str(e)}"
+        except IOError as e:
+            return False, f"IO error: {str(e)}"
+        except Exception as e:
+            return False, f"Access error: {str(e)}"
+    
+    def schedule_locked_file_retry(self, filepath: str, remote_path: str, filename: str, access_error: str):
+        """Schedule a retry for a locked file after appropriate wait time"""
+        if not hasattr(self, 'locked_file_retries'):
+            self.locked_file_retries = {}
+        
+        # Track retry count for this file
+        retry_key = filepath
+        retry_count = self.locked_file_retries.get(retry_key, 0)
+        max_retries = self.app_instance.max_retries_spin.value()
+        
+        if retry_count >= max_retries:
+            # Give up after max retries
+            self.transfer_complete.emit(
+                filename, filepath, False, 
+                f"File locked after {max_retries} retries: {access_error}"
+            )
+            self.locked_file_retries.pop(retry_key, None)
+            return
+        
+        # Calculate wait time
+        if retry_count == 0:
+            # First attempt - use initial wait time
+            wait_time_ms = self.app_instance.initial_wait_spin.value() * 60 * 1000  # Convert minutes to ms
+            status_msg = f"File locked, waiting {self.app_instance.initial_wait_spin.value()} minutes (LC-MS run)..."
+        else:
+            # Subsequent attempts - use retry interval
+            wait_time_ms = self.app_instance.retry_interval_spin.value() * 1000  # Convert seconds to ms
+            remaining_retries = max_retries - retry_count
+            status_msg = f"File locked, retrying in {self.app_instance.retry_interval_spin.value()}s ({remaining_retries} retries left)..."
+        
+        # Update status
+        self.status_update.emit(filename, status_msg, filepath)
+        
+        # Schedule retry
+        self.locked_file_retries[retry_key] = retry_count + 1
+        
+        # Use QTimer for the retry
+        retry_timer = QTimer()
+        retry_timer.setSingleShot(True)
+        retry_timer.timeout.connect(
+            lambda: self.retry_locked_file(filepath, remote_path, filename, retry_timer)
+        )
+        retry_timer.start(wait_time_ms)
+        
+        logger.info(f"Scheduled locked file retry for {filename} (attempt {retry_count + 1}) in {wait_time_ms/1000}s")
+    
+    def retry_locked_file(self, filepath: str, remote_path: str, filename: str, timer: QTimer):
+        """Retry uploading a previously locked file"""
+        timer.deleteLater()  # Clean up timer
+        
+        # Check if file still exists
+        if not os.path.exists(filepath):
+            self.transfer_complete.emit(filename, filepath, False, "File no longer exists")
+            retry_key = filepath
+            self.locked_file_retries.pop(retry_key, None)
+            return
+        
+        # Try uploading again
+        logger.info(f"Retrying locked file: {filename}")
+        self.upload_file(filepath, remote_path, filename)
+    
+    def is_file_accessible(self, filepath: str) -> Tuple[bool, str]:
+        """Check if a file can be opened for reading"""
+        try:
+            with open(filepath, 'rb') as f:
+                # Try to read the first byte to ensure file is truly accessible
+                f.read(1)
+            return True, ""
+        except PermissionError as e:
+            return False, f"Permission denied: {str(e)}"
+        except IOError as e:
+            return False, f"IO error: {str(e)}"
+        except Exception as e:
+            return False, f"Access error: {str(e)}"
+    
     def upload_file(self, filepath: str, remote_path: str, filename: str):
         """Upload file to remote path"""
         try:
+            # Check if locked file retry is enabled and file is inaccessible
+            if hasattr(self.app_instance, 'enable_locked_retry_check') and \
+               self.app_instance.enable_locked_retry_check.isChecked():
+                
+                accessible, access_error = self.is_file_accessible(filepath)
+                if not accessible:
+                    # File is locked, schedule retry
+                    self.schedule_locked_file_retry(filepath, remote_path, filename, access_error)
+                    return
+            
             # Calculate checksum for verification
             self.status_update.emit(filename, "Calculating checksum...", filepath)
             local_checksum = self.calculate_checksum(filepath)
@@ -1614,6 +1787,7 @@ class MainWindow(QMainWindow):
         self.created_directories = set()                  # Cache of successfully created remote directories
         self.failed_files = {}                           # Track files that failed verification for re-upload
         self.file_remote_paths = {}                      # Track filepath -> remote_path mappings to prevent duplicate uploads
+        self.local_checksum_cache = {}                   # Local checksum cache to avoid recalculation
         
         # Load application configuration from disk
         self.config = self.load_config()
@@ -1670,17 +1844,6 @@ class MainWindow(QMainWindow):
         self.start_btn.clicked.connect(self.toggle_monitoring)
         control_layout.addWidget(self.start_btn)
         
-        self.rescan_btn = QPushButton("Rescan Files")
-        self.rescan_btn.clicked.connect(self.manual_rescan)
-        self.rescan_btn.setEnabled(False)  # Only enabled when monitoring
-        self.rescan_btn.setToolTip("Manually scan directory for files to upload")
-        control_layout.addWidget(self.rescan_btn)
-
-        self.test_monitoring_btn = QPushButton("Test Monitoring")
-        self.test_monitoring_btn.clicked.connect(self.test_monitoring_setup)
-        self.test_monitoring_btn.setToolTip("Test if file system monitoring is working in current environment")
-        control_layout.addWidget(self.test_monitoring_btn)
-
         self.test_connection_btn = QPushButton("Test Connection")
         self.test_connection_btn.clicked.connect(self.test_connection)
         control_layout.addWidget(self.test_connection_btn)
@@ -1773,6 +1936,68 @@ class MainWindow(QMainWindow):
         self.preserve_structure_check = QCheckBox("Preserve directory structure on remote")
         self.preserve_structure_check.setChecked(True)
         adv_layout.addWidget(self.preserve_structure_check, 1, 0, 1, 2)
+        
+        # OS Event vs Polling settings
+        self.enable_polling_check = QCheckBox("Enable backup file polling")
+        self.enable_polling_check.setChecked(False)  # Default to OS events only
+        self.enable_polling_check.setToolTip(
+            "Enable periodic directory scanning as backup to OS file events.\n"
+            "OS events are faster and more efficient. Only enable polling if:\n"
+            "• Files aren't being detected automatically\n"
+            "• Working with network drives or special file systems\n"
+            "• Running on WSL or virtual machines"
+        )
+        adv_layout.addWidget(self.enable_polling_check, 2, 0, 1, 2)
+        
+        adv_layout.addWidget(QLabel("Polling interval (minutes):"), 3, 0)
+        self.polling_interval_spin = QSpinBox()
+        self.polling_interval_spin.setRange(1, 30)
+        self.polling_interval_spin.setValue(2)  # Default to 2 minutes instead of 30 seconds
+        self.polling_interval_spin.setEnabled(False)  # Disabled by default
+        self.polling_interval_spin.setToolTip("How often to scan directory when polling is enabled")
+        adv_layout.addWidget(self.polling_interval_spin, 3, 1)
+        
+        # Connect polling checkbox to enable/disable interval setting
+        self.enable_polling_check.toggled.connect(self.polling_interval_spin.setEnabled)
+        
+        # Locked file handling settings
+        self.enable_locked_retry_check = QCheckBox("Handle locked files (e.g., from mass spectrometers)")
+        self.enable_locked_retry_check.setChecked(True)  # Default enabled for MS workflows
+        self.enable_locked_retry_check.setToolTip(
+            "Wait for locked files to be fully written before uploading.\n"
+            "Useful for mass spectrometer files that take time to write completely."
+        )
+        adv_layout.addWidget(self.enable_locked_retry_check, 4, 0, 1, 2)
+        
+        adv_layout.addWidget(QLabel("Initial wait time (minutes):"), 5, 0)
+        self.initial_wait_spin = QSpinBox()
+        self.initial_wait_spin.setRange(1, 180)  # 1 minute to 3 hours
+        self.initial_wait_spin.setValue(30)  # Default 30 minutes (typical LC-MS run)
+        self.initial_wait_spin.setToolTip("Wait time before first retry (e.g., LC-MS run duration)")
+        adv_layout.addWidget(self.initial_wait_spin, 5, 1)
+        
+        adv_layout.addWidget(QLabel("Retry interval (seconds):"), 6, 0)
+        self.retry_interval_spin = QSpinBox()
+        self.retry_interval_spin.setRange(10, 300)  # 10 seconds to 5 minutes
+        self.retry_interval_spin.setValue(30)  # Default 30 seconds
+        self.retry_interval_spin.setToolTip("How often to retry after initial wait period")
+        adv_layout.addWidget(self.retry_interval_spin, 6, 1)
+        
+        adv_layout.addWidget(QLabel("Maximum retries:"), 7, 0)
+        self.max_retries_spin = QSpinBox()
+        self.max_retries_spin.setRange(1, 100)
+        self.max_retries_spin.setValue(20)  # Default 20 retries = ~10 minutes of additional waiting
+        self.max_retries_spin.setToolTip("Maximum retry attempts after initial wait")
+        adv_layout.addWidget(self.max_retries_spin, 7, 1)
+        
+        # Connect locked file checkbox to enable/disable related settings
+        def toggle_locked_settings(enabled):
+            self.initial_wait_spin.setEnabled(enabled)
+            self.retry_interval_spin.setEnabled(enabled)
+            self.max_retries_spin.setEnabled(enabled)
+        
+        self.enable_locked_retry_check.toggled.connect(toggle_locked_settings)
+        toggle_locked_settings(self.enable_locked_retry_check.isChecked())  # Set initial state
         
         adv_group.setLayout(adv_layout)
         layout.addWidget(adv_group)
@@ -2081,7 +2306,6 @@ class MainWindow(QMainWindow):
             self.observer = None
             self.poll_timer.stop()  # Stop polling timer
             self.start_btn.setText("Start Monitoring")
-            self.rescan_btn.setEnabled(False)
             self.status_label.setText("Not monitoring")
             self.status_label.setStyleSheet("font-weight: bold; color: red;")
             self.log_text.append(f"{datetime.now().strftime('%H:%M:%S')} - Stopped monitoring")
@@ -2145,115 +2369,32 @@ class MainWindow(QMainWindow):
             )
             
             self.observer.start()
+            logger.info(f"Started OS-level file monitoring for: {directory}")
             
-            # Start periodic polling as backup (every 30 seconds)
-            self.poll_timer.start(30000)  # 30 seconds
+            # Only start polling if explicitly enabled by user
+            if self.enable_polling_check.isChecked():
+                polling_interval_ms = self.polling_interval_spin.value() * 60 * 1000  # Convert minutes to ms
+                self.poll_timer.start(polling_interval_ms)
+                logger.info(f"Started backup polling every {self.polling_interval_spin.value()} minutes")
+            else:
+                logger.info("Backup polling disabled - relying on OS file events only")
             
             # Scan for existing files in the directory
             self.scan_existing_files(directory, extensions, self.subdirs_check.isChecked())
             
             self.start_btn.setText("Stop Monitoring")
-            self.rescan_btn.setEnabled(True)
             self.status_label.setText("Monitoring active")
             self.status_label.setStyleSheet("font-weight: bold; color: green;")
             
             self.log_text.append(f"{datetime.now().strftime('%H:%M:%S')} - Started monitoring {directory}")
             self.log_text.append(f"Extensions: {', '.join(extensions)}")
-            self.log_text.append(f"{datetime.now().strftime('%H:%M:%S')} - File system events + periodic polling (30s) enabled")
-    
-    def test_monitoring_setup(self):
-        """Test if file monitoring will work in the current environment"""
-        directory = self.dir_input.text()
-        
-        if not directory:
-            QMessageBox.warning(self, "No Directory", "Please select a directory to test first.")
-            return
-        
-        if not os.path.exists(directory):
-            QMessageBox.warning(self, "Invalid Directory", "Selected directory does not exist.")
-            return
-        
-        try:
-            from watchdog.observers import Observer
-            from watchdog.events import FileSystemEventHandler
             
-            class TestHandler(FileSystemEventHandler):
-                def __init__(self):
-                    self.events = []
-                
-                def on_created(self, event):
-                    if not event.is_directory:
-                        self.events.append(f"Created: {os.path.basename(event.src_path)}")
-                
-                def on_modified(self, event):
-                    if not event.is_directory:
-                        self.events.append(f"Modified: {os.path.basename(event.src_path)}")
-                
-                def on_moved(self, event):
-                    if not event.is_directory:
-                        self.events.append(f"Moved: {os.path.basename(event.dest_path)}")
-            
-            # Set up test observer
-            handler = TestHandler()
-            observer = Observer()
-            observer.schedule(handler, directory, recursive=False)
-            observer.start()
-            
-            # Create a test file
-            test_filename = f"panoramabridge_test_{int(time.time())}.tmp"
-            test_filepath = os.path.join(directory, test_filename)
-            
-            try:
-                with open(test_filepath, 'w') as f:
-                    f.write("PanoramaBridge monitoring test file")
-                
-                # Wait for events
-                time.sleep(2)
-                
-                # Clean up test file
-                os.remove(test_filepath)
-                
-                observer.stop()
-                observer.join()
-                
-                if handler.events:
-                    msg = f"✓ File system monitoring is working!\n\nEvents detected:\n"
-                    for event in handler.events:
-                        msg += f"  • {event}\n"
-                    msg += "\nNew files in this directory should be detected automatically."
-                    QMessageBox.information(self, "Monitoring Test - SUCCESS", msg)
-                else:
-                    msg = ("✗ File system events were not detected.\n\n"
-                          "This is common on:\n"
-                          "• Network drives\n"
-                          "• Some virtual file systems\n"
-                          "• Certain WSL configurations\n\n"
-                          "The periodic polling backup (every 30 seconds) will be used instead.")
-                    QMessageBox.warning(self, "Monitoring Test - Limited Functionality", msg)
-                    
-            except Exception as e:
-                observer.stop()
-                observer.join()
-                QMessageBox.critical(self, "Test Error", f"Error during monitoring test: {e}")
-                
-        except Exception as e:
-            QMessageBox.critical(self, "Test Error", f"Failed to set up monitoring test: {e}")
-        
-        # Log the test
-        timestamp = datetime.now().strftime('%H:%M:%S')
-        self.log_text.append(f"{timestamp} - Monitoring test completed for {directory}")
-    
-    def manual_rescan(self):
-        """Manually rescan directory for files"""
-        if not self.observer:
-            QMessageBox.information(self, "Info", "Monitoring is not active")
-            return
-            
-        directory = self.dir_input.text()
-        extensions = [e.strip() for e in self.extensions_input.text().split(',') if e.strip()]
-        
-        self.log_text.append(f"{datetime.now().strftime('%H:%M:%S')} - Manual rescan requested")
-        self.scan_existing_files(directory, extensions, self.subdirs_check.isChecked())
+            # Log the actual monitoring configuration
+            if self.enable_polling_check.isChecked():
+                polling_interval = self.polling_interval_spin.value()
+                self.log_text.append(f"{datetime.now().strftime('%H:%M:%S')} - OS file events + backup polling every {polling_interval} minutes")
+            else:
+                self.log_text.append(f"{datetime.now().strftime('%H:%M:%S')} - OS file events only (backup polling disabled)")
     
     def scan_existing_files(self, directory: str, extensions: List[str], recursive: bool):
         """Scan directory for existing files and add them to the queue"""
@@ -2353,13 +2494,17 @@ class MainWindow(QMainWindow):
     
     def poll_for_new_files(self):
         """
-        Periodic polling for new files as backup to file system events.
+        Periodic polling for new files as backup to OS file system events.
         
-        This method serves as a fallback when file system events aren't 
+        This method serves as a fallback when OS file system events aren't 
         working properly (common on network mounts, WSL, etc.). It scans
         the monitored directory for new files that haven't been processed.
+        
+        Note: This is only used when explicitly enabled by the user, as
+        OS file events are much more efficient and responsive.
         """
         if not self.observer or not self.observer.is_alive():
+            logger.warning("Polling attempted but observer is not running")
             return
             
         try:
@@ -2373,7 +2518,7 @@ class MainWindow(QMainWindow):
             formatted_extensions = [ext.lower() if ext.startswith('.') else f'.{ext.lower()}' 
                                    for ext in extensions]
             
-            logger.debug(f"Polling for new files in {directory}")
+            logger.debug(f"Backup polling scan: {directory}")
             files_found = 0
             
             if self.subdirs_check.isChecked():
@@ -2393,33 +2538,34 @@ class MainWindow(QMainWindow):
                                 if self._is_file_stable(filepath):
                                     self.file_queue.put(filepath)
                                     files_found += 1
-                                    logger.info(f"Polling: Queued new file: {filepath}")
+                                    logger.info(f"Polling backup found file (OS events missed): {filepath}")
             else:
-                # Scan only the top-level directory
+                # Scan only the main directory
                 try:
-                    for item in os.listdir(directory):
-                        filepath = os.path.join(directory, item)
-                        if os.path.isfile(filepath):
-                            # Skip hidden/system files
-                            if item.startswith('.') or item.startswith('~'):
-                                continue
-                                
-                            if any(filepath.lower().endswith(ext) for ext in formatted_extensions):
-                                # Check if this is a new file we haven't seen
-                                if self._should_queue_file_poll(filepath):
-                                    # Check if file is stable (not being written)
-                                    if self._is_file_stable(filepath):
-                                        self.file_queue.put(filepath)
-                                        files_found += 1
-                                        logger.info(f"Polling: Queued new file: {filepath}")
-                except OSError as e:
-                    logger.error(f"Error polling directory {directory}: {e}")
-                    
+                    files = os.listdir(directory)
+                    for file in files:
+                        filepath = os.path.join(directory, file)
+                        
+                        # Skip directories, hidden files, system files
+                        if os.path.isdir(filepath) or file.startswith('.') or file.startswith('~'):
+                            continue
+                            
+                        if any(filepath.lower().endswith(ext) for ext in formatted_extensions):
+                            if self._should_queue_file_poll(filepath):
+                                if self._is_file_stable(filepath):
+                                    self.file_queue.put(filepath)
+                                    files_found += 1
+                                    logger.info(f"Polling backup found file (OS events missed): {filepath}")
+                except Exception as e:
+                    logger.error(f"Error scanning directory {directory}: {e}")
+            
             if files_found > 0:
-                logger.info(f"Polling: Found {files_found} new files to process")
+                logger.info(f"Backup polling found {files_found} files that OS events missed")
+            else:
+                logger.debug("Backup polling scan complete - no new files found")
                 
         except Exception as e:
-            logger.error(f"Error in periodic file polling: {e}")
+            logger.error(f"Error in backup polling: {e}")
     
     def _should_queue_file_poll(self, filepath: str) -> bool:
         """

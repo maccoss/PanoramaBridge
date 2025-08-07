@@ -28,16 +28,16 @@ if (-not (Test-Path "panoramabridge.py")) {
 }
 
 # Create virtual environment if it doesn't exist or has wrong structure
-if (-not (Test-Path ".venv\Scripts")) {
+if (-not (Test-Path ".venv-win\Scripts")) {
     Write-Host "Creating/Recreating virtual environment for Windows..." -ForegroundColor Yellow
-    if (Test-Path ".venv") { Remove-Item -Recurse -Force .venv }
-    python -m venv .venv
+    if (Test-Path ".venv-win") { Remove-Item -Recurse -Force .venv-win }
+    python -m venv .venv-win
 }
 
 # Activate virtual environment
 Write-Host "Activating virtual environment..." -ForegroundColor Yellow
 try {
-    & ".\.venv\Scripts\Activate.ps1"
+    & ".\.venv-win\Scripts\Activate.ps1"
 } catch {
     Write-Host "Warning: Could not activate virtual environment via Activate.ps1" -ForegroundColor Yellow
     Write-Host "Continuing with virtual environment using direct python executable..." -ForegroundColor Yellow
@@ -45,15 +45,15 @@ try {
 
 # Upgrade pip in virtual environment
 Write-Host "Updating pip..." -ForegroundColor Yellow
-& ".\.venv\Scripts\python.exe" -m pip install --upgrade pip
+& ".\.venv-win\Scripts\python.exe" -m pip install --upgrade pip
 
 # Install requirements in virtual environment
 Write-Host "Installing requirements..." -ForegroundColor Yellow
-& ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt
+& ".\.venv-win\Scripts\python.exe" -m pip install -r requirements.txt
 
 # Install PyInstaller in virtual environment
 Write-Host "Installing PyInstaller..." -ForegroundColor Yellow
-& ".\.venv\Scripts\python.exe" -m pip install pyinstaller
+& ".\.venv-win\Scripts\python.exe" -m pip install pyinstaller
 
 # Clean previous builds
 Write-Host "Cleaning previous builds..." -ForegroundColor Yellow
@@ -62,7 +62,7 @@ if (Test-Path "build") { Remove-Item -Recurse -Force build }
 
 # Build executable
 Write-Host "Building executable..." -ForegroundColor Yellow
-& ".\.venv\Scripts\pyinstaller.exe" --onefile --windowed --name "PanoramaBridge" panoramabridge.py
+& ".\.venv-win\Scripts\pyinstaller.exe" --onefile --windowed --name "PanoramaBridge" panoramabridge.py
 
 # Check if build was successful
 if (Test-Path "dist\PanoramaBridge.exe") {

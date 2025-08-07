@@ -27,28 +27,28 @@ if not exist "panoramabridge.py" (
 )
 
 REM Create virtual environment if it doesn't exist or has wrong structure
-if not exist ".venv\Scripts" (
+if not exist ".venv-win\Scripts" (
     echo Creating/Recreating virtual environment for Windows...
-    if exist ".venv" rmdir /s /q .venv
-    python -m venv .venv
+    if exist ".venv-win" rmdir /s /q .venv-win
+    python -m venv .venv-win
 )
 
 REM Activate virtual environment
 echo Activating virtual environment...
 REM Try to activate, but continue even if it fails
-call .venv\Scripts\activate.bat 2>nul || echo Virtual environment activation may have failed, continuing...
+call .venv-win\Scripts\activate.bat 2>nul || echo Virtual environment activation may have failed, continuing...
 
 REM Upgrade pip in virtual environment
 echo Updating pip...
-.venv\Scripts\python.exe -m pip install --upgrade pip
+.venv-win\Scripts\python.exe -m pip install --upgrade pip
 
 REM Install requirements in virtual environment
 echo Installing requirements...
-.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv-win\Scripts\python.exe -m pip install -r requirements.txt
 
 REM Install PyInstaller in virtual environment
 echo Installing PyInstaller...
-.venv\Scripts\python.exe -m pip install pyinstaller
+.venv-win\Scripts\python.exe -m pip install pyinstaller
 
 REM Clean previous builds
 echo Cleaning previous builds...
@@ -57,7 +57,7 @@ if exist "build" rmdir /s /q build
 
 REM Build executable
 echo Building executable...
-.venv\Scripts\pyinstaller.exe --onefile --windowed --name "PanoramaBridge" panoramabridge.py
+.venv-win\Scripts\pyinstaller.exe --onefile --windowed --name "PanoramaBridge" panoramabridge.py
 
 REM Check if build was successful
 if exist "dist\PanoramaBridge.exe" (
