@@ -559,9 +559,9 @@ class WebDAVClient:
             
             # Create a file-like object that gives periodic progress updates
             class TimedProgressFile:
-                def __init__(self, filepath, callback, total_size):
+                def __init__(self, filepath, progress_callback, total_size):
                     self.filepath = filepath
-                    self.callback = callback
+                    self.progress_callback = progress_callback
                     self.total_size = total_size
                     self.bytes_read = 0
                     self._file = None
@@ -587,8 +587,8 @@ class WebDAVClient:
                         # Report progress every second instead of every chunk
                         current_time = time.time()
                         if (current_time - self.last_report_time) >= self.report_interval:
-                            if self.callback:
-                                self.callback(self.bytes_read, self.total_size)
+                            if self.progress_callback:
+                                self.progress_callback(self.bytes_read, self.total_size)
                             self.last_report_time = current_time
                     
                     return data
@@ -747,12 +747,13 @@ class FileMonitorHandler(FileSystemEventHandler):
                     if current_size == last_size and current_time - last_time > 1:
                         # File is stable, check for duplicates before queueing
                         if self._should_queue_file(filepath):
+                            logger.info(f"Queuing stable file: {filepath} (size: {current_size} bytes)")
                             self.file_queue.put(filepath)
                             # Add to transfer table immediately when queued
                             if self.app_instance:
                                 self.app_instance.add_queued_file_to_table(filepath)
                             del self.pending_files[filepath]
-                            logger.info(f"File queued for transfer: {filepath}")
+                            logger.info(f"File queued for transfer: {filepath} (queue size now: {self.file_queue.qsize()})")
                         else:
                             del self.pending_files[filepath]
                             logger.info(f"File already queued or processing, skipping: {filepath}")
@@ -780,9 +781,13 @@ class FileMonitorHandler(FileSystemEventHandler):
                                 if current_size == stored_size:
                                     # File hasn't changed, check for duplicates before queueing
                                     if self._should_queue_file(filepath):
+                                        logger.info(f"Delayed check: Queuing stable file: {filepath} (size: {current_size} bytes)")
                                         self.file_queue.put(filepath)
+                                        # Add to transfer table immediately when queued
+                                        if self.app_instance:
+                                            self.app_instance.add_queued_file_to_table(filepath)
                                         del self.pending_files[filepath]
-                                        logger.info(f"File queued for transfer after stability check: {filepath}")
+                                        logger.info(f"File queued for transfer after stability check: {filepath} (queue size now: {self.file_queue.qsize()})")
                                     else:
                                         del self.pending_files[filepath]
                                         logger.info(f"File already queued or processing, skipping: {filepath}")
@@ -1143,10 +1148,12 @@ class FileProcessor(QThread):
     
     def run(self):
         """Main processing loop"""
+        logger.info("FileProcessor thread started - beginning queue processing")
         while self.running:
             try:
                 # Get file from queue (timeout allows checking self.running)
                 file_item = self.file_queue.get(timeout=1)
+                logger.info(f"FileProcessor: Retrieved item from queue: {file_item}")
                 
                 if self.webdav_client:
                     # Handle both string paths and dict objects with resolution info
@@ -1157,15 +1164,20 @@ class FileProcessor(QThread):
                         logger.info(f"Processing regular file item: {file_item}")
                         self.process_file(file_item)
                 else:
-                    logger.warning("No WebDAV client configured")
+                    logger.warning("FileProcessor: No WebDAV client configured - cannot process files")
                     # Remove from queued files if processing failed
                     if isinstance(file_item, str) and self.app_instance:
                         self.app_instance.queued_files.discard(file_item)
+                        # Update status in table
+                        filename = os.path.basename(file_item)
+                        self.status_update.emit(filename, "Failed", file_item)
+                        self.transfer_complete.emit(filename, file_item, False, "No WebDAV connection configured")
                     
             except queue.Empty:
+                # No items in queue, continue loop
                 continue
             except Exception as e:
-                logger.error(f"Error in processor: {e}")
+                logger.error(f"Error in FileProcessor main loop: {e}", exc_info=True)
     
     def process_file_with_resolution(self, file_item: dict):
         """Process a file that already has conflict resolution"""
@@ -1413,16 +1425,39 @@ class FileProcessor(QThread):
                 if success and self.app_instance:
                     self.app_instance.created_directories.add(remote_dir)
             
-            # Upload file with simple progress tracking
-            self.status_update.emit(filename, "Reading file...", filepath)
+            # Upload file with detailed progress and status tracking
+            self.status_update.emit(filename, "Preparing upload...", filepath)
+            
+            # Track last status percentage to avoid too many updates
+            last_status_percentage = -1
             
             def progress_callback(current, total):
-                # Simply pass through the actual progress from WebDAV client
+                nonlocal last_status_percentage
+                
+                # Calculate percentage for progress bar updates
+                if total > 0:
+                    percentage = (current / total) * 100
+                    
+                    # Simplified status messages - let the progress bar show the percentage
+                    if percentage >= 100:
+                        status_msg = "Upload complete"
+                    elif current > 0:
+                        status_msg = "Uploading file..."
+                    else:
+                        status_msg = "Preparing upload..."
+                    
+                    # Update status every 25% to avoid too many updates and reduce confusion
+                    percentage_rounded = int(percentage / 25) * 25
+                    
+                    if percentage_rounded != last_status_percentage:
+                        self.status_update.emit(filename, status_msg, filepath)
+                        last_status_percentage = percentage_rounded
+                
+                # Always pass through the progress
                 self.progress_update.emit(filepath, current, total)
                 
-                # Update status message when upload starts
-                if current > 0 and current < total:
-                    self.status_update.emit(filename, "Uploading...", filepath)
+            # First show file reading status
+            self.status_update.emit(filename, "Reading file...", filepath)
             
             success, error = self.webdav_client.upload_file_chunked(
                 filepath, remote_path, progress_callback
@@ -1430,6 +1465,7 @@ class FileProcessor(QThread):
             
             if success:
                 # Store checksum for future reference
+                self.status_update.emit(filename, "Storing checksum...", filepath)
                 try:
                     self.webdav_client.store_checksum(remote_path, local_checksum)
                 except Exception as e:
@@ -2476,21 +2512,31 @@ class MainWindow(QMainWindow):
         widget.setLayout(layout)
         return widget
     
+    def get_transfer_table_key(self, filename: str, filepath: str) -> str:
+        """Generate consistent unique key for transfer table tracking"""
+        return f"{filename}|{hash(filepath)}"
+    
     def add_queued_file_to_table(self, filepath: str):
         """Add a queued file to the transfer table with 'Queued' status at the top"""
         filename = os.path.basename(filepath)
         
-        # Check if already in table
-        unique_key = f"{filename}:{filepath}"
+        # Use consistent unique key format (same as on_status_update)
+        unique_key = self.get_transfer_table_key(filename, filepath)
         if unique_key in self.transfer_rows:
-            return  # Already in table
+            # File already in table, just update status to ensure it's marked as queued
+            row = self.transfer_rows[unique_key]
+            if row < self.transfer_table.rowCount():
+                status_item = self.transfer_table.item(row, 2)
+                if status_item:
+                    status_item.setText("Queued")
+                message_item = self.transfer_table.item(row, 4) 
+                if message_item:
+                    message_item.setText("Waiting for processing...")
+            return  # Don't create duplicate
         
-        # Insert at the top (row 0) so newest files appear first and process in FIFO order
-        self.transfer_table.insertRow(0)
-        
-        # Update existing row indices since we inserted at the top
-        for key in self.transfer_rows:
-            self.transfer_rows[key] += 1
+        # Insert at the bottom (append) to fill table from row 1 downward
+        row_count = self.transfer_table.rowCount()
+        self.transfer_table.insertRow(row_count)
         
         # Create display path (relative to monitored directory if possible)
         display_path = filepath
@@ -2499,25 +2545,25 @@ class MainWindow(QMainWindow):
             if not relative_path.startswith('..'):
                 display_path = relative_path
         
-        # Set basic info in the new top row
-        self.transfer_table.setItem(0, 0, QTableWidgetItem(filename))
-        self.transfer_table.setItem(0, 1, QTableWidgetItem(display_path))
-        self.transfer_table.setItem(0, 2, QTableWidgetItem("Queued"))
+        # Set basic info in the new bottom row
+        self.transfer_table.setItem(row_count, 0, QTableWidgetItem(filename))
+        self.transfer_table.setItem(row_count, 1, QTableWidgetItem(display_path))
+        self.transfer_table.setItem(row_count, 2, QTableWidgetItem("Queued"))
         
         # Add empty progress bar
         progress_bar = QProgressBar()
         progress_bar.setValue(0)
         progress_bar.setVisible(False)  # Hide progress bar for queued files
-        self.transfer_table.setCellWidget(0, 3, progress_bar)
+        self.transfer_table.setCellWidget(row_count, 3, progress_bar)
         
         # Set message  
-        self.transfer_table.setItem(0, 4, QTableWidgetItem("Waiting for processing..."))
+        self.transfer_table.setItem(row_count, 4, QTableWidgetItem("Waiting for processing..."))
         
-        # Track the row (now at position 0)
-        self.transfer_rows[unique_key] = 0
+        # Track the row (now at the bottom)
+        self.transfer_rows[unique_key] = row_count
         
-        # Auto-scroll to show the newly added item at the top
-        self.transfer_table.scrollToTop()
+        # Auto-scroll to show the newly added item at the bottom
+        self.transfer_table.scrollToBottom()
     
     def view_full_logs(self):
         """Open a dialog to view full application logs"""
@@ -2833,9 +2879,28 @@ class MainWindow(QMainWindow):
         return True
 
     def update_queue_size(self):
-        """Update queue size display"""
+        """Update queue size display with enhanced debugging"""
         size = self.file_queue.qsize()
+        queued_count = len(self.queued_files)
+        processing_count = len(self.processing_files)
+        
         self.queue_label.setText(f"{size} files")
+        
+        # Add diagnostic logging every 10 seconds (timer runs every 1 second)
+        if not hasattr(self, 'queue_debug_counter'):
+            self.queue_debug_counter = 0
+        self.queue_debug_counter += 1
+        
+        if self.queue_debug_counter >= 10:  # Every 10 seconds
+            self.queue_debug_counter = 0
+            if size > 0 or queued_count > 0 or processing_count > 0:
+                logger.info(f"Queue status: queue={size}, queued_files={queued_count}, processing_files={processing_count}")
+                logger.info(f"FileProcessor running: {getattr(self.file_processor, 'running', 'Unknown')}")
+                logger.info(f"WebDAV client configured: {self.file_processor.webdav_client is not None}")
+                if queued_count > 0:
+                    logger.info(f"Sample queued files: {list(self.queued_files)[:3]}")
+                if processing_count > 0:
+                    logger.info(f"Sample processing files: {list(self.processing_files)[:3]}")
     
     def poll_for_new_files(self):
         """
@@ -2962,17 +3027,18 @@ class MainWindow(QMainWindow):
     
     @pyqtSlot(str, str, str)
     def on_status_update(self, filename: str, status: str, filepath: str):
-        """Handle status updates from processor"""
-        # Create unique key for files with same name in different directories
-        unique_key = f"{filename}|{hash(filepath)}"
+        """Handle status updates from processor - updates existing entries, doesn't create new ones"""
+        # Create unique key for files with same name in different directories  
+        unique_key = self.get_transfer_table_key(filename, filepath)
         
         if unique_key not in self.transfer_rows:
-            # Add new row at the top (FIFO order - first queued files at top, process top-down)
-            self.transfer_table.insertRow(0)
+            # This shouldn't happen if files are properly queued first
+            # But as a fallback, create the entry (this handles edge cases)
+            logger.warning(f"Status update for file not in table, creating entry: {filename}")
             
-            # Update existing row indices since we inserted at the top
-            for key in self.transfer_rows:
-                self.transfer_rows[key] += 1
+            # Add new row at the bottom (consistent with add_queued_file_to_table)
+            row_count = self.transfer_table.rowCount()
+            self.transfer_table.insertRow(row_count)
             
             # Calculate relative path for display
             local_base = self.dir_input.text()
@@ -2991,9 +3057,9 @@ class MainWindow(QMainWindow):
             else:
                 display_path = "./"
             
-            self.transfer_table.setItem(0, 0, QTableWidgetItem(filename))
-            self.transfer_table.setItem(0, 1, QTableWidgetItem(display_path))
-            self.transfer_table.setItem(0, 2, QTableWidgetItem(status))
+            self.transfer_table.setItem(row_count, 0, QTableWidgetItem(filename))
+            self.transfer_table.setItem(row_count, 1, QTableWidgetItem(display_path))
+            self.transfer_table.setItem(row_count, 2, QTableWidgetItem(status))
             
             progress_bar = QProgressBar()
             progress_bar.setMinimum(0)
@@ -3004,18 +3070,18 @@ class MainWindow(QMainWindow):
                 progress_bar.setVisible(False)
             else:
                 progress_bar.setVisible(True)
-            self.transfer_table.setCellWidget(0, 3, progress_bar)
+            self.transfer_table.setCellWidget(row_count, 3, progress_bar)
             
-            self.transfer_table.setItem(0, 4, QTableWidgetItem(""))
+            self.transfer_table.setItem(row_count, 4, QTableWidgetItem(""))
             
-            self.transfer_rows[unique_key] = 0
+            self.transfer_rows[unique_key] = row_count
             
-            # Auto-scroll to show active processing (first few rows)
+            # Auto-scroll to show active processing when starting
             if status not in ["Queued", "Starting", "Pending"]:
-                self.transfer_table.scrollToTop()
+                self.transfer_table.scrollToItem(self.transfer_table.item(row_count, 0))
                 
         else:
-            # Update existing row
+            # Update existing row - this is the normal case
             row = self.transfer_rows[unique_key]
             if row < self.transfer_table.rowCount():
                 current_item = self.transfer_table.item(row, 2)
@@ -3035,7 +3101,7 @@ class MainWindow(QMainWindow):
     def on_progress_update(self, filepath: str, current: int, total: int):
         """Handle progress updates from processor"""
         filename = os.path.basename(filepath)
-        unique_key = f"{filename}|{hash(filepath)}"
+        unique_key = self.get_transfer_table_key(filename, filepath)
         if unique_key in self.transfer_rows:
             row = self.transfer_rows[unique_key]
             if row < self.transfer_table.rowCount():
@@ -3051,7 +3117,7 @@ class MainWindow(QMainWindow):
     @pyqtSlot(str, str, bool, str)
     def on_transfer_complete(self, filename: str, filepath: str, success: bool, message: str):
         """Handle transfer completion"""
-        unique_key = f"{filename}|{hash(filepath)}"
+        unique_key = self.get_transfer_table_key(filename, filepath)
         if unique_key in self.transfer_rows:
             row = self.transfer_rows[unique_key]
             if row < self.transfer_table.rowCount():

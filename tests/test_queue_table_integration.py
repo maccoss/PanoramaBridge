@@ -42,12 +42,12 @@ class TestQueueTableIntegration:
         # Call the method
         main_window.add_queued_file_to_table(filepath)
         
-        # Verify a row was inserted
+        # Verify a row was inserted at the bottom (row 0 since table was empty)
         main_window.transfer_table.insertRow.assert_called_once_with(0)
         
-        # Verify the file was tracked
+        # Verify the file was tracked with new unique key format
         filename = os.path.basename(filepath)
-        unique_key = f"{filename}:{filepath}"
+        unique_key = f"{filename}|{hash(filepath)}"
         assert unique_key in main_window.transfer_rows
         assert main_window.transfer_rows[unique_key] == 0
         
@@ -59,7 +59,7 @@ class TestQueueTableIntegration:
         """Test that duplicate files are not added to the table"""
         filepath = "/test/directory/test_file.raw"
         filename = os.path.basename(filepath)
-        unique_key = f"{filename}:{filepath}"
+        unique_key = f"{filename}|{hash(filepath)}"
         
         # Pre-populate the tracking dictionary
         main_window.transfer_rows[unique_key] = 0
