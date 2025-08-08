@@ -748,6 +748,9 @@ class FileMonitorHandler(FileSystemEventHandler):
                         # File is stable, check for duplicates before queueing
                         if self._should_queue_file(filepath):
                             self.file_queue.put(filepath)
+                            # Add to transfer table immediately when queued
+                            if self.app_instance:
+                                self.app_instance.add_queued_file_to_table(filepath)
                             del self.pending_files[filepath]
                             logger.info(f"File queued for transfer: {filepath}")
                         else:
@@ -2020,6 +2023,11 @@ class MainWindow(QMainWindow):
         self.poll_timer = QTimer()
         self.poll_timer.timeout.connect(self.poll_for_new_files)
         # Timer will be started when monitoring begins
+        
+        # Setup periodic cache saving (every 5 minutes)
+        self.cache_save_timer = QTimer()
+        self.cache_save_timer.timeout.connect(self.save_checksum_cache)
+        self.cache_save_timer.start(5 * 60 * 1000)  # 5 minutes in milliseconds
     
     def setup_application_icon(self):
         """Setup the application icon from the logo file"""
@@ -2468,6 +2476,49 @@ class MainWindow(QMainWindow):
         widget.setLayout(layout)
         return widget
     
+    def add_queued_file_to_table(self, filepath: str):
+        """Add a queued file to the transfer table with 'Queued' status at the top"""
+        filename = os.path.basename(filepath)
+        
+        # Check if already in table
+        unique_key = f"{filename}:{filepath}"
+        if unique_key in self.transfer_rows:
+            return  # Already in table
+        
+        # Insert at the top (row 0) so newest files appear first and process in FIFO order
+        self.transfer_table.insertRow(0)
+        
+        # Update existing row indices since we inserted at the top
+        for key in self.transfer_rows:
+            self.transfer_rows[key] += 1
+        
+        # Create display path (relative to monitored directory if possible)
+        display_path = filepath
+        if self.dir_input.text() and filepath.startswith(self.dir_input.text()):
+            relative_path = os.path.relpath(filepath, self.dir_input.text())
+            if not relative_path.startswith('..'):
+                display_path = relative_path
+        
+        # Set basic info in the new top row
+        self.transfer_table.setItem(0, 0, QTableWidgetItem(filename))
+        self.transfer_table.setItem(0, 1, QTableWidgetItem(display_path))
+        self.transfer_table.setItem(0, 2, QTableWidgetItem("Queued"))
+        
+        # Add empty progress bar
+        progress_bar = QProgressBar()
+        progress_bar.setValue(0)
+        progress_bar.setVisible(False)  # Hide progress bar for queued files
+        self.transfer_table.setCellWidget(0, 3, progress_bar)
+        
+        # Set message  
+        self.transfer_table.setItem(0, 4, QTableWidgetItem("Waiting for processing..."))
+        
+        # Track the row (now at position 0)
+        self.transfer_rows[unique_key] = 0
+        
+        # Auto-scroll to show the newly added item at the top
+        self.transfer_table.scrollToTop()
+    
     def view_full_logs(self):
         """Open a dialog to view full application logs"""
         dialog = QDialog(self)
@@ -2719,6 +2770,8 @@ class MainWindow(QMainWindow):
                                 self.file_queue.put(filepath)
                                 files_found += 1
                                 logger.info(f"Queued existing file: {filepath}")
+                                # Add to transfer table with "Queued" status
+                                self.add_queued_file_to_table(filepath)
                             else:
                                 logger.debug(f"File already queued or processing, skipping: {filepath}")
                         else:
@@ -2741,6 +2794,8 @@ class MainWindow(QMainWindow):
                                     self.file_queue.put(filepath)
                                     files_found += 1
                                     logger.info(f"Queued existing file: {filepath}")
+                                    # Add to transfer table with "Queued" status
+                                    self.add_queued_file_to_table(filepath)
                                 else:
                                     logger.debug(f"File already queued or processing, skipping: {filepath}")
                 except OSError as e:
@@ -2829,6 +2884,8 @@ class MainWindow(QMainWindow):
                                     self.file_queue.put(filepath)
                                     files_found += 1
                                     logger.info(f"Polling backup found file (OS events missed): {filepath}")
+                                    # Add to transfer table with "Queued" status
+                                    self.add_queued_file_to_table(filepath)
             else:
                 # Scan only the main directory
                 try:
@@ -2846,6 +2903,8 @@ class MainWindow(QMainWindow):
                                     self.file_queue.put(filepath)
                                     files_found += 1
                                     logger.info(f"Polling backup found file (OS events missed): {filepath}")
+                                    # Add to transfer table with "Queued" status
+                                    self.add_queued_file_to_table(filepath)
                 except Exception as e:
                     logger.error(f"Error scanning directory {directory}: {e}")
             
@@ -2908,9 +2967,12 @@ class MainWindow(QMainWindow):
         unique_key = f"{filename}|{hash(filepath)}"
         
         if unique_key not in self.transfer_rows:
-            # Add new row at the bottom (chronological order - oldest first, newest last)
-            row = self.transfer_table.rowCount()
-            self.transfer_table.insertRow(row)
+            # Add new row at the top (FIFO order - first queued files at top, process top-down)
+            self.transfer_table.insertRow(0)
+            
+            # Update existing row indices since we inserted at the top
+            for key in self.transfer_rows:
+                self.transfer_rows[key] += 1
             
             # Calculate relative path for display
             local_base = self.dir_input.text()
@@ -2929,23 +2991,45 @@ class MainWindow(QMainWindow):
             else:
                 display_path = "./"
             
-            self.transfer_table.setItem(row, 0, QTableWidgetItem(filename))
-            self.transfer_table.setItem(row, 1, QTableWidgetItem(display_path))
-            self.transfer_table.setItem(row, 2, QTableWidgetItem(status))
+            self.transfer_table.setItem(0, 0, QTableWidgetItem(filename))
+            self.transfer_table.setItem(0, 1, QTableWidgetItem(display_path))
+            self.transfer_table.setItem(0, 2, QTableWidgetItem(status))
             
             progress_bar = QProgressBar()
             progress_bar.setMinimum(0)
             progress_bar.setMaximum(100)  # Always use percentage for consistency
             progress_bar.setValue(0)
-            self.transfer_table.setCellWidget(row, 3, progress_bar)
+            # Show progress bar only for active processing states
+            if status in ["Queued", "Starting", "Pending"]:
+                progress_bar.setVisible(False)
+            else:
+                progress_bar.setVisible(True)
+            self.transfer_table.setCellWidget(0, 3, progress_bar)
             
-            self.transfer_table.setItem(row, 4, QTableWidgetItem(""))
+            self.transfer_table.setItem(0, 4, QTableWidgetItem(""))
             
-            self.transfer_rows[unique_key] = row
+            self.transfer_rows[unique_key] = 0
+            
+            # Auto-scroll to show active processing (first few rows)
+            if status not in ["Queued", "Starting", "Pending"]:
+                self.transfer_table.scrollToTop()
+                
         else:
             # Update existing row
             row = self.transfer_rows[unique_key]
-            self.transfer_table.item(row, 2).setText(status)
+            if row < self.transfer_table.rowCount():
+                current_item = self.transfer_table.item(row, 2)
+                current_status = current_item.text() if current_item else ""
+                if current_item:
+                    current_item.setText(status)
+                
+                # Show progress bar when transitioning from queued to active processing
+                if current_status == "Queued" and status not in ["Queued", "Starting", "Pending"]:
+                    progress_bar = self.transfer_table.cellWidget(row, 3)
+                    if progress_bar and hasattr(progress_bar, 'setVisible'):
+                        progress_bar.setVisible(True)
+                        # Scroll to show the file that just started processing
+                        self.transfer_table.scrollToItem(self.transfer_table.item(row, 0))
     
     @pyqtSlot(str, int, int)
     def on_progress_update(self, filepath: str, current: int, total: int):
@@ -2954,14 +3038,15 @@ class MainWindow(QMainWindow):
         unique_key = f"{filename}|{hash(filepath)}"
         if unique_key in self.transfer_rows:
             row = self.transfer_rows[unique_key]
-            progress_bar = self.transfer_table.cellWidget(row, 3)
-            if progress_bar:
-                # Always use percentage (0-100) for consistent progress bar display
-                if total > 0:
-                    percentage = int((current / total) * 100)
-                    progress_bar.setValue(min(percentage, 100))  # Ensure it doesn't exceed 100
-                else:
-                    progress_bar.setValue(0)
+            if row < self.transfer_table.rowCount():
+                progress_bar = self.transfer_table.cellWidget(row, 3)
+                if progress_bar and hasattr(progress_bar, 'setValue'):
+                    # Always use percentage (0-100) for consistent progress bar display
+                    if total > 0:
+                        percentage = int((current / total) * 100)
+                        progress_bar.setValue(min(percentage, 100))  # Ensure it doesn't exceed 100
+                    else:
+                        progress_bar.setValue(0)
     
     @pyqtSlot(str, str, bool, str)
     def on_transfer_complete(self, filename: str, filepath: str, success: bool, message: str):
@@ -2969,34 +3054,39 @@ class MainWindow(QMainWindow):
         unique_key = f"{filename}|{hash(filepath)}"
         if unique_key in self.transfer_rows:
             row = self.transfer_rows[unique_key]
-            
-            status = "Complete" if success else "Failed"
-            self.transfer_table.item(row, 2).setText(status)
-            self.transfer_table.item(row, 4).setText(message)
-            
-            # Track failed files for re-upload (specifically verification failures)
-            if not success and ("verification failed" in message.lower() or "checksum" in message.lower()):
-                self.failed_files[unique_key] = {
-                    'filepath': filepath,
-                    'filename': filename,
-                    'message': message,
-                    'row': row
-                }
-            elif success and unique_key in self.failed_files:
-                # Remove from failed files if now successful
-                del self.failed_files[unique_key]
-            
-            # Clean up remote path tracking when transfer is complete
-            if filepath in self.file_remote_paths:
-                del self.file_remote_paths[filepath]
-            
-            # Update progress bar - ensure it shows 100% when complete
-            progress_bar = self.transfer_table.cellWidget(row, 3)
-            if progress_bar:
-                if success:
-                    progress_bar.setValue(100)  # Always show 100% for successful completion
-                else:
-                    progress_bar.setStyleSheet("QProgressBar::chunk { background-color: red; }")
+            if row < self.transfer_table.rowCount():
+                
+                status = "Complete" if success else "Failed"
+                status_item = self.transfer_table.item(row, 2)
+                message_item = self.transfer_table.item(row, 4)
+                if status_item:
+                    status_item.setText(status)
+                if message_item:
+                    message_item.setText(message)
+                
+                # Track failed files for re-upload (specifically verification failures)
+                if not success and ("verification failed" in message.lower() or "checksum" in message.lower()):
+                    self.failed_files[unique_key] = {
+                        'filepath': filepath,
+                        'filename': filename,
+                        'message': message,
+                        'row': row
+                    }
+                elif success and unique_key in self.failed_files:
+                    # Remove from failed files if now successful
+                    del self.failed_files[unique_key]
+                
+                # Clean up remote path tracking when transfer is complete
+                if filepath in self.file_remote_paths:
+                    del self.file_remote_paths[filepath]
+                
+                # Update progress bar - ensure it shows 100% when complete
+                progress_bar = self.transfer_table.cellWidget(row, 3)
+                if progress_bar and hasattr(progress_bar, 'setValue'):
+                    if success:
+                        progress_bar.setValue(100)  # Always show 100% for successful completion
+                    else:
+                        progress_bar.setStyleSheet("QProgressBar::chunk { background-color: red; }")
         
         # Log the event
         timestamp = datetime.now().strftime('%H:%M:%S')
@@ -3295,7 +3385,8 @@ class MainWindow(QMainWindow):
             "chunk_size_mb": self.chunk_spin.value(),
             "verify_uploads": self.verify_uploads_check.isChecked(),
             "save_credentials": self.save_creds_check.isChecked(),
-            "conflict_resolution": self.get_conflict_resolution_setting()
+            "conflict_resolution": self.get_conflict_resolution_setting(),
+            "local_checksum_cache": dict(self.local_checksum_cache) if hasattr(self, 'local_checksum_cache') else {}
         }
         
         try:
@@ -3336,6 +3427,14 @@ class MainWindow(QMainWindow):
         conflict_setting = self.config.get("conflict_resolution", "ask")
         self.set_conflict_resolution_setting(conflict_setting)
         
+        # Load checksum cache
+        if not hasattr(self, 'local_checksum_cache'):
+            self.local_checksum_cache = {}
+        cached_checksums = self.config.get("local_checksum_cache", {})
+        self.local_checksum_cache.update(cached_checksums)
+        if cached_checksums:
+            logger.info(f"Loaded {len(cached_checksums)} cached checksums from previous session")
+        
         # Try to load saved credentials if enabled
         if self.save_creds_check.isChecked() and self.url_input.text():
             if KEYRING_AVAILABLE and keyring is not None:
@@ -3356,6 +3455,12 @@ class MainWindow(QMainWindow):
     def save_settings(self):
         """Save current settings"""
         self.save_config()
+    
+    def save_checksum_cache(self):
+        """Periodically save checksum cache to persist between sessions"""
+        if hasattr(self, 'local_checksum_cache') and self.local_checksum_cache:
+            logger.debug(f"Saving {len(self.local_checksum_cache)} cached checksums")
+            self.save_config()  # This will include the cache data
     
     def closeEvent(self, event):
         """Handle application close"""

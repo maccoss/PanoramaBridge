@@ -185,6 +185,155 @@ These scripts automatically handle virtual environment setup, dependency install
 
 ![Transfer Status](screenshots/transferstatus.png)
 
+## How PanoramaBridge Works: Step-by-Step Process
+
+PanoramaBridge follows a systematic approach to monitor, verify, and transfer files to remote WebDAV servers. Here's the detailed process:
+
+### 1. File Discovery and Monitoring
+
+**Directory Scanning Methods:**
+- **Primary Method**: OS-level file system events using the `watchdog` library
+  - Monitors `on_created`, `on_modified`, and `on_moved` events
+  - **Immediate detection** with no polling overhead
+  - Handles file extensions: `.raw`, `.wiff`, `.mzML`, `.mzXML`, etc.
+- **Backup Method**: Optional polling (disabled by default)
+  - Configurable 1-30 minute intervals
+  - Uses `os.walk()` for recursive scanning or `os.listdir()` for single directory
+  - Only enabled when file system events are unreliable (network mounts, WSL2)
+
+**Extension Filtering:**
+- Case-insensitive matching against user-configured extensions
+- Filters out hidden files (starting with `.` or `~`)
+- Supports both recursive and non-recursive directory monitoring
+
+### 2. File Stability Verification
+
+**Stability Detection:**
+- Tracks file size changes over time using a pending files dictionary
+- Default 1-second stability timeout (file size unchanged)
+- Prevents uploading files still being written by instruments
+- Smart locked file handling for mass spectrometer workflows
+
+**Duplicate Prevention:**
+- Maintains sets of `queued_files` and `processing_files` to prevent duplicates
+- Checks against remote paths to avoid re-uploading same destinations
+
+### 3. Remote File Existence Check
+
+**WebDAV PROPFIND Method:**
+```http
+PROPFIND /remote/path/filename.raw HTTP/1.1
+Host: panoramaweb.org
+Depth: 0
+```
+
+**Verification Process:**
+- Sends HTTP PROPFIND request to check if file already exists on remote server
+- Retrieves remote file metadata: size, modification time, ETag
+- If file exists, compares with local file for conflict resolution
+- Creates necessary remote directories using WebDAV `MKCOL` method
+
+### 4. Checksum Calculation
+
+**SHA256 Algorithm with Caching:**
+- **Method**: SHA256 hash calculation using Python's `hashlib` library
+- **Chunk Size**: 256KB chunks for optimal memory/performance balance
+- **Caching System**: Local cache using file path + size + modification time as key
+  - Up to 1,700x performance improvement for unchanged files
+  - Cache limit: 1,000 entries with automatic cleanup
+  - Cache invalidation on file size or modification time changes
+
+**Implementation:**
+```python
+hash_obj = hashlib.sha256()
+with open(filepath, 'rb') as f:
+    while chunk := f.read(256 * 1024):  # 256KB chunks
+        hash_obj.update(chunk)
+checksum = hash_obj.hexdigest()
+```
+
+### 5. File Upload Process
+
+**Adaptive Chunked Upload:**
+- **Chunk Size Determination** (based on file size):
+  - Files < 100MB: 64KB chunks
+  - 100MB - 1GB: 256KB chunks  
+  - 1GB - 5GB: 1MB chunks
+  - 5GB - 10GB: 2MB chunks
+  - Files > 10GB: 4MB chunks
+
+**Upload Methods:**
+- **Large Files (>100MB)**: Attempts Range request chunking
+  - Multiple HTTP PUT requests with `Content-Range` headers
+  - True progress tracking with real-time callbacks
+- **Standard Files**: Single HTTP PUT request with streaming
+- **Progress Tracking**: Real-time progress callbacks with bytes uploaded
+
+**HTTP Implementation:**
+```http
+PUT /webdav/remote/path/filename.raw HTTP/1.1
+Host: panoramaweb.org
+Content-Range: bytes 0-1048575/104857600
+Content-Length: 1048576
+Authorization: Basic <credentials>
+
+[file chunk data]
+```
+
+### 6. Upload Verification
+
+**Two-Tier Verification System:**
+
+**For Files < 50MB:**
+- Downloads complete remote file to temporary location
+- Calculates SHA256 checksum of downloaded file
+- Compares local and remote checksums for exact match
+- Automatic cleanup of temporary files
+
+**For Files ≥ 50MB:**
+- **ETag Comparison**: Compares server ETag with local checksum
+- **Size Verification**: Confirms remote file size matches local
+- **Storage Optimization**: Avoids downloading large files for verification
+
+**Verification Methods:**
+```python
+# Small file verification
+remote_checksum = calculate_checksum(downloaded_temp_file)
+verified = (remote_checksum.lower() == local_checksum.lower())
+
+# Large file verification  
+verified = (clean_etag.lower() == local_checksum.lower()) or size_matches
+```
+
+### 7. Metadata Storage and Integrity
+
+**Checksum Storage:**
+- Stores checksums on WebDAV server as metadata files
+- File naming: `filename.raw.checksum` containing SHA256 hash
+- Used for future conflict resolution and integrity verification
+
+**Conflict Resolution:**
+- Compares local checksum with stored remote checksum
+- User notification for checksum mismatches
+- Options to overwrite, skip, or manual resolution
+
+### 8. Error Handling and Retry Logic
+
+**Locked File Handling:**
+- **Detection**: Identifies files locked by mass spectrometers during acquisition
+- **Smart Retry**: Configurable wait times and retry intervals
+  - Default: 30-minute initial wait, 30-second retry interval, 20 max attempts
+- **Progress Indication**: Shows elapsed time and countdown timers
+- **Status Messages**: "File locked - waiting for instrument (5/30 minutes elapsed)"
+
+**Network Resilience:**
+- Automatic retry for network failures
+- Persistent HTTP sessions for connection reuse
+- Timeout handling and connection management
+- Comprehensive error logging with detailed diagnostic information
+
+This systematic approach ensures reliable, efficient, and verified file transfer while providing comprehensive monitoring and error handling for laboratory mass spectrometry workflows.
+
 ## Application Features
 
 ### File Monitoring

@@ -1,6 +1,22 @@
+#!/usr/bin/env python3
 """
-Pytest configuration and test runner script for PanoramaBridge.
+Test runner for PanoramaBridge test suite.
+
+This script runs the core test suites:
+1. Progress tracking tests (original functionality)
+2. Queue table integration and persistent checksum caching tests (new features)
+
+Usage:
+    python3 tests/run_tests.py
+    
+    Or from project root:
+    python3 -m pytest tests/test_progress_tracking.py tests/test_complete_queue_cache_features.py -v
 """
+
+import subprocess
+import sys
+import os
+from pathlib import Path
 
 # pytest.ini equivalent configuration
 pytest_plugins = []
@@ -21,13 +37,44 @@ COVERAGE_CONFIG = {
     '--cov-fail-under': '80'
 }
 
-if __name__ == "__main__":
-    import sys
-    import os
-    import subprocess
+def run_tests():
+    """Run the main test suites"""
+    project_root = Path(__file__).parent.parent
+    os.chdir(project_root)
     
+    # Core test files to run
+    test_files = [
+        "tests/test_progress_tracking.py",           # Original progress tracking functionality 
+        "tests/test_complete_queue_cache_features.py"  # New queue table and cache features
+    ]
+    
+    print("=" * 80)
+    print("PanoramaBridge Test Suite")
+    print("=" * 80)
+    print("Running core functionality tests...")
+    print()
+    
+    # Run the tests with verbose output
+    cmd = [sys.executable, "-m", "pytest"] + test_files + ["-v", "--tb=short"]
+    
+    try:
+        result = subprocess.run(cmd, check=True, capture_output=False)
+        print("\n" + "=" * 80)
+        print("✅ All tests passed successfully!")
+        print("Core functionality and new features are working correctly.")
+        print("=" * 80)
+        return 0
+        
+    except subprocess.CalledProcessError as e:
+        print("\n" + "=" * 80)
+        print("❌ Some tests failed!")
+        print("=" * 80)
+        return e.returncode
+
+if __name__ == "__main__":
     # Ensure the main module is in the Python path
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sys.exit(run_tests())
     
     # Basic pytest run
     cmd = [sys.executable, "-m", "pytest", "-v"]
