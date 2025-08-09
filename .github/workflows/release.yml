@@ -53,27 +53,27 @@ jobs:
       
     - name: Build Windows executable
       run: |
-        Write-Host "🔨 Building PanoramaBridge executable..." -ForegroundColor Cyan
+        Write-Host "Building PanoramaBridge executable..." -ForegroundColor Cyan
         pyinstaller build_scripts/PanoramaBridge.spec
         
         if (Test-Path "dist/PanoramaBridge.exe") {
-          Write-Host "✅ Build completed successfully!" -ForegroundColor Green
+          Write-Host "Build completed successfully!" -ForegroundColor Green
           
           # Get file info
           $fileInfo = Get-Item "dist/PanoramaBridge.exe"
           $sizeInMB = [math]::Round($fileInfo.Length / 1MB, 2)
           $hash = (Get-FileHash "dist/PanoramaBridge.exe" -Algorithm SHA256).Hash
           
-          Write-Host "📦 File: PanoramaBridge.exe" -ForegroundColor Yellow
-          Write-Host "📏 Size: $($fileInfo.Length) bytes ($sizeInMB MB)" -ForegroundColor Yellow
-          Write-Host "🔒 SHA256: $hash" -ForegroundColor Yellow
+          Write-Host "File: PanoramaBridge.exe" -ForegroundColor Yellow
+          Write-Host "Size: $($fileInfo.Length) bytes ($sizeInMB MB)" -ForegroundColor Yellow
+          Write-Host "SHA256: $hash" -ForegroundColor Yellow
           
           # Save info for later steps
           echo "EXECUTABLE_SIZE=$($fileInfo.Length)" >> $env:GITHUB_ENV
           echo "EXECUTABLE_SIZE_MB=$sizeInMB" >> $env:GITHUB_ENV
           echo "EXECUTABLE_HASH=$hash" >> $env:GITHUB_ENV
         } else {
-          Write-Host "❌ Build failed - executable not found!" -ForegroundColor Red
+          Write-Host "Build failed - executable not found!" -ForegroundColor Red
           Get-ChildItem -Recurse dist/ -ErrorAction SilentlyContinue
           exit 1
         }
@@ -106,7 +106,7 @@ jobs:
         "@
         
         $buildInfo | Out-File -FilePath "dist/BUILD_INFO.txt" -Encoding UTF8
-        Write-Host "📝 Build info created"
+        Write-Host "Build info created"
       shell: powershell
       
     - name: Upload Build Artifacts
@@ -135,8 +135,8 @@ jobs:
           ## PanoramaBridge ${{ github.ref_name }}
           
           **Windows Executable Download:**
-          - 📦 **PanoramaBridge.exe** (${{ env.EXECUTABLE_SIZE_MB }} MB)
-          - 🔒 **SHA256:** `${{ env.EXECUTABLE_HASH }}`
+          - **PanoramaBridge.exe** (${{ env.EXECUTABLE_SIZE_MB }} MB)
+          - **SHA256:** `${{ env.EXECUTABLE_HASH }}`
           
           **Installation:**
           1. Download the `PanoramaBridge.exe` file below

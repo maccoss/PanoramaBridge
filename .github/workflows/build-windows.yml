@@ -43,12 +43,12 @@ jobs:
     - name: Verify build
       run: |
         if (Test-Path "dist/PanoramaBridge.exe") {
-          Write-Host "✅ Build successful!" -ForegroundColor Green
+          Write-Host "Build successful!" -ForegroundColor Green
           $fileInfo = Get-Item "dist/PanoramaBridge.exe"
           $sizeInMB = [math]::Round($fileInfo.Length / 1MB, 2)
-          Write-Host "📦 File size: $($fileInfo.Length) bytes ($sizeInMB MB)" -ForegroundColor Yellow
+          Write-Host "File size: $($fileInfo.Length) bytes ($sizeInMB MB)" -ForegroundColor Yellow
         } else {
-          Write-Host "❌ Build failed - executable not found!" -ForegroundColor Red
+          Write-Host "Build failed - executable not found!" -ForegroundColor Red
           exit 1
         }
       shell: powershell
