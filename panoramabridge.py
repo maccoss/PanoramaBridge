@@ -115,7 +115,6 @@ class WebDAVClient:
         # Create persistent session for connection reuse
         self.session = requests.Session()
         self.session.auth = self.auth
-        self.chunk_size = 10 * 1024 * 1024  # 10MB chunks for efficient large file uploads
     
     def test_connection(self) -> bool:
         """
@@ -2637,12 +2636,6 @@ class MainWindow(QMainWindow):
         transfer_group = QGroupBox("Transfer Settings")
         transfer_layout = QGridLayout()
         
-        transfer_layout.addWidget(QLabel("Chunk size (MB):"), 0, 0)
-        self.chunk_spin = QSpinBox()
-        self.chunk_spin.setRange(1, 100)
-        self.chunk_spin.setValue(10)
-        transfer_layout.addWidget(self.chunk_spin, 0, 1)
-        
         self.verify_uploads_check = QCheckBox("Verify uploads by downloading and comparing checksums")
         self.verify_uploads_check.setChecked(True)  # Default to enabled
         self.verify_uploads_check.setToolTip(
@@ -2650,7 +2643,7 @@ class MainWindow(QMainWindow):
             "For larger files: Uses size and ETag comparison for performance.\n"
             "Uncheck to skip verification for faster uploads (less secure)."
         )
-        transfer_layout.addWidget(self.verify_uploads_check, 1, 0, 1, 2)
+        transfer_layout.addWidget(self.verify_uploads_check, 0, 0, 1, 2)
         
         transfer_group.setLayout(transfer_layout)
         layout.addWidget(transfer_group)
@@ -2864,9 +2857,6 @@ class MainWindow(QMainWindow):
                 # Update processor
                 remote_path = self.remote_path_input.text() or "/"
                 self.file_processor.set_webdav_client(self.webdav_client, remote_path)
-                
-                # Set chunk size
-                self.webdav_client.chunk_size = self.chunk_spin.value() * 1024 * 1024
                 
                 # Save credentials if requested
                 if self.save_creds_check.isChecked():
@@ -3667,7 +3657,6 @@ class MainWindow(QMainWindow):
             "webdav_username": self.username_input.text() if not self.save_creds_check.isChecked() else "",
             "webdav_auth_type": self.auth_combo.currentText(),
             "remote_path": self.remote_path_input.text(),
-            "chunk_size_mb": self.chunk_spin.value(),
             "verify_uploads": self.verify_uploads_check.isChecked(),
             "save_credentials": self.save_creds_check.isChecked(),
             "conflict_resolution": self.get_conflict_resolution_setting(),
@@ -3704,7 +3693,6 @@ class MainWindow(QMainWindow):
             self.auth_combo.setCurrentIndex(index)
         
         self.remote_path_input.setText(self.config.get("remote_path", "/_webdav"))
-        self.chunk_spin.setValue(self.config.get("chunk_size_mb", 10))
         self.verify_uploads_check.setChecked(self.config.get("verify_uploads", True))
         self.save_creds_check.setChecked(self.config.get("save_credentials", False))
         

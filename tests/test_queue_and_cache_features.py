@@ -170,8 +170,6 @@ class TestPersistentChecksumCaching:
         mock_window.auth_combo.setCurrentIndex = Mock()
         mock_window.remote_path_input = Mock()
         mock_window.remote_path_input.text.return_value = "/_webdav"
-        mock_window.chunk_spin = Mock()
-        mock_window.chunk_spin.value.return_value = 10
         mock_window.verify_uploads_check = Mock()
         mock_window.verify_uploads_check.isChecked.return_value = True
         mock_window.get_conflict_resolution_setting = Mock()
@@ -247,7 +245,6 @@ class TestPersistentChecksumCaching:
             "webdav_username": "testuser",
             "webdav_auth_type": "Basic",
             "remote_path": "/_webdav",
-            "chunk_size_mb": 10,
             "verify_uploads": True,
             "save_credentials": False,
             "conflict_resolution": "ask",

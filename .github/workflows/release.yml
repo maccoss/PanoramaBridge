@@ -1,0 +1,157 @@
+name: Release Builder
+
+# This workflow builds executables for releases and provides download artifacts
+on:
+  # Manual trigger with options
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a new release'
+        required: false
+        default: 'false'
+        type: boolean
+      release_tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: false
+        default: ''
+        type: string
+      release_name:
+        description: 'Release name'
+        required: false
+        default: ''
+        type: string
+        
+  # Automatic trigger on tags
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v1.0.0
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+        
+    - name: Run tests (optional)
+      run: |
+        python -m pytest tests/ -v --tb=short
+      continue-on-error: true  # Don't fail build if tests fail
+      
+    - name: Build Windows executable
+      run: |
+        Write-Host "🔨 Building PanoramaBridge executable..." -ForegroundColor Cyan
+        pyinstaller build_scripts/PanoramaBridge.spec
+        
+        if (Test-Path "dist/PanoramaBridge.exe") {
+          Write-Host "✅ Build completed successfully!" -ForegroundColor Green
+          
+          # Get file info
+          $fileInfo = Get-Item "dist/PanoramaBridge.exe"
+          $sizeInMB = [math]::Round($fileInfo.Length / 1MB, 2)
+          $hash = (Get-FileHash "dist/PanoramaBridge.exe" -Algorithm SHA256).Hash
+          
+          Write-Host "📦 File: PanoramaBridge.exe" -ForegroundColor Yellow
+          Write-Host "📏 Size: $($fileInfo.Length) bytes ($sizeInMB MB)" -ForegroundColor Yellow
+          Write-Host "🔒 SHA256: $hash" -ForegroundColor Yellow
+          
+          # Save info for later steps
+          echo "EXECUTABLE_SIZE=$($fileInfo.Length)" >> $env:GITHUB_ENV
+          echo "EXECUTABLE_SIZE_MB=$sizeInMB" >> $env:GITHUB_ENV
+          echo "EXECUTABLE_HASH=$hash" >> $env:GITHUB_ENV
+        } else {
+          Write-Host "❌ Build failed - executable not found!" -ForegroundColor Red
+          Get-ChildItem -Recurse dist/ -ErrorAction SilentlyContinue
+          exit 1
+        }
+      shell: powershell
+      
+    - name: Create build info
+      run: |
+        $buildInfo = @"
+        PanoramaBridge Windows Build
+        ============================
+        
+        Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')
+        Git Commit: ${{ github.sha }}
+        Git Ref: ${{ github.ref }}
+        
+        Executable Info:
+        - Size: ${{ env.EXECUTABLE_SIZE }} bytes (${{ env.EXECUTABLE_SIZE_MB }} MB)
+        - SHA256: ${{ env.EXECUTABLE_HASH }}
+        
+        System Info:
+        - OS: Windows Latest (GitHub Actions)
+        - Python: 3.12
+        - PyInstaller: $(pip show pyinstaller | Select-String "Version:" | ForEach-Object { $_.ToString().Split(":")[1].Trim() })
+        
+        Installation:
+        1. Download PanoramaBridge.exe
+        2. Run the executable (Windows may show security warning for unsigned files)
+        3. Configure your WebDAV settings
+        
+        "@
+        
+        $buildInfo | Out-File -FilePath "dist/BUILD_INFO.txt" -Encoding UTF8
+        Write-Host "📝 Build info created"
+      shell: powershell
+      
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: PanoramaBridge-Windows-Build-${{ github.run_number }}
+        path: |
+          dist/PanoramaBridge.exe
+          dist/BUILD_INFO.txt
+        retention-days: 90
+        
+    # Create release if triggered by tag or manual input
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+        name: ${{ github.event.inputs.release_name || github.ref_name }}
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+        files: |
+          dist/PanoramaBridge.exe
+          dist/BUILD_INFO.txt
+        body: |
+          ## PanoramaBridge ${{ github.ref_name }}
+          
+          **Windows Executable Download:**
+          - 📦 **PanoramaBridge.exe** (${{ env.EXECUTABLE_SIZE_MB }} MB)
+          - 🔒 **SHA256:** `${{ env.EXECUTABLE_HASH }}`
+          
+          **Installation:**
+          1. Download the `PanoramaBridge.exe` file below
+          2. Run the executable (Windows may show a security warning for unsigned applications)
+          3. Configure your WebDAV server settings
+          4. Start monitoring your files!
+          
+          **What's New:**
+          - Removed unused chunk size UI setting
+          - Improved adaptive chunking based on file size
+          - Enhanced thread safety for file monitoring
+          
+          **System Requirements:**
+          - Windows 11 (recommended) or Windows 10
+          - No additional installations required - this is a standalone executable
+          
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

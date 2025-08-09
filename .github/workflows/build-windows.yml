@@ -1,0 +1,73 @@
+name: Build Windows Executable
+
+# When to trigger the build
+on:
+  # Trigger on pushes to main branch
+  push:
+    branches: [ main ]
+    
+  # Trigger on pull requests to main
+  pull_request:
+    branches: [ main ]
+    
+  # Allow manual triggering from GitHub UI
+  workflow_dispatch:
+  
+  # Trigger on new releases/tags
+  release:
+    types: [published]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+        
+    - name: Build executable
+      run: |
+        pyinstaller build_scripts/PanoramaBridge.spec
+        
+    - name: Verify build
+      run: |
+        if (Test-Path "dist/PanoramaBridge.exe") {
+          Write-Host "✅ Build successful!" -ForegroundColor Green
+          $fileInfo = Get-Item "dist/PanoramaBridge.exe"
+          $sizeInMB = [math]::Round($fileInfo.Length / 1MB, 2)
+          Write-Host "📦 File size: $($fileInfo.Length) bytes ($sizeInMB MB)" -ForegroundColor Yellow
+        } else {
+          Write-Host "❌ Build failed - executable not found!" -ForegroundColor Red
+          exit 1
+        }
+      shell: powershell
+      
+    - name: Upload executable as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: PanoramaBridge-Windows-${{ github.sha }}
+        path: dist/PanoramaBridge.exe
+        retention-days: 30
+        
+    # Only create release assets if this is a tagged release
+    - name: Upload to Release
+      if: github.event_name == 'release'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./dist/PanoramaBridge.exe
+        asset_name: PanoramaBridge-Windows.exe
+        asset_content_type: application/octet-stream

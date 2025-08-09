@@ -29,7 +29,7 @@ class TestWebDAVClient:
         assert client.url == webdav_test_config['url']
         assert client.username == webdav_test_config['username']
         assert client.password == webdav_test_config['password']
-        assert client.chunk_size == 10 * 1024 * 1024  # 10MB
+        # Chunk size is now dynamically determined per upload, not a fixed attribute
     
     @patch('panoramabridge.requests.Session.request')
     def test_connection_success(self, mock_request, webdav_test_config):
