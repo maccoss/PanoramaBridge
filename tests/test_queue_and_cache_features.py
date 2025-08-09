@@ -36,23 +36,30 @@ class TestQueueTableIntegration:
         
         return mock_window
     
-    @patch('PyQt6.QtWidgets.QProgressBar')
-    @patch('PyQt6.QtWidgets.QTableWidgetItem')
+    @patch('panoramabridge.QProgressBar')
+    @patch('panoramabridge.QTableWidgetItem')
     def test_add_queued_file_to_table_basic(self, mock_table_item, mock_progress_bar, mock_main_window):
         """Test that queued files are added to the transfer table"""
         filepath = "/test/directory/test_file.raw"
         
+        # Mock the transfer_rows dict and get_transfer_table_key method
+        mock_main_window.transfer_rows = {}
+        filename = os.path.basename(filepath)
+        expected_key = f"{filename}|{hash(filepath)}"
+        mock_main_window.get_transfer_table_key.return_value = expected_key
+        
+        # Mock the table row count
+        mock_main_window.transfer_table.rowCount.return_value = 0
+        
         # Call the method
         mock_main_window.add_queued_file_to_table(filepath)
         
-        # Verify a row was inserted
+        # Verify a row was inserted at the end (row 0 since table was empty)
         mock_main_window.transfer_table.insertRow.assert_called_once_with(0)
         
         # Verify the file was tracked
-        filename = os.path.basename(filepath)
-        unique_key = f"{filename}:{filepath}"
-        assert unique_key in mock_main_window.transfer_rows
-        assert mock_main_window.transfer_rows[unique_key] == 0
+        assert expected_key in mock_main_window.transfer_rows
+        assert mock_main_window.transfer_rows[expected_key] == 0
         
         # Verify table items were created
         assert mock_table_item.call_count >= 4  # filename, path, status, message
@@ -61,16 +68,30 @@ class TestQueueTableIntegration:
         # Verify setCellWidget was called for progress bar
         mock_main_window.transfer_table.setCellWidget.assert_called_once()
     
-    @patch('PyQt6.QtWidgets.QProgressBar')
-    @patch('PyQt6.QtWidgets.QTableWidgetItem')
+    @patch('panoramabridge.QProgressBar')
+    @patch('panoramabridge.QTableWidgetItem')
     def test_add_queued_file_duplicate_prevention(self, mock_table_item, mock_progress_bar, mock_main_window):
         """Test that duplicate files are not added to the table"""
         filepath = "/test/directory/test_file.raw"
         filename = os.path.basename(filepath)
-        unique_key = f"{filename}:{filepath}"
+        expected_key = f"{filename}|{hash(filepath)}"
         
-        # Pre-populate the tracking dictionary
-        mock_main_window.transfer_rows[unique_key] = 0
+        # Mock the transfer_rows dict and get_transfer_table_key method
+        mock_main_window.transfer_rows = {expected_key: 0}
+        mock_main_window.get_transfer_table_key.return_value = expected_key
+        
+        # Mock the table row count and table methods
+        mock_main_window.transfer_table.rowCount.return_value = 1
+        mock_main_window.transfer_table.item.return_value = Mock()  # Mock status item
+        
+        # Call the method
+        mock_main_window.add_queued_file_to_table(filepath)
+        
+        # Verify no new row was inserted (duplicate prevention)
+        mock_main_window.transfer_table.insertRow.assert_not_called()
+        
+        # Verify the status was updated for existing row
+        mock_main_window.transfer_table.item.assert_called()
         
         # Call the method
         mock_main_window.add_queued_file_to_table(filepath)
@@ -82,8 +103,8 @@ class TestQueueTableIntegration:
         mock_table_item.assert_not_called()
         mock_progress_bar.assert_not_called()
     
-    @patch('PyQt6.QtWidgets.QProgressBar')
-    @patch('PyQt6.QtWidgets.QTableWidgetItem')
+    @patch('panoramabridge.QProgressBar')
+    @patch('panoramabridge.QTableWidgetItem')
     def test_add_queued_file_relative_path_display(self, mock_table_item, mock_progress_bar, mock_main_window):
         """Test that relative paths are calculated correctly"""
         base_dir = "/test/directory"
@@ -102,8 +123,8 @@ class TestQueueTableIntegration:
         # Check that setItem was called for each column
         assert mock_main_window.transfer_table.setItem.call_count >= 4
     
-    @patch('PyQt6.QtWidgets.QProgressBar')
-    @patch('PyQt6.QtWidgets.QTableWidgetItem')
+    @patch('panoramabridge.QProgressBar')
+    @patch('panoramabridge.QTableWidgetItem')
     def test_add_queued_file_progress_bar_hidden(self, mock_table_item, mock_progress_bar, mock_main_window):
         """Test that progress bar is created but hidden for queued files"""
         filepath = "/test/directory/test_file.raw"

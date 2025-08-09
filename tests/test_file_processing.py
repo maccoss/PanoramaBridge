@@ -126,8 +126,16 @@ class TestFileMonitorHandler:
         
         monitor.on_created(event)
         
-        # The file should be added to pending files tracking
-        assert test_file in monitor.pending_files
+        # In test environment, files are processed immediately, so check if file was queued
+        # rather than checking pending_files
+        queued_files = []
+        while not file_queue.empty():
+            try:
+                queued_files.append(file_queue.get_nowait())
+            except Exception:
+                break
+        
+        assert test_file in queued_files, f"File {test_file} should have been queued"
     
     def test_extension_filtering_in_handle_file(self, temp_dir, file_queue, mock_app_instance):
         """Test that only files with specified extensions are handled."""
@@ -151,9 +159,17 @@ class TestFileMonitorHandler:
         monitor._handle_file(raw_file)
         monitor._handle_file(txt_file)
         
-        # Only the .raw file should be in pending files
-        assert raw_file in monitor.pending_files
-        assert txt_file not in monitor.pending_files
+        # In test environment, files are processed immediately, so check if file was queued
+        queued_files = []
+        while not file_queue.empty():
+            try:
+                queued_files.append(file_queue.get_nowait())
+            except Exception:
+                break
+        
+        # Only the .raw file should be queued (txt file should be filtered out)
+        assert raw_file in queued_files, f"Raw file {raw_file} should have been queued"
+        assert txt_file not in queued_files, f"Text file {txt_file} should not have been queued"
     
     def test_duplicate_prevention(self, temp_dir, file_queue, mock_app_instance):
         """Test that duplicate files are not queued."""

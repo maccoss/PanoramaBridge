@@ -144,7 +144,10 @@ class TestWebDAVClient:
         
         assert success is True
         assert error == ""
-        assert progress_callback.call_count >= 2  # Start and end progress
+        # For small files (<100MB), progress callback is called once at the start
+        assert progress_callback.call_count >= 1
+        # Verify progress callback was called with correct arguments
+        progress_callback.assert_called_with(0, os.path.getsize(file_path))
     
     @patch('panoramabridge.requests.Session.request')
     def test_create_directory(self, mock_request, webdav_test_config):

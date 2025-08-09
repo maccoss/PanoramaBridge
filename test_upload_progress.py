@@ -4,11 +4,10 @@
 import os
 import tempfile
 import time
-from panoramabridge import WebDAVClient
 
 
-def test_progress_callback(bytes_sent, total_bytes):
-    """Test progress callback that prints progress."""
+def progress_callback(bytes_sent, total_bytes):
+    """Progress callback that prints progress."""
     percentage = (bytes_sent / total_bytes * 100) if total_bytes > 0 else 0
     print(f"Progress: {bytes_sent:,} / {total_bytes:,} bytes ({percentage:.1f}%)")
 
@@ -88,7 +87,7 @@ def test_upload_progress():
     
     # Test the wrapper
     file_size = os.path.getsize(test_file)
-    with TestProgressFileWrapper(test_file, test_progress_callback, file_size) as wrapper:
+    with TestProgressFileWrapper(test_file, progress_callback, file_size) as wrapper:
         print("Reading file through ProgressFileWrapper...")
         total_read = 0
         while True:

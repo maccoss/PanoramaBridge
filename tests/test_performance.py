@@ -75,8 +75,18 @@ class TestFileMonitoringPerformance:
         # Should handle files quickly
         assert handling_duration < 1.0  # Less than 1 second for 10 files
         
-        # All files should be tracked in pending_files
-        assert len(monitor.pending_files) == 10
+        # In test environment, files are processed immediately and queued
+        # Check that all files were queued
+        queued_files = []
+        while not file_queue.empty():
+            try:
+                queued_files.append(file_queue.get_nowait())
+            except Exception:
+                break
+        
+        assert len(queued_files) == 10, f"Expected 10 files to be queued, got {len(queued_files)}"
+        for test_file in test_files:
+            assert test_file in queued_files, f"File {test_file} should have been queued"
 
 
 class TestFileConflictResolution:
