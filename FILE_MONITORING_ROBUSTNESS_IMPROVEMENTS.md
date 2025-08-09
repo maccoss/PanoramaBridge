@@ -149,11 +149,41 @@ Created demonstration script (`demonstrate_robustness.py`) showing:
 
 ## Benefits Achieved
 
-1. **No More Crashes**: File monitoring system is crash-resistant
-2. **Better User Experience**: Clear error messages instead of silent failures
-3. **Continued Operation**: System keeps working even when individual operations fail
-4. **Better Debugging**: Comprehensive error logging for troubleshooting
-5. **Automatic Recovery**: Files that initially fail are retried automatically
+1. **No More Crashes**: File monitoring system is crash-resistant with proper thread safety
+2. **Thread Safety**: All UI updates properly handled using Qt's thread-safe mechanisms
+3. **Better User Experience**: Clear error messages instead of silent failures
+4. **Continued Operation**: System keeps working even when individual operations fail
+5. **Better Debugging**: Comprehensive error logging for troubleshooting
+6. **Automatic Recovery**: Files that initially fail are retried automatically
+
+## Recent Thread Safety Enhancements (August 2025)
+
+### Problem: Cross-Thread UI Updates
+- File monitoring happens in worker threads
+- Direct UI updates from worker threads can cause crashes
+- PyQt6 requires specific thread-safe mechanisms for UI updates
+
+### Solution: QMetaObject.invokeMethod Implementation
+**Location**: Multiple locations in `FileMonitorHandler._handle_file()`
+
+**Implementation**:
+```python
+# Thread-safe UI updates using QMetaObject.invokeMethod
+QMetaObject.invokeMethod(
+    self.main_window,  # target object
+    "add_queued_file_to_table",  # method name
+    Qt.ConnectionType.QueuedConnection,  # thread-safe queued execution
+    Q_ARG(str, filepath),  # method arguments
+    Q_ARG(str, relative_path),
+    Q_ARG(str, unique_key)
+)
+```
+
+**Benefits**:
+- Eliminates crashes from cross-thread UI operations
+- Ensures UI updates happen on the main thread
+- Maintains responsiveness during file processing
+- Proper Qt event loop integration
 
 ## Key Improvements Summary
 
@@ -162,6 +192,7 @@ Created demonstration script (`demonstrate_robustness.py`) showing:
 | File Access Errors | App crash | Graceful handling + retry |
 | Permission Issues | App crash | Warning message + retry |
 | UI Update Failures | Potential crash | Error logged, processing continues |
+| Cross-Thread UI Updates | Crashes | Thread-safe QMetaObject.invokeMethod |
 | Nonexistent Files | Potential crash | Safe handling |
 | Concurrent Operations | Race conditions | Thread-safe operations |
 | Error Reporting | Silent failures | Comprehensive logging |

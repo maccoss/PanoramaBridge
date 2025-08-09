@@ -7,7 +7,7 @@ Successfully implemented a comprehensive local checksum caching system to elimin
 
 ### Benchmark Results (from test_checksum_cache.py):
 - **Small File (1MB)**: 75x faster on subsequent calculations
-- **Medium File (10MB)**: 660x faster on subsequent calculations  
+- **Medium File (10MB)**: 660x faster on subsequent calculations
 - **Large File (50MB)**: 1,734x faster on subsequent calculations
 - **Mass Spec Files (>1GB)**: Up to 3,000x faster on subsequent calculations
 
@@ -41,7 +41,7 @@ if file_modified:
 - **Statistics**: Cache efficiency reporting for optimization
 - **Troubleshooting**: Detailed logs for performance analysis
 
-### 4. **Data Integrity Assurance**  
+### 4. **Data Integrity Assurance**
 - **Precise invalidation**: File size + modification time ensures accuracy
 - **No false positives**: Cache misses when files actually change
 - **Checksum consistency**: SHA256 algorithms remain identical
@@ -53,27 +53,27 @@ if file_modified:
 ```python
 def calculate_checksum(self, filepath: str, algorithm: str = 'sha256', chunk_size: Optional[int] = None) -> str:
     """Enhanced checksum calculation with local caching"""
-    
+
     # Get file stats for cache key generation
     stat = os.stat(filepath)
     file_size = stat.st_size
     file_mtime = stat.st_mtime
-    
+
     # Create unique cache key
     cache_key = f"{filepath}|{file_size}|{file_mtime:.0f}"
-    
+
     # Check cache first
     if cache_key in self.app_instance.local_checksum_cache:
         logger.debug(f"Cache HIT: {os.path.basename(filepath)} ({file_size:,} bytes)")
         return self.app_instance.local_checksum_cache[cache_key]
-    
+
     # Calculate new checksum if not cached
     logger.debug(f"Cache MISS: Calculating new checksum for {os.path.basename(filepath)}")
     checksum = self._calculate_checksum_from_file(filepath, algorithm, chunk_size)
-    
+
     # Store in cache with automatic cleanup
     self._store_in_cache(cache_key, checksum)
-    
+
     return checksum
 ```
 
@@ -81,23 +81,23 @@ def calculate_checksum(self, filepath: str, algorithm: str = 'sha256', chunk_siz
 ```python
 def compare_files(self, local_path: str, remote_info: dict, local_checksum: str) -> tuple:
     """Smart comparison with multiple optimization levels"""
-    
+
     # Level 1: Size comparison (fastest - immediate)
     if local_size != remote_size:
         return 'different', 'size mismatch'
-    
-    # Level 2: Cached checksum lookup (fast - microseconds)  
+
+    # Level 2: Cached checksum lookup (fast - microseconds)
     if remote_checksum and local_checksum == remote_checksum:
         return 'identical', 'checksum match (cached)'
-    
+
     # Level 3: ETag comparison (medium - network request)
     if etag_matches:
         return 'identical', 'etag match'
-    
+
     # Level 4: Large file optimization (smart - skip download for >100MB)
     if file_size > 100_000_000:
         return 'assumed_identical', 'large file size match'
-        
+
     # Level 5: Download verification (slowest - full download)
     return self._download_and_verify(remote_path, local_checksum)
 ```
@@ -106,18 +106,18 @@ def compare_files(self, local_path: str, remote_info: dict, local_checksum: str)
 ```python
 def _store_in_cache(self, cache_key: str, checksum: str):
     """Store checksum with automatic memory management"""
-    
+
     # Add to cache
     self.app_instance.local_checksum_cache[cache_key] = checksum
     logger.debug(f"Cached: {checksum[:8]}... for {cache_key}")
-    
+
     # Automatic cleanup when cache grows too large
     if len(self.app_instance.local_checksum_cache) > 1000:
         # Remove oldest 100 entries (FIFO cleanup)
         cache_items = list(self.app_instance.local_checksum_cache.items())
         for old_key, _ in cache_items[:100]:
             del self.app_instance.local_checksum_cache[old_key]
-        
+
         logger.debug(f"Cache cleanup: now {len(self.app_instance.local_checksum_cache)} entries")
 ```
 
@@ -151,7 +151,7 @@ class MainWindow:
         self.local_checksum_cache = {}  # Main cache dictionary
         self.created_directories = set()  # Directory creation cache
         self.file_remote_paths = {}  # Path mapping cache
-        
+
         # Cache statistics for monitoring
         self.cache_hits = 0
         self.cache_misses = 0
@@ -162,7 +162,7 @@ class MainWindow:
 
 ### 1. **Smart File Change Detection**
 - **Modification time precision**: Detects changes down to the second
-- **Size validation**: Immediately detects file growth/truncation  
+- **Size validation**: Immediately detects file growth/truncation
 - **Path sensitivity**: Different paths maintain separate cache entries
 - **Cross-platform compatibility**: Works on Windows, Linux, and macOS
 
@@ -170,7 +170,7 @@ class MainWindow:
 ```python
 # Debug output examples:
 2025-08-06 19:15:23,456 - Cache HIT: experiment_001.raw (2.1GB) - 0.0001s
-2025-08-06 19:15:23,457 - Cache MISS: experiment_002.raw (1.8GB) - calculating...  
+2025-08-06 19:15:23,457 - Cache MISS: experiment_002.raw (1.8GB) - calculating...
 2025-08-06 19:15:45,123 - Cache MISS: experiment_002.raw - calculation took 21.7s
 2025-08-06 19:15:45,124 - Cached: d4f2e1a8... for experiment_002.raw
 2025-08-06 19:15:45,125 - Cache efficiency: 85% (hits: 170, misses: 30)

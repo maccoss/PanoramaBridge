@@ -18,7 +18,7 @@ The application WAS using OS-level file system triggers via the `watchdog` libra
 ### 2. **Backup Method: Polling (Now Optional and Configurable)**
 - **Previous behavior**: Always ran every 30 seconds regardless of need
 - **New behavior**: Disabled by default, only enabled when explicitly chosen by user
-- **Default setting**: Disabled (OS events only) 
+- **Default setting**: Disabled (OS events only)
 - **Configurable interval**: 1-30 minutes instead of fixed 30 seconds
 - **Smart UI**: Polling interval spinner only enabled when backup polling is checked
 
@@ -27,10 +27,10 @@ The application WAS using OS-level file system triggers via the `watchdog` libra
 Advanced Settings Tab:
 ☐ Enable backup file polling (default: unchecked)
   └ Polling interval (minutes): [2] (only enabled when checkbox is checked)
-  
+
 ☑ Handle locked files (e.g., from mass spectrometers) (default: checked)
   ├ Initial wait time (minutes): [30]
-  ├ Retry interval (seconds): [30] 
+  ├ Retry interval (seconds): [30]
   └ Max retries: [20]
 ```
 
@@ -58,7 +58,7 @@ Advanced Settings Tab:
 - OS events: Immediate detection ✓ (enhanced)
 - Polling: Off by default ✓ (99% overhead reduction)
 - Locked file handling: Smart retry with progress indication ✓
-- Windows optimization: Native `.venv-win` environment ✓  
+- Windows optimization: Native `.venv-win` environment ✓
 - **Total overhead**: OS events only (99% reduction in polling overhead)
 
 ### Real-World Performance Gains:
@@ -83,7 +83,7 @@ Advanced Settings Tab:
 - **Memory management**: Automatic cleanup and size limits
 - **Debug logging**: Comprehensive cache performance tracking
 
-### 3. **Windows Native Optimization**  
+### 3. **Windows Native Optimization**
 - **File system events**: Better detection on Windows vs WSL2/virtualized environments
 - **Instrument integration**: Improved compatibility with mass spectrometer software
 - **Native file locking**: Better detection of Windows file locking mechanisms
@@ -111,7 +111,7 @@ class FileMonitorHandler(FileSystemEventHandler):
         # Better event categorization (created, modified, moved)
         # More efficient duplicate prevention
         # Enhanced error handling
-        
+
     def on_created(self, event):
         # Immediate file detection with stability checking
         # Smart locked file detection integration
@@ -119,13 +119,13 @@ class FileMonitorHandler(FileSystemEventHandler):
 ```
 
 ### Advanced Settings Integration:
-```python  
+```python
 # Polling configuration
 self.enable_polling_check = QCheckBox("Enable backup file polling")
 self.enable_polling_check.setChecked(False)  # Default disabled
 self.polling_interval_spin.setEnabled(False)  # Initially disabled
 
-# Locked file handling configuration  
+# Locked file handling configuration
 self.enable_locked_retry_check = QCheckBox("Handle locked files")
 self.enable_locked_retry_check.setChecked(True)  # Default enabled for MS workflows
 self.initial_wait_spin = QSpinBox()  # 30 minutes default
@@ -139,7 +139,7 @@ def start_monitoring(self):
     # Always start OS-level monitoring (primary method)
     self.observer.start()
     logger.info("Started OS-level file monitoring")
-    
+
     # Only start polling if explicitly enabled (backup method)
     if self.enable_polling_check.isChecked():
         polling_interval_ms = self.polling_interval_spin.value() * 60 * 1000

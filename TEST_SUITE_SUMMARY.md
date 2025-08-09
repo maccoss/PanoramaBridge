@@ -4,29 +4,32 @@ This document describes the comprehensive pytest test suite for PanoramaBridge, 
 
 ## Test Coverage Overview
 
+**Total Tests**: 166 tests across 18 test files
+
 The test suite validates multiple critical aspects:
 - **Table Ordering & UI Logic** - Core algorithmic improvements
-- **Thread Safety** - Safe cross-thread UI updates  
+- **Thread Safety** - Safe cross-thread UI updates
 - **File Monitoring Robustness** - Crash prevention and error handling
 - **Workflow Integration** - End-to-end scenarios
-- **Regression Prevention** - Ensures improvements don't break
+- **Upload Progress & Chunking** - Adaptive chunking and progress tracking
+- **Regression Prevention** - Ensures improvements don't break existing functionality
 
 ## Test Files
 
-### 1. `test_table_ordering_logic.py` 
+### 1. `test_table_ordering_logic.py`
 **Pure Logic Tests** - Tests core algorithmic logic without Qt dependencies
 
 #### TestTableOrderingLogic
 - `test_table_append_vs_prepend_logic`: Validates files are appended to bottom of table instead of prepended to top
 - `test_unique_key_format_consistency`: Tests the new `filename|hash(filepath)` key format
 
-#### TestProgressMessageSimplification  
+#### TestProgressMessageSimplification
 - `test_simplified_status_messages`: Validates status messages are simplified (no percentages)
 - `test_old_confusing_messages_eliminated`: Ensures old confusing patterns are eliminated
 - `test_reduced_update_frequency`: Tests 25% update intervals instead of 10%
 
 #### TestScrollingBehaviorLogic
-- `test_scroll_trigger_conditions`: Tests when auto-scrolling should/shouldn't trigger  
+- `test_scroll_trigger_conditions`: Tests when auto-scrolling should/shouldn't trigger
 - `test_scroll_to_bottom_vs_scroll_to_item`: Tests different scroll actions for different contexts
 
 #### TestIntegrationScenarios
@@ -104,9 +107,9 @@ The test suite validates multiple critical aspects:
 - **Consistent row tracking**: Proper row index management without shifting
 
 ### ✅ Progress Message Clarity
-- **Simplified status messages**: 
+- **Simplified status messages**:
   - `"Preparing upload..."`
-  - `"Uploading file..."`  
+  - `"Uploading file..."`
   - `"Upload complete"`
 - **No percentage confusion**: Status text contains no percentage values
 - **Reduced update frequency**: Updates every 25% instead of 10%
@@ -135,7 +138,7 @@ The test suite validates multiple critical aspects:
 
 **Total Tests**: 43 tests across 5 test files
 - **Table & UI Logic**: 12 tests ✅ PASS
-- **Workflow Integration**: 8 tests ✅ PASS  
+- **Workflow Integration**: 8 tests ✅ PASS
 - **File Monitoring Robustness**: 9 tests ✅ PASS
 - **Thread Safety**: 5 tests ✅ PASS
 - **Upload Progress**: 1 test ✅ PASS
@@ -148,7 +151,7 @@ The test suite validates multiple critical aspects:
 **Solution**: Implemented `QMetaObject.invokeMethod` with `QueuedConnection` for all cross-thread UI updates
 **Tests**: `test_file_monitoring_robustness.py` validates crash prevention
 
-### 🔧 Thread Safety Implementation  
+### 🔧 Thread Safety Implementation
 **Problem**: UI updates from file monitoring threads were unsafe
 **Root Cause**: FileMonitorHandler calling UI methods directly from worker thread
 **Solution**: All UI updates now use Qt's official thread-safe mechanisms
@@ -166,7 +169,7 @@ Run the complete test suite:
 # All tests from tests/ directory
 pytest tests/ -v
 
-# Specific test categories  
+# Specific test categories
 pytest tests/test_file_monitoring_robustness.py -v    # Crash prevention
 pytest tests/test_thread_safe_ui_updates.py -v       # Thread safety
 pytest tests/test_table_ordering_logic.py -v         # UI logic
@@ -185,14 +188,14 @@ Run by keyword:
 # All robustness-related tests
 pytest -k "robustness" -v
 
-# All thread safety tests  
+# All thread safety tests
 pytest -k "thread" -v
 ```
 
 ## Test Environment Requirements
 
 - **PyQt6**: Required for Qt-based tests
-- **Mock objects**: Used to test logic without full UI instantiation  
+- **Mock objects**: Used to test logic without full UI instantiation
 - **Temporary files**: Tests create/cleanup temporary test files
 - **Threading**: Some tests validate multi-threaded behavior
 - **No external dependencies**: Tests run entirely offline

@@ -30,12 +30,12 @@ def pytest_configure(config):
     )
 
 # Coverage configuration (if pytest-cov is installed)
-COVERAGE_CONFIG = {
-    '--cov': 'panoramabridge',
-    '--cov-report': 'html:htmlcov',
-    '--cov-report': 'term-missing',
-    '--cov-fail-under': '80'
-}
+COVERAGE_CONFIG = [
+    '--cov=panoramabridge',
+    '--cov-report=html:htmlcov',
+    '--cov-report=term-missing',
+    '--cov-fail-under=80'
+]
 
 def run_tests():
     """Run the main test suites"""
@@ -58,7 +58,7 @@ def run_tests():
     cmd = [sys.executable, "-m", "pytest"] + test_files + ["-v", "--tb=short"]
     
     try:
-        result = subprocess.run(cmd, check=True, capture_output=False)
+        subprocess.run(cmd, check=True, capture_output=False)
         print("\n" + "=" * 80)
         print("✅ All tests passed successfully!")
         print("Core functionality and new features are working correctly.")
@@ -81,7 +81,7 @@ if __name__ == "__main__":
     
     # Add coverage if available
     try:
-        import pytest_cov
+        import pytest_cov  # noqa: F401
         cmd.extend(["--cov=panoramabridge", "--cov-report=term-missing"])
     except ImportError:
         print("pytest-cov not available, running without coverage")

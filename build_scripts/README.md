@@ -7,7 +7,7 @@ This directory contains files for building PanoramaBridge executables and distri
 ### Files
 - `PanoramaBridge.spec` - PyInstaller specification file for creating Windows executable
 - `build_windows.ps1` - PowerShell script for building Windows executable
-- `build_windows.bat` - Batch script for building Windows executable  
+- `build_windows.bat` - Batch script for building Windows executable
 - [`BUILD_WINDOWS.md`](BUILD_WINDOWS.md) - Detailed instructions for Windows build process
 
 ### Quick Build

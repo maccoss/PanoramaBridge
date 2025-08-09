@@ -91,7 +91,7 @@ python panoramabridge.py
 ## Quick Start
 
 1. **Launch the application**: `python panoramabridge.py`
-2. **Configure WebDAV connection**: 
+2. **Configure WebDAV connection**:
    - Go to "Remote Settings" tab
    - Enter your Panorama server URL (e.g., `https://panoramaweb.org`)
    - Add your username and password
@@ -106,7 +106,7 @@ python panoramabridge.py
 
 ## Creating a Windows Executable (Optional)
 
-> **📋 For detailed Windows build instructions, see [BUILD_WINDOWS.md](BUILD_WINDOWS.md)**
+> **📋 For detailed Windows build instructions, see [BUILD_WINDOWS.md](build_scripts/BUILD_WINDOWS.md)**
 
 To create a standalone .exe file:
 
@@ -131,7 +131,7 @@ For easier building on Windows, use the provided build scripts:
 - **Command Prompt**: Run `build_windows.bat`
 - **PowerShell**: Run `build_windows.ps1`
 
-These scripts automatically handle virtual environment setup, dependency installation, and executable creation. See [BUILD_WINDOWS.md](BUILD_WINDOWS.md) for complete details.
+These scripts automatically handle virtual environment setup, dependency installation, and executable creation. See [BUILD_WINDOWS.md](build_scripts/BUILD_WINDOWS.md) for complete details.
 
 ## User Interface
 
@@ -172,7 +172,7 @@ These scripts automatically handle virtual environment setup, dependency install
   - Authentication: Username and password with secure storage option
   - Connection testing with automatic endpoint detection
 - **Remote Path Selection**: Browse and select destination folders
-- **Transfer Settings**: Configure chunk size for optimal performance
+- **Transfer Settings**: Configure upload verification for integrity checking
 - **Upload Verification**: Enable/disable post-upload integrity checking
 
 ![Remote Settings](screenshots/remotesettings.png)
@@ -258,7 +258,7 @@ checksum = hash_obj.hexdigest()
 **Adaptive Chunked Upload:**
 - **Chunk Size Determination** (based on file size):
   - Files < 100MB: 64KB chunks
-  - 100MB - 1GB: 256KB chunks  
+  - 100MB - 1GB: 256KB chunks
   - 1GB - 5GB: 1MB chunks
   - 5GB - 10GB: 2MB chunks
   - Files > 10GB: 4MB chunks
@@ -302,7 +302,7 @@ Authorization: Basic <credentials>
 remote_checksum = calculate_checksum(downloaded_temp_file)
 verified = (remote_checksum.lower() == local_checksum.lower())
 
-# Large file verification  
+# Large file verification
 verified = (clean_etag.lower() == local_checksum.lower()) or size_matches
 ```
 
@@ -425,7 +425,7 @@ Application logs are saved to: `panoramabridge.log`
 #### Upload Problems
 
 5. **Upload Verification Issues**
-   - **"Verification failed" after successful upload**: 
+   - **"Verification failed" after successful upload**:
      - Check network stability during verification download
      - For files > 50MB, verification uses size/ETag comparison only
      - Disable verification in Transfer Settings if experiencing frequent issues
@@ -457,7 +457,7 @@ Application logs are saved to: `panoramabridge.log`
 #### Performance Issues
 
 7. **Large File Problems**
-   - Increase chunk size to 50-100MB for files >1GB
+   - Chunk sizes are automatically optimized based on file size
    - Ensure stable network connection
    - Check server timeout settings
    - Monitor system memory usage during transfers
@@ -498,14 +498,14 @@ Application logs are saved to: `panoramabridge.log`
 
 #### For Large Files (>1GB)
 
-- Increase chunk size to 50-100MB
+- Chunk sizes are automatically optimized (up to 4MB for files >10GB)
 - Use wired network connection
 - Transfer during off-peak hours
 - Monitor system resources
 
 #### For Many Small Files
 
-- Keep default 10MB chunk size
+- Automatic 64KB chunks optimize small file transfers
 - Monitor queue size in Transfer Status tab
 - Consider organizing files into batches
 
@@ -521,10 +521,17 @@ Application logs are saved to: `panoramabridge.log`
 ### Technical Documentation
 - **[Checksum Caching Implementation](CHECKSUM_CACHING_SUMMARY.md)** - Details about the local checksum caching system that provides dramatic performance improvements
 - **[File Monitoring Optimization](FILE_MONITORING_OPTIMIZATION.md)** - Technical details about the optimized file monitoring system and performance benchmarks
+- **[File Monitoring Robustness](FILE_MONITORING_ROBUSTNESS_IMPROVEMENTS.md)** - Thread safety and robustness improvements for file monitoring
+- **[Queue and Cache Implementation](QUEUE_CACHE_IMPLEMENTATION_SUMMARY.md)** - Transfer queue management and persistent caching features
+
+### Development and Testing
+- **[Test Suite Documentation](TEST_SUITE_SUMMARY.md)** - Comprehensive test coverage and testing methodology
+- **[Test Setup Guide](TEST_SETUP.md)** - Instructions for setting up and running tests
 
 ### Build and Deployment
 - **[Windows Build Instructions](build_scripts/BUILD_WINDOWS.md)** - Complete guide for building Windows executables
-- **[Build Scripts](build_scripts/)** - PyInstaller specs and build automation scripts
+- **[GitHub Actions CI/CD](build_scripts/GITHUB_ACTIONS.md)** - Automated builds and releases
+- **[Build Scripts Overview](build_scripts/README.md)** - Build automation and deployment tools
 
 ## Support and Resources
 

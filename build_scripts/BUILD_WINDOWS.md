@@ -10,7 +10,7 @@ This guide will help you create a Windows executable (`.exe`) file for PanoramaB
 - **No WSL2 overhead**: Direct Windows execution eliminates virtualization layer
 - **Better OS integration**: Uses Windows-native virtual environment (`.venv-win`)
 
-### Distribution Benefits  
+### Distribution Benefits
 - **No Python installation required** on target machines
 - **Self-contained executable** with all dependencies included
 - **Easy deployment** to laboratory computers and mass spectrometer PCs
@@ -43,12 +43,12 @@ This method uses the optimized `.venv-win` virtual environment for better Window
    ```
 
 3. **Run the build script:**
-   
+
    **For Command Prompt:**
    ```cmd
    build_windows.bat
    ```
-   
+
    **For PowerShell:**
    ```powershell
    .\build_windows.ps1
@@ -111,7 +111,7 @@ The build uses a customized spec file optimized for PanoramaBridge:
 
 ```python
 # Key optimizations:
-- console=False          # No console window for end users  
+- console=False          # No console window for end users
 - windowed=True         # Windows GUI application
 - optimize_imports      # Faster startup time
 - exclude_unused        # Smaller executable size
@@ -122,7 +122,7 @@ The build uses a customized spec file optimized for PanoramaBridge:
 Using `.venv-win` provides:
 - **Windows-native Python environment**
 - **Optimal file system event detection**
-- **Better performance for mass spectrometer workflows**  
+- **Better performance for mass spectrometer workflows**
 - **Consistent dependency versions**
 - **Isolated from system Python conflicts**
 
@@ -130,7 +130,7 @@ Using `.venv-win` provides:
 
 ### Build Results
 After a successful build, you'll find:
-- **Executable**: `dist\PanoramaBridge.exe` 
+- **Executable**: `dist\PanoramaBridge.exe`
 - **Size**: Approximately 80-120 MB (includes entire Python runtime)
 - **Dependencies**: All included, no separate installation needed
 - **Performance**: Optimized for Windows file system monitoring
@@ -144,7 +144,7 @@ After a successful build, you'll find:
 
 2. **File Association Test:** Double-click `PanoramaBridge.exe` in Windows Explorer
 
-3. **Performance Test:** 
+3. **Performance Test:**
    - Monitor a directory with active file creation
    - Verify OS events are detected (check Advanced Settings)
    - Test locked file handling with mass spectrometer files
@@ -154,7 +154,7 @@ After a successful build, you'll find:
 ### For Laboratory Use
 The executable (`dist\PanoramaBridge.exe`) can be:
 - **Copied directly to mass spectrometer PCs**
-- **Distributed via network shares or USB drives** 
+- **Distributed via network shares or USB drives**
 - **Installed without Python or administrator privileges**
 - **Run immediately without setup or configuration**
 
@@ -172,7 +172,7 @@ The executable (`dist\PanoramaBridge.exe`) can be:
 - Reinstall Python with "Add to PATH" checked
 - Use full path if needed: `C:\Users\%USERNAME%\AppData\Local\Programs\Python\Python311\python.exe`
 
-#### "Module not found" errors  
+#### "Module not found" errors
 - Verify you're using Windows Python, not WSL Python
 - Activate the correct virtual environment: `.venv-win\Scripts\activate`
 - Reinstall requirements: `pip install -r requirements.txt`
@@ -211,7 +211,7 @@ The executable (`dist\PanoramaBridge.exe`) can be:
 - Superior to WSL2 for monitoring Windows directories
 - Immediate OS event response without polling overhead
 
-#### Mass Spectrometer Integration  
+#### Mass Spectrometer Integration
 - Optimized locked file detection for instrument data acquisition
 - Better handling of large mass spectrometry files (.raw, .wiff)
 - Native Windows file locking detection and retry logic
@@ -222,14 +222,14 @@ The executable (`dist\PanoramaBridge.exe`) can be:
 ### WSL2 vs Native Windows Build:
 - **File Detection**: Native Windows ~10x faster event detection
 - **Locked File Handling**: Native Windows provides immediate detection
-- **Memory Usage**: Native build ~20% lower memory footprint  
+- **Memory Usage**: Native build ~20% lower memory footprint
 - **Startup Time**: Native build ~50% faster application startup
 - **File System Compatibility**: Native build handles all Windows file systems
 
 ## Recommended Workflow
 
 1. **Development**: Use WSL2/Linux for code editing and development
-2. **Testing**: Build and test using native Windows environment with `.venv-win` 
+2. **Testing**: Build and test using native Windows environment with `.venv-win`
 3. **Distribution**: Deploy the Windows executable to laboratory/production systems
 4. **Monitoring**: Use native build for optimal mass spectrometer file monitoring
 

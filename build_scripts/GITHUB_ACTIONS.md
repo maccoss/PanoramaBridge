@@ -13,7 +13,7 @@ Two workflows automate building Windows executables:
 ### Continuous Integration (`build-windows.yml`)
 **Triggers:**
 - Every push to `main` branch
-- Every pull request to `main` branch  
+- Every pull request to `main` branch
 - Manual trigger from GitHub UI
 - New releases
 
@@ -53,7 +53,7 @@ This automatically creates a GitHub release with the executable.
 4. Click "Run workflow"
 5. Fill in release details:
    - ✅ Create a new release: `true`
-   - Release tag: `v1.0.0`  
+   - Release tag: `v1.0.0`
    - Release name: `PanoramaBridge v1.0.0`
 6. Click "Run workflow"
 
@@ -65,7 +65,7 @@ This automatically creates a GitHub release with the executable.
 3. Scroll down to "Artifacts" section
 4. Download `PanoramaBridge-Windows-Build-XXX.zip`
 
-### From Releases (Production Builds)  
+### From Releases (Production Builds)
 1. Go to "Releases" section on main repository page
 2. Download `PanoramaBridge.exe` from latest release
 3. Verify SHA256 hash if needed for security

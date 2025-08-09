@@ -5,11 +5,9 @@ import pytest
 import tempfile
 import shutil
 import os
-from pathlib import Path
-from unittest.mock import Mock, MagicMock
-import queue
 import hashlib
-from typing import Dict, Any
+import queue
+from unittest.mock import Mock
 
 
 @pytest.fixture

@@ -8,7 +8,7 @@ The project now has a comprehensive test suite covering all core functionality a
 
 **Configuration Files:**
 - `.vscode/settings.json` - Test configuration
-- `.vscode/launch.json` - Debug configurations  
+- `.vscode/launch.json` - Debug configurations
 - `.vscode/tasks.json` - Test running tasks
 - `.vscode/extensions.json` - Recommended extensions
 - `pytest.ini` - Pytest configuration
@@ -164,7 +164,7 @@ tests/
 Access via `Ctrl+Shift+P` → "Tasks: Run Task":
 
 - **Run All Tests** - Execute all tests with verbose output
-- **Run WebDAV Tests** - Execute only the working WebDAV tests  
+- **Run WebDAV Tests** - Execute only the working WebDAV tests
 - **Run Tests with Coverage** - Generate HTML coverage reports
 
 ## 🐛 Debugging Tips
@@ -224,7 +224,7 @@ When running "Run Tests with Coverage" task:
 The comprehensive test suite is **ready to use** and provides thorough validation of:
 
 - ✅ **Original functionality**: Progress tracking and WebDAV operations (7 tests)
-- ✅ **Queue table integration**: File tracking and duplicate prevention (8 tests)  
+- ✅ **Queue table integration**: File tracking and duplicate prevention (8 tests)
 - ✅ **Persistent checksum caching**: Config save/load and performance optimization (10 tests)
 
 **Total: 25 tests - All passing!**
