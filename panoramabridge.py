@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QHeaderView, QSplitter, QComboBox,
     QSpinBox, QInputDialog, QDialog, QRadioButton, QMenu
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, pyqtSlot
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, pyqtSlot, QMetaObject, Q_ARG
 from PyQt6.QtGui import QIcon, QFont
 
 # File monitoring using watchdog library
@@ -784,12 +784,19 @@ class FileMonitorHandler(FileSystemEventHandler):
                             if self._should_queue_file(filepath):
                                 logger.info(f"Queuing stable file: {filepath} (size: {current_size} bytes)")
                                 self.file_queue.put(filepath)
-                                # Add to transfer table immediately when queued
+                                # Add to transfer table safely using QMetaObject.invokeMethod for thread-safe UI calls
                                 if self.app_instance:
                                     try:
-                                        self.app_instance.add_queued_file_to_table(filepath)
+                                        # Use QMetaObject.invokeMethod for safe cross-thread UI calls
+                                        QMetaObject.invokeMethod(
+                                            self.app_instance, 
+                                            "add_queued_file_to_table", 
+                                            Qt.ConnectionType.QueuedConnection,
+                                            Q_ARG(str, filepath)
+                                        )
+                                        logger.debug(f"Successfully scheduled UI update for {filepath} via QMetaObject.invokeMethod")
                                     except Exception as ui_error:
-                                        logger.error(f"Error updating UI table for {filepath}: {ui_error}")
+                                        logger.error(f"Error scheduling UI table update for {filepath}: {ui_error}")
                                 self.pending_files.pop(filepath, None)
                                 logger.info(f"File queued for transfer: {filepath} (queue size now: {self.file_queue.qsize()})")
                             else:
@@ -815,6 +822,10 @@ class FileMonitorHandler(FileSystemEventHandler):
                         # Check if file exists and is accessible
                         if not os.path.exists(filepath):
                             logger.warning(f"New file event for non-existent file: {filepath}")
+                            # Clean up queued_files if file was previously queued but no longer exists
+                            if self.app_instance and filepath in self.app_instance.queued_files:
+                                self.app_instance.queued_files.discard(filepath)
+                                logger.info(f"Removed non-existent file from queued_files: {filepath}")
                             return
                         
                         size = os.path.getsize(filepath)
@@ -843,12 +854,19 @@ class FileMonitorHandler(FileSystemEventHandler):
                                             if self._should_queue_file(filepath):
                                                 logger.info(f"Delayed check: Queuing stable file: {filepath} (size: {current_size} bytes)")
                                                 self.file_queue.put(filepath)
-                                                # Add to transfer table immediately when queued
+                                                # Add to transfer table safely using QMetaObject.invokeMethod for thread-safe UI calls
                                                 if self.app_instance:
                                                     try:
-                                                        self.app_instance.add_queued_file_to_table(filepath)
+                                                        # Use QMetaObject.invokeMethod for safe cross-thread UI calls
+                                                        QMetaObject.invokeMethod(
+                                                            self.app_instance, 
+                                                            "add_queued_file_to_table", 
+                                                            Qt.ConnectionType.QueuedConnection,
+                                                            Q_ARG(str, filepath)
+                                                        )
+                                                        logger.debug(f"Successfully scheduled UI update for {filepath} via QMetaObject.invokeMethod")
                                                     except Exception as ui_error:
-                                                        logger.error(f"Error updating UI table for {filepath}: {ui_error}")
+                                                        logger.error(f"Error scheduling UI table update for {filepath}: {ui_error}")
                                                 if hasattr(self, 'pending_files'):
                                                     self.pending_files.pop(filepath, None)
                                                 logger.info(f"File queued for transfer after stability check: {filepath} (queue size now: {self.file_queue.qsize()})")
@@ -898,12 +916,19 @@ class FileMonitorHandler(FileSystemEventHandler):
                                                 if self._should_queue_file(filepath):
                                                     logger.info(f"Immediate check: Queuing stable file: {filepath} (size: {current_size} bytes)")
                                                     self.file_queue.put(filepath)
-                                                    # Add to transfer table immediately when queued
+                                                    # Add to transfer table safely using QMetaObject.invokeMethod for thread-safe UI calls
                                                     if self.app_instance:
                                                         try:
-                                                            self.app_instance.add_queued_file_to_table(filepath)
+                                                            # Use QMetaObject.invokeMethod for safe cross-thread UI calls
+                                                            QMetaObject.invokeMethod(
+                                                                self.app_instance, 
+                                                                "add_queued_file_to_table", 
+                                                                Qt.ConnectionType.QueuedConnection,
+                                                                Q_ARG(str, filepath)
+                                                            )
+                                                            logger.debug(f"Successfully scheduled UI update for {filepath} via QMetaObject.invokeMethod")
                                                         except Exception as ui_error:
-                                                            logger.error(f"Error updating UI table for {filepath}: {ui_error}")
+                                                            logger.error(f"Error scheduling UI table update for {filepath}: {ui_error}")
                                                     if hasattr(self, 'pending_files'):
                                                         self.pending_files.pop(filepath, None)
                                                     logger.info(f"File queued for transfer after immediate check: {filepath} (queue size now: {self.file_queue.qsize()})")
@@ -2660,8 +2685,8 @@ class MainWindow(QMainWindow):
         
         # Transfer table
         self.transfer_table = QTableWidget()
-        self.transfer_table.setColumnCount(5)
-        self.transfer_table.setHorizontalHeaderLabels(["File", "Path", "Status", "Progress", "Message"])
+        self.transfer_table.setColumnCount(4)
+        self.transfer_table.setHorizontalHeaderLabels(["File", "Status", "Progress", "Message"])
         
         # Set column widths for better display
         header = self.transfer_table.horizontalHeader()
@@ -2704,6 +2729,7 @@ class MainWindow(QMainWindow):
         """Generate consistent unique key for transfer table tracking"""
         return f"{filename}|{hash(filepath)}"
     
+    @pyqtSlot(str)
     def add_queued_file_to_table(self, filepath: str):
         """Add a queued file to the transfer table with 'Queued' status at the top"""
         filename = os.path.basename(filepath)
@@ -2714,10 +2740,10 @@ class MainWindow(QMainWindow):
             # File already in table, just update status to ensure it's marked as queued
             row = self.transfer_rows[unique_key]
             if row < self.transfer_table.rowCount():
-                status_item = self.transfer_table.item(row, 2)
+                status_item = self.transfer_table.item(row, 1)  # Status is now column 1
                 if status_item:
                     status_item.setText("Queued")
-                message_item = self.transfer_table.item(row, 4) 
+                message_item = self.transfer_table.item(row, 3)  # Message is now column 3
                 if message_item:
                     message_item.setText("Waiting for processing...")
             return  # Don't create duplicate
@@ -2734,18 +2760,19 @@ class MainWindow(QMainWindow):
                 display_path = relative_path
         
         # Set basic info in the new bottom row
-        self.transfer_table.setItem(row_count, 0, QTableWidgetItem(filename))
-        self.transfer_table.setItem(row_count, 1, QTableWidgetItem(display_path))
-        self.transfer_table.setItem(row_count, 2, QTableWidgetItem("Queued"))
+        # Use display_path in File column (combines path and filename)
+        self.transfer_table.setItem(row_count, 0, QTableWidgetItem(display_path))
+        # Column 1 is now Status (was Path)
+        self.transfer_table.setItem(row_count, 1, QTableWidgetItem("Queued"))
         
-        # Add empty progress bar
+        # Add empty progress bar (now in column 2)
         progress_bar = QProgressBar()
         progress_bar.setValue(0)
         progress_bar.setVisible(False)  # Hide progress bar for queued files
-        self.transfer_table.setCellWidget(row_count, 3, progress_bar)
+        self.transfer_table.setCellWidget(row_count, 2, progress_bar)
         
-        # Set message  
-        self.transfer_table.setItem(row_count, 4, QTableWidgetItem("Waiting for processing..."))
+        # Set message (now in column 3)
+        self.transfer_table.setItem(row_count, 3, QTableWidgetItem("Waiting for processing..."))
         
         # Track the row (now at the bottom)
         self.transfer_rows[unique_key] = row_count
@@ -3241,26 +3268,17 @@ class MainWindow(QMainWindow):
             row_count = self.transfer_table.rowCount()
             self.transfer_table.insertRow(row_count)
             
-            # Calculate relative path for display
-            local_base = self.dir_input.text()
-            if local_base and filepath:
-                try:
-                    rel_path = os.path.relpath(filepath, local_base)
-                    # Convert to Unix-style path separators and add ./ prefix
-                    if rel_path == os.path.basename(filepath):
-                        # File is in the root directory
-                        display_path = "./"
-                    else:
-                        # File is in a subdirectory
-                        display_path = f"./{rel_path.replace(os.sep, '/').rsplit('/', 1)[0]}"
-                except (ValueError, OSError):
-                    display_path = "./"
-            else:
-                display_path = "./"
+            # Calculate relative path for display (use full relative path including filename)
+            display_path = filepath
+            if self.dir_input.text() and filepath.startswith(self.dir_input.text()):
+                relative_path = os.path.relpath(filepath, self.dir_input.text())
+                if not relative_path.startswith('..'):
+                    display_path = relative_path
             
-            self.transfer_table.setItem(row_count, 0, QTableWidgetItem(filename))
-            self.transfer_table.setItem(row_count, 1, QTableWidgetItem(display_path))
-            self.transfer_table.setItem(row_count, 2, QTableWidgetItem(status))
+            # Use display_path in File column (combines path and filename)
+            self.transfer_table.setItem(row_count, 0, QTableWidgetItem(display_path))
+            # Column 1 is now Status (was Path) 
+            self.transfer_table.setItem(row_count, 1, QTableWidgetItem(status))
             
             progress_bar = QProgressBar()
             progress_bar.setMinimum(0)
@@ -3271,9 +3289,9 @@ class MainWindow(QMainWindow):
                 progress_bar.setVisible(False)
             else:
                 progress_bar.setVisible(True)
-            self.transfer_table.setCellWidget(row_count, 3, progress_bar)
+            self.transfer_table.setCellWidget(row_count, 2, progress_bar)
             
-            self.transfer_table.setItem(row_count, 4, QTableWidgetItem(""))
+            self.transfer_table.setItem(row_count, 3, QTableWidgetItem(""))
             
             self.transfer_rows[unique_key] = row_count
             
@@ -3285,14 +3303,14 @@ class MainWindow(QMainWindow):
             # Update existing row - this is the normal case
             row = self.transfer_rows[unique_key]
             if row < self.transfer_table.rowCount():
-                current_item = self.transfer_table.item(row, 2)
+                current_item = self.transfer_table.item(row, 1)  # Status is now column 1
                 current_status = current_item.text() if current_item else ""
                 if current_item:
                     current_item.setText(status)
                 
                 # Show progress bar when transitioning from queued to active processing
                 if current_status == "Queued" and status not in ["Queued", "Starting", "Pending"]:
-                    progress_bar = self.transfer_table.cellWidget(row, 3)
+                    progress_bar = self.transfer_table.cellWidget(row, 2)  # Progress is now column 2
                     if progress_bar and hasattr(progress_bar, 'setVisible'):
                         progress_bar.setVisible(True)
                         # Scroll to show the file that just started processing
@@ -3306,7 +3324,7 @@ class MainWindow(QMainWindow):
         if unique_key in self.transfer_rows:
             row = self.transfer_rows[unique_key]
             if row < self.transfer_table.rowCount():
-                progress_bar = self.transfer_table.cellWidget(row, 3)
+                progress_bar = self.transfer_table.cellWidget(row, 2)  # Progress is now column 2
                 if progress_bar and hasattr(progress_bar, 'setValue'):
                     # Always use percentage (0-100) for consistent progress bar display
                     if total > 0:
@@ -3324,8 +3342,8 @@ class MainWindow(QMainWindow):
             if row < self.transfer_table.rowCount():
                 
                 status = "Complete" if success else "Failed"
-                status_item = self.transfer_table.item(row, 2)
-                message_item = self.transfer_table.item(row, 4)
+                status_item = self.transfer_table.item(row, 1)  # Status is now column 1
+                message_item = self.transfer_table.item(row, 3)  # Message is now column 3
                 if status_item:
                     status_item.setText(status)
                 if message_item:
@@ -3348,7 +3366,7 @@ class MainWindow(QMainWindow):
                     del self.file_remote_paths[filepath]
                 
                 # Update progress bar - ensure it shows 100% when complete
-                progress_bar = self.transfer_table.cellWidget(row, 3)
+                progress_bar = self.transfer_table.cellWidget(row, 2)  # Progress is now column 2
                 if progress_bar and hasattr(progress_bar, 'setValue'):
                     if success:
                         progress_bar.setValue(100)  # Always show 100% for successful completion
@@ -3418,7 +3436,7 @@ class MainWindow(QMainWindow):
         rows_to_remove = []
         
         for unique_key, row in self.transfer_rows.items():
-            status_item = self.transfer_table.item(row, 2)  # Status is now column 2
+            status_item = self.transfer_table.item(row, 1)  # Status is now column 1
             if status_item and status_item.text() in ["Complete", "Failed"]:
                 rows_to_remove.append((row, unique_key))
         
@@ -3463,15 +3481,15 @@ class MainWindow(QMainWindow):
                         # Reset the row status
                         row = failed_info['row']
                         if row < self.transfer_table.rowCount():
-                            status_item = self.transfer_table.item(row, 2)
-                            message_item = self.transfer_table.item(row, 4)
+                            status_item = self.transfer_table.item(row, 1)  # Status is now column 1
+                            message_item = self.transfer_table.item(row, 3)  # Message is now column 3
                             if status_item:
                                 status_item.setText("Queued")
                             if message_item:
                                 message_item.setText("Re-upload requested")
                             
                             # Reset progress bar
-                            progress_bar = self.transfer_table.cellWidget(row, 3)
+                            progress_bar = self.transfer_table.cellWidget(row, 2)  # Progress is now column 2
                             if progress_bar:
                                 progress_bar.setValue(0)
                                 progress_bar.setStyleSheet("")  # Clear any error styling
@@ -3500,7 +3518,7 @@ class MainWindow(QMainWindow):
             return
         
         row = item.row()
-        status_item = self.transfer_table.item(row, 2)
+        status_item = self.transfer_table.item(row, 1)  # Status is now column 1
         
         if not status_item:
             return
@@ -3552,15 +3570,15 @@ class MainWindow(QMainWindow):
         # Reset the row status
         row = failed_info['row']
         if row < self.transfer_table.rowCount():
-            status_item = self.transfer_table.item(row, 2)
-            message_item = self.transfer_table.item(row, 4)
+            status_item = self.transfer_table.item(row, 1)  # Status is now column 1
+            message_item = self.transfer_table.item(row, 3)  # Message is now column 3
             if status_item:
                 status_item.setText("Queued")
             if message_item:
                 message_item.setText("Re-upload requested")
             
             # Reset progress bar
-            progress_bar = self.transfer_table.cellWidget(row, 3)
+            progress_bar = self.transfer_table.cellWidget(row, 2)  # Progress is now column 2
             if progress_bar:
                 progress_bar.setValue(0)
                 progress_bar.setStyleSheet("")  # Clear any error styling

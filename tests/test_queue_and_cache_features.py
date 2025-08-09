@@ -62,7 +62,7 @@ class TestQueueTableIntegration:
         assert mock_main_window.transfer_rows[expected_key] == 0
         
         # Verify table items were created
-        assert mock_table_item.call_count >= 4  # filename, path, status, message
+        assert mock_table_item.call_count >= 3  # filename, status, message (removed path column)
         assert mock_progress_bar.called  # progress bar was created
         
         # Verify setCellWidget was called for progress bar
@@ -117,11 +117,11 @@ class TestQueueTableIntegration:
         # Verify table items were created with correct calls
         calls = mock_table_item.call_args_list
         
-        # Should have calls for: filename, path, status, message
-        assert len(calls) >= 4
+        # Should have calls for: filename, status, message (removed path column)
+        assert len(calls) >= 3
         
         # Check that setItem was called for each column
-        assert mock_main_window.transfer_table.setItem.call_count >= 4
+        assert mock_main_window.transfer_table.setItem.call_count >= 3
     
     @patch('panoramabridge.QProgressBar')
     @patch('panoramabridge.QTableWidgetItem')
