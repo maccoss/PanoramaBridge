@@ -36,6 +36,10 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller
         
+    - name: Run tests
+      run: |
+        python -m pytest tests/test_upload_history.py tests/test_upload_history_simple.py tests/test_qt_ui.py tests/test_queue_table_integration.py tests/test_table_ordering_and_progress_messages.py tests/test_real_methods_integration.py -v --tb=short
+        
     - name: Build executable
       run: |
         pyinstaller build_scripts/PanoramaBridge.spec

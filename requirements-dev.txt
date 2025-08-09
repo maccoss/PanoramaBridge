@@ -1,0 +1,15 @@
+# Development requirements (testing, linting, etc.)
+# Install with: pip install -r requirements-dev.txt
+
+# Testing
+pytest>=8.0.0
+pytest-qt>=4.5.0
+pytest-cov>=4.0.0  # For test coverage reports
+
+# Code quality
+ruff>=0.1.0  # Modern Python linter and formatter
+black>=23.0.0  # Code formatter (if preferred over ruff format)
+
+# Development tools  
+mypy>=1.0.0  # Type checking
+pre-commit>=3.0.0  # Git hooks for code quality

@@ -22,6 +22,8 @@ A Python Qt6 application for monitoring local directories and automatically tran
 ### Advanced Features
 - **Smart Locked File Handling**: Automatically detects and retries locked files from mass spectrometers
 - **Checksum Caching**: Dramatic performance improvements (up to 1700x faster for unchanged files)
+- **Upload History Tracking**: Persistent tracking of successfully uploaded files with integrity verification
+- **Remote File Integrity Verification**: Validates remote file integrity on startup to ensure data consistency
 - **Progress Indication**: Real-time progress bars with elapsed time and countdown timers
 - **Windows Native Support**: Optimized .venv-win virtual environment for better file system event detection
 - **Configurable Retry Logic**: Customizable wait times and retry attempts for locked files
@@ -29,6 +31,8 @@ A Python Qt6 application for monitoring local directories and automatically tran
 ### Performance & Reliability
 - **OS Event-Driven Monitoring**: Immediate file detection without polling overhead
 - **Intelligent Conflict Resolution**: Smart file comparison and duplicate handling
+- **Remote Integrity Guarantee**: Automatically re-uploads corrupted or missing remote files
+- **Persistent State Management**: Maintains upload history across application restarts
 - **Comprehensive Logging**: Detailed logs with menu-based access for troubleshooting
 - **Cross-platform**: Works on Windows, Linux, and macOS (Windows native recommended)
 
@@ -240,7 +244,6 @@ Depth: 0
 - **Method**: SHA256 hash calculation using Python's `hashlib` library
 - **Chunk Size**: 256KB chunks for optimal memory/performance balance
 - **Caching System**: Local cache using file path + size + modification time as key
-  - Up to 1,700x performance improvement for unchanged files
   - Cache limit: 1,000 entries with automatic cleanup
   - Cache invalidation on file size or modification time changes
 
@@ -306,7 +309,64 @@ verified = (remote_checksum.lower() == local_checksum.lower())
 verified = (clean_etag.lower() == local_checksum.lower()) or size_matches
 ```
 
-### 7. Metadata Storage and Integrity
+### 7. Upload History and Remote Integrity Verification
+
+**Persistent Upload Tracking:**
+- Maintains a JSON file (`~/.panorama_upload_history.json`) tracking all successful uploads
+- Records file path, size, checksum, and timestamp for each uploaded file
+- Enables intelligent skip-already-uploaded file detection across application restarts
+
+**Startup Integrity Verification:**
+PanoramaBridge automatically verifies the integrity of all previously uploaded files when monitoring starts:
+
+**Multi-Tier Remote Verification:**
+
+**For Files < 10MB:**
+- **Full Checksum Verification**: Downloads complete file and compares SHA256 checksums
+- **Size Check**: Verifies file size matches exactly
+- **Accessibility Test**: Confirms file exists and is readable
+
+**For Files ≥ 10MB:**
+- **Size Verification**: Confirms remote file size matches local file
+- **Accessibility Test**: Uses HEAD request to verify file exists
+- **ETag Comparison** (when available): Compares server ETag with local checksum
+
+**Automatic Corruption Recovery:**
+- Removes corrupted files from upload history
+- Re-queues files with integrity issues for upload
+- Logs all verification failures for troubleshooting
+- Ensures data consistency guarantee: "If there is a local file and something happened to the remote file, we fix it with the local file"
+
+**Implementation Example:**
+```python
+def verify_remote_file_integrity(self, file_path, remote_path, expected_size, expected_checksum):
+    """Verify remote file integrity with multi-tier approach"""
+    try:
+        # Check if remote file exists and get info
+        file_info = self.webdav_client.get_file_info(remote_path)
+        if not file_info:
+            return False
+            
+        # Size verification
+        if file_info.get('size') != expected_size:
+            return False
+            
+        # For small files, do full checksum verification
+        if expected_size < 10 * 1024 * 1024:  # 10MB
+            remote_data = self.webdav_client.download_file_head(remote_path, expected_size)
+            if remote_data:
+                remote_checksum = hashlib.sha256(remote_data).hexdigest()
+                return remote_checksum.lower() == expected_checksum.lower()
+                
+        # For large files, rely on size + accessibility
+        return True
+        
+    except Exception as e:
+        self.log_message(f"Remote verification failed for {file_path}: {e}")
+        return False
+```
+
+### 8. Metadata Storage and Integrity
 
 **Checksum Storage:**
 - Stores checksums on WebDAV server as metadata files

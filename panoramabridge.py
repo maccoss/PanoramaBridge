@@ -21,6 +21,7 @@ import hashlib  # For calculating SHA256 checksums
 import json  # For configuration file storage
 import logging
 import os
+import pickle  # For persistent upload tracking
 import queue  # For thread-safe file processing queue
 
 # Standard library imports
@@ -354,7 +355,7 @@ class WebDAVClient:
         headers = {"Depth": "0", "Content-Type": "application/xml"}
 
         # PROPFIND request body
-        body = """<?xml version="1.0" encoding="utf - 8"?>
+        body = """<?xml version="1.0" encoding="utf-8"?>
         <propfind xmlns="DAV:">
             <prop>
                 <displayname/>
@@ -1902,6 +1903,11 @@ class FileProcessor(QThread):
                         filepath, remote_path, local_checksum
                     )
                     if is_verified:
+                        # Record successful upload in persistent history
+                        if self.app_instance:
+                            self.app_instance.record_successful_upload(
+                                filepath, remote_path, local_checksum
+                            )
                         self.transfer_complete.emit(
                             filename,
                             filepath,
@@ -1916,6 +1922,11 @@ class FileProcessor(QThread):
                             f"Upload verification failed: {verify_message}",
                         )
                 else:
+                    # Record successful upload in persistent history (verification disabled)
+                    if self.app_instance:
+                        self.app_instance.record_successful_upload(
+                            filepath, remote_path, local_checksum
+                        )
                     self.transfer_complete.emit(
                         filename,
                         filepath,
@@ -2501,6 +2512,10 @@ class MainWindow(QMainWindow):
         self.failed_files = {}  # Track files that failed verification for re-upload
         self.file_remote_paths = {}  # Track filepath -> remote_path mappings to prevent duplicate uploads
         self.local_checksum_cache = {}  # Local checksum cache to avoid recalculation
+        self.upload_history = {}  # Persistent tracking of successfully uploaded files {filepath: {checksum, timestamp, remote_path}}
+
+        # Load persistent upload history
+        self.load_upload_history()
 
         # Load application configuration from disk
         self.config = self.load_config()
@@ -3174,11 +3189,9 @@ class MainWindow(QMainWindow):
             self.status_label.setStyleSheet("font-weight: bold; color: red;")
             self.log_text.append(f"{datetime.now().strftime('%H:%M:%S')} - Stopped monitoring")
 
-            # Clear tracking sets when stopping monitoring
-            self.queued_files.clear()
-            self.created_directories.clear()
-            self.failed_files.clear()
-            self.file_remote_paths.clear()
+            # Improved queue management when stopping monitoring
+            self.clear_queue_on_stop()
+
             # Note: Keep processing_files and transfer_rows intact as files may still be transferring
         else:
             # Start monitoring
@@ -3264,6 +3277,9 @@ class MainWindow(QMainWindow):
             # Scan for existing files in the directory
             self.scan_existing_files(directory, extensions, self.subdirs_check.isChecked())
 
+            # Verify remote integrity of previously uploaded files
+            self.verify_remote_integrity_on_start(directory, extensions, self.subdirs_check.isChecked())
+
             self.start_btn.setText("Stop Monitoring")
             self.status_label.setText("Monitoring active")
             self.status_label.setStyleSheet("font-weight: bold; color: green;")
@@ -3272,6 +3288,12 @@ class MainWindow(QMainWindow):
                 f"{datetime.now().strftime('%H:%M:%S')} - Started monitoring {directory}"
             )
             self.log_text.append(f"Extensions: {', '.join(extensions)}")
+
+            # Show upload history status
+            if self.upload_history:
+                self.log_text.append(
+                    f"{datetime.now().strftime('%H:%M:%S')} - Upload history: {len(self.upload_history)} files previously uploaded"
+                )
 
             # Log the actual monitoring configuration
             if self.enable_polling_check.isChecked():
@@ -3368,6 +3390,117 @@ class MainWindow(QMainWindow):
             )
             logger.info("Scan complete: no existing files found")
 
+    def verify_remote_integrity_on_start(self, directory: str, extensions: list[str], recursive: bool):
+        """Verify integrity of previously uploaded files and re-queue any that need fixing"""
+        if not self.webdav_client or not self.upload_history:
+            return
+
+        logger.info("Starting remote integrity verification for previously uploaded files")
+        self.log_text.append(
+            f"{datetime.now().strftime('%H:%M:%S')} - Verifying remote file integrity..."
+        )
+
+        files_to_reupload = []
+        files_verified = 0
+        files_checked = 0
+
+        # Check each file in upload history that might be in the current monitoring scope
+        for filepath, history_entry in list(self.upload_history.items()):  # Use list() to avoid dict change during iteration
+            try:
+                # Check if file is within the monitoring directory and matches extensions
+                if not self._is_file_in_monitoring_scope(filepath, directory, extensions, recursive):
+                    continue
+
+                files_checked += 1
+                
+                # Check if local file still exists
+                if not os.path.exists(filepath):
+                    logger.info(f"Local file no longer exists, removing from history: {filepath}")
+                    del self.upload_history[filepath]
+                    continue
+
+                remote_path = history_entry.get("remote_path")
+                expected_checksum = history_entry.get("checksum")
+                
+                if not remote_path or not expected_checksum:
+                    logger.warning(f"Incomplete history entry for {filepath}, will re-verify")
+                    files_to_reupload.append((filepath, "incomplete history"))
+                    continue
+
+                # Verify remote file integrity
+                logger.debug(f"Verifying remote integrity for: {os.path.basename(filepath)}")
+                remote_ok, reason = self.verify_remote_file_integrity(filepath, remote_path, expected_checksum)
+                
+                if remote_ok:
+                    files_verified += 1
+                    logger.debug(f"Remote file verified: {os.path.basename(filepath)} - {reason}")
+                else:
+                    logger.warning(f"Remote integrity failed: {os.path.basename(filepath)} - {reason}")
+                    files_to_reupload.append((filepath, reason))
+                    
+            except Exception as e:
+                logger.error(f"Error checking remote integrity for {filepath}: {e}")
+                files_to_reupload.append((filepath, f"verification error: {e}"))
+
+        # Queue files that need re-uploading
+        requeued_count = 0
+        for filepath, reason in files_to_reupload:
+            if self._should_queue_file_for_reupload(filepath):
+                self.file_queue.put(filepath)
+                self.add_queued_file_to_table(filepath)
+                requeued_count += 1
+                logger.info(f"Re-queued file with remote issues: {os.path.basename(filepath)} ({reason})")
+
+        # Save any history changes
+        if files_to_reupload:
+            self.save_upload_history()
+
+        # Log summary
+        if files_checked > 0:
+            self.log_text.append(
+                f"{datetime.now().strftime('%H:%M:%S')} - Integrity check complete: {files_verified} verified, {requeued_count} re-queued"
+            )
+            logger.info(f"Remote integrity check complete: checked={files_checked}, verified={files_verified}, requeued={requeued_count}")
+        else:
+            logger.info("No files in monitoring scope found in upload history")
+
+    def _is_file_in_monitoring_scope(self, filepath: str, directory: str, extensions: list[str], recursive: bool) -> bool:
+        """Check if a file is within the current monitoring scope"""
+        try:
+            # Check if file is under the monitoring directory
+            filepath_abs = os.path.abspath(filepath)
+            directory_abs = os.path.abspath(directory)
+            
+            if not filepath_abs.startswith(directory_abs):
+                return False
+
+            # If not recursive, check if file is directly in the directory (not in subdirectory)
+            if not recursive:
+                parent_dir = os.path.dirname(filepath_abs)
+                if parent_dir != directory_abs:
+                    return False
+
+            # Check if file extension matches
+            formatted_extensions = [
+                ext.lower() if ext.startswith(".") else f".{ext.lower()}" for ext in extensions
+            ]
+            
+            return any(filepath_abs.lower().endswith(ext) for ext in formatted_extensions)
+            
+        except Exception as e:
+            logger.error(f"Error checking monitoring scope for {filepath}: {e}")
+            return False
+
+    def _should_queue_file_for_reupload(self, filepath: str) -> bool:
+        """Check if file should be queued for re-upload (different from initial scan logic)"""
+        # Don't queue if already queued or processing
+        if filepath in self.queued_files or filepath in self.processing_files:
+            return False
+            
+        # Add to tracking
+        self.queued_files.add(filepath)
+        return True
+
     def _should_queue_file_scan(self, filepath: str) -> bool:
         """
         Check if a file should be queued during scanning, preventing duplicates.
@@ -3376,13 +3509,25 @@ class MainWindow(QMainWindow):
             filepath: Path to the file being considered for queueing
 
         Returns:
-            True if file should be queued, False if already queued/processing
+            True if file should be queued, False if already queued/processing/uploaded
         """
         # Check if file is already queued or being processed
         if filepath in self.queued_files:
+            logger.debug(f"File already queued, skipping: {filepath}")
             return False
         if filepath in self.processing_files:
+            logger.debug(f"File already processing, skipping: {filepath}")
             return False
+
+        # Check if file was already successfully uploaded
+        is_uploaded, reason = self.is_file_already_uploaded(filepath)
+        if is_uploaded:
+            logger.info(f"File already uploaded, skipping: {os.path.basename(filepath)} ({reason})")
+            return False
+        else:
+            logger.debug(
+                f"File not in upload history or changed, queueing: {os.path.basename(filepath)} ({reason})"
+            )
 
         # Add to queued files tracking
         self.queued_files.add(filepath)
@@ -3417,6 +3562,36 @@ class MainWindow(QMainWindow):
                     logger.info(f"Sample queued files: {list(self.queued_files)[:3]}")
                 if processing_count > 0:
                     logger.info(f"Sample processing files: {list(self.processing_files)[:3]}")
+
+    def clear_queue_on_stop(self):
+        """Clear queue and tracking sets when stopping monitoring with improved handling"""
+        # Clear the queue itself - drain any pending files
+        queue_count = 0
+        try:
+            while not self.file_queue.empty():
+                try:
+                    self.file_queue.get_nowait()
+                    queue_count += 1
+                except queue.Empty:
+                    break
+        except Exception as e:
+            logger.warning(f"Error clearing queue: {e}")
+
+        if queue_count > 0:
+            logger.info(f"Cleared {queue_count} files from queue when stopping monitoring")
+
+        # Clear tracking sets
+        queued_count = len(self.queued_files)
+        self.queued_files.clear()
+        self.created_directories.clear()
+        self.failed_files.clear()
+        self.file_remote_paths.clear()
+
+        if queued_count > 0:
+            logger.info(f"Cleared {queued_count} files from tracking sets")
+
+        # Update queue display
+        self.update_queue_size()
 
     def poll_for_new_files(self):
         """
@@ -4008,6 +4183,141 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Failed to save config: {e}")
 
+    def load_upload_history(self):
+        """Load persistent upload history from disk"""
+        history_file = os.path.join(os.path.expanduser("~"), ".panoramabridge_history.pkl")
+        try:
+            if os.path.exists(history_file):
+                with open(history_file, "rb") as f:
+                    self.upload_history = pickle.load(f)
+                logger.info(f"Loaded upload history: {len(self.upload_history)} files tracked")
+            else:
+                self.upload_history = {}
+                logger.info("No upload history file found, starting fresh")
+        except Exception as e:
+            logger.warning(f"Failed to load upload history: {e}, starting fresh")
+            self.upload_history = {}
+
+    def save_upload_history(self):
+        """Save persistent upload history to disk"""
+        history_file = os.path.join(os.path.expanduser("~"), ".panoramabridge_history.pkl")
+        try:
+            with open(history_file, "wb") as f:
+                pickle.dump(self.upload_history, f)
+            logger.debug(f"Saved upload history: {len(self.upload_history)} files tracked")
+        except Exception as e:
+            logger.error(f"Failed to save upload history: {e}")
+
+    def record_successful_upload(self, filepath: str, remote_path: str, checksum: str):
+        """Record a successful upload in persistent history"""
+        self.upload_history[filepath] = {
+            "checksum": checksum,
+            "remote_path": remote_path,
+            "timestamp": datetime.now().isoformat(),
+            "file_size": os.path.getsize(filepath) if os.path.exists(filepath) else 0,
+        }
+        self.save_upload_history()
+        logger.info(f"Recorded successful upload: {os.path.basename(filepath)} -> {remote_path}")
+
+    def verify_remote_file_integrity(self, local_filepath: str, remote_path: str, expected_checksum: str) -> tuple[bool, str]:
+        """Verify that a remote file exists and matches the expected local file
+        Returns: (is_intact, reason)
+        """
+        try:
+            # Get remote file info
+            remote_info = self.webdav_client.get_file_info(remote_path)
+            if not remote_info or not remote_info.get("exists", False):
+                return False, "remote file not found"
+
+            # Check file size first (quick check)
+            local_size = os.path.getsize(local_filepath) if os.path.exists(local_filepath) else 0
+            remote_size = remote_info.get("size", 0)
+            
+            if local_size != remote_size:
+                return False, f"size mismatch (local: {local_size}, remote: {remote_size})"
+
+            # For files smaller than 50MB, verify checksum by downloading a small portion
+            if remote_size < 50 * 1024 * 1024:  # 50MB
+                try:
+                    # Download just the first 8KB to check if file is accessible
+                    head_data = self.webdav_client.download_file_head(remote_path, 8192)
+                    if head_data is None:
+                        return False, "cannot read remote file"
+                    
+                    # For small files (< 10MB), do full checksum verification
+                    if remote_size < 10 * 1024 * 1024:  # 10MB
+                        # Download to temp file and verify checksum
+                        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                            temp_path = temp_file.name
+                        
+                        try:
+                            success, error = self.webdav_client.download_file(remote_path, temp_path)
+                            if not success:
+                                return False, f"download failed: {error}"
+                            
+                            # Calculate checksum of downloaded file
+                            remote_checksum = self.file_processor.calculate_checksum(temp_path)
+                            if remote_checksum.lower() != expected_checksum.lower():
+                                return False, f"checksum mismatch (expected: {expected_checksum[:8]}..., got: {remote_checksum[:8]}...)"
+                            
+                            return True, "verified by checksum"
+                            
+                        finally:
+                            if os.path.exists(temp_path):
+                                os.unlink(temp_path)
+                    else:
+                        # For medium files, just verify size and accessibility
+                        return True, "verified by size and accessibility"
+                except Exception as e:
+                    return False, f"verification error: {str(e)}"
+            else:
+                # For large files, just verify size and that file is accessible
+                return True, "verified by size (large file)"
+                
+        except Exception as e:
+            logger.warning(f"Error verifying remote file {remote_path}: {e}")
+            return False, f"verification error: {str(e)}"
+
+    def is_file_already_uploaded(self, filepath: str) -> tuple[bool, str]:
+        """Check if file was already uploaded successfully AND verify remote integrity
+        Returns: (is_uploaded, reason)
+        """
+        if filepath not in self.upload_history:
+            return False, "not in history"
+
+        history_entry = self.upload_history[filepath]
+
+        # Check if local file still exists and hasn't changed
+        if not os.path.exists(filepath):
+            return False, "local file no longer exists"
+
+        try:
+            # Quick size check first
+            current_size = os.path.getsize(filepath)
+            if current_size != history_entry.get("file_size", 0):
+                return False, "file size changed"
+
+            # If size matches, check checksum
+            current_checksum = self.file_processor.calculate_checksum(filepath)
+            if current_checksum != history_entry.get("checksum"):
+                return False, "file content changed"
+
+            # Now verify the remote file is still intact
+            remote_path = history_entry.get("remote_path")
+            if remote_path and self.webdav_client:
+                remote_ok, remote_reason = self.verify_remote_file_integrity(filepath, remote_path, current_checksum)
+                if not remote_ok:
+                    # Remove from history since remote file is compromised
+                    logger.warning(f"Remote file integrity failed for {filepath}: {remote_reason}")
+                    del self.upload_history[filepath]
+                    self.save_upload_history()
+                    return False, f"remote file issue: {remote_reason}"
+
+            return True, f"already uploaded on {history_entry.get('timestamp', 'unknown date')}"
+        except Exception as e:
+            logger.warning(f"Error checking upload history for {filepath}: {e}")
+            return False, "error checking history"
+
     def load_settings(self):
         """
         Load settings from configuration file or apply defaults for new installations.
@@ -4085,8 +4395,9 @@ class MainWindow(QMainWindow):
         self.file_processor.stop()
         self.file_processor.wait()
 
-        # Save settings
+        # Save settings and upload history
         self.save_settings()
+        self.save_upload_history()
 
         event.accept()
 

@@ -5,3 +5,7 @@ watchdog>=3.0.0
 requests>=2.31.0
 keyring>=24.0.0
 keyrings.alt>=5.0.0
+
+# Testing dependencies
+pytest>=8.0.0
+pytest-qt>=4.0.0

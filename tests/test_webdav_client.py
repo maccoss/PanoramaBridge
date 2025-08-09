@@ -220,3 +220,72 @@ class TestWebDAVClient:
         checksum = client.get_stored_checksum("/test/file.raw")
 
         assert checksum is None
+
+    @patch("panoramabridge.requests.Session.request")
+    def test_get_file_info_success(self, mock_request, webdav_test_config):
+        """Test get_file_info with successful response."""
+        # Mock PROPFIND response
+        mock_response = Mock()
+        mock_response.status_code = 207
+        mock_response.text = """<?xml version="1.0" encoding="utf-8"?>
+        <multistatus xmlns="DAV:">
+            <response>
+                <href>/test/file.raw</href>
+                <propstat>
+                    <prop>
+                        <displayname>file.raw</displayname>
+                        <getcontentlength>1024</getcontentlength>
+                        <getlastmodified>Wed, 09 Aug 2025 10:30:00 GMT</getlastmodified>
+                        <getetag>"abc123def456"</getetag>
+                    </prop>
+                </propstat>
+            </response>
+        </multistatus>"""
+        mock_request.return_value = mock_response
+
+        client = WebDAVClient(**webdav_test_config)
+        info = client.get_file_info("/test/file.raw")
+
+        assert info is not None
+        assert info["exists"] is True
+        assert info["size"] == 1024
+        assert info["etag"] == "abc123def456"
+        assert info["last_modified"] == "Wed, 09 Aug 2025 10:30:00 GMT"
+
+        # Verify PROPFIND was called with correct headers and XML body
+        mock_request.assert_called_once()
+        call_args = mock_request.call_args
+        assert call_args[0][0] == "PROPFIND"
+        assert call_args[1]["headers"]["Depth"] == "0"
+        assert call_args[1]["headers"]["Content-Type"] == "application/xml"
+
+        # Verify XML body has correct encoding (no spaces around dash)
+        xml_body = call_args[1]["data"]
+        assert 'encoding="utf-8"' in xml_body
+        assert 'encoding="utf - 8"' not in xml_body  # Ensure malformed version is not present
+
+    @patch("panoramabridge.requests.Session.request")
+    def test_get_file_info_not_found(self, mock_request, webdav_test_config):
+        """Test get_file_info when file doesn't exist."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_request.return_value = mock_response
+
+        client = WebDAVClient(**webdav_test_config)
+        info = client.get_file_info("/test/nonexistent.raw")
+
+        assert info is not None
+        assert info["exists"] is False
+        assert info["path"] == "/test/nonexistent.raw"
+
+    @patch("panoramabridge.requests.Session.request")
+    def test_get_file_info_server_error(self, mock_request, webdav_test_config):
+        """Test get_file_info with server error."""
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_request.return_value = mock_response
+
+        client = WebDAVClient(**webdav_test_config)
+        info = client.get_file_info("/test/file.raw")
+
+        assert info is None
