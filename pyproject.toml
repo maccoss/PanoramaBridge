@@ -81,3 +81,15 @@ extend-ignore = [
 quote-style = "double"
 indent-style = "space"
 line-ending = "auto"
+
+[tool.pymarkdownlnt]
+# Markdown linting configuration - more reasonable rules for documentation
+plugins.md013.line_length = 120
+plugins.md013.code_blocks = false
+plugins.md013.tables = false
+plugins.md026.punctuation = ".,;:"
+disabled_rules = [
+    "MD024",  # no-duplicate-header (legitimate for changelogs)
+    "MD029",  # ol-prefix (ordered list numbering style)
+    "MD036",  # no-emphasis-as-heading (emphasis for subsections is fine)
+]
