@@ -3,8 +3,8 @@
 panoramabridge.log
 build/*
 /.pytest_cache
-/tests/__pycache__
+/tests/__pycache__/
 /htmlcov
 .coverage
-/__pycache__
+/__pycache__/
 *.pyc
