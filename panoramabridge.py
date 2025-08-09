@@ -36,7 +36,15 @@ from urllib.parse import quote, unquote, urljoin
 
 # WebDAV client using requests library
 import requests
-from PyQt6.QtCore import QMetaObject, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import (
+    Q_ARG,
+    QMetaObject,
+    Qt,
+    QThread,
+    QTimer,
+    pyqtSignal,
+    pyqtSlot,
+)
 from PyQt6.QtGui import QFont, QIcon
 
 # Third-party imports (must be installed via pip)
