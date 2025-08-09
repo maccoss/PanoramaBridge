@@ -121,17 +121,17 @@ class TestLargeFileProgressFixes:
 
             if bytes_uploaded >= total_size:
                 # Should be capped to prevent 100%
-                assert (
-                    reported_bytes < total_size
-                ), f"Chunked upload showed 100% prematurely: {reported_bytes}/{total_size}"
-                assert (
-                    reported_bytes == total_size - 1
-                ), f"Should cap at total_size-1, got {reported_bytes}"
+                assert reported_bytes < total_size, (
+                    f"Chunked upload showed 100% prematurely: {reported_bytes}/{total_size}"
+                )
+                assert reported_bytes == total_size - 1, (
+                    f"Should cap at total_size-1, got {reported_bytes}"
+                )
             else:
                 # Should report actual progress
-                assert (
-                    reported_bytes == bytes_uploaded
-                ), f"Should report actual progress, got {reported_bytes} vs {bytes_uploaded}"
+                assert reported_bytes == bytes_uploaded, (
+                    f"Should report actual progress, got {reported_bytes} vs {bytes_uploaded}"
+                )
 
     def test_timed_progress_file_caps_at_99(self):
         """Test that TimedProgressFile doesn't report 100% until file reading is complete"""
@@ -162,14 +162,14 @@ class TestLargeFileProgressFixes:
 
             if bytes_read >= total_size:
                 # Should be capped to prevent 100%
-                assert (
-                    reported_bytes < total_size
-                ), f"TimedProgressFile showed 100% during reading: {reported_bytes}/{total_size}"
+                assert reported_bytes < total_size, (
+                    f"TimedProgressFile showed 100% during reading: {reported_bytes}/{total_size}"
+                )
                 percentage = (reported_bytes / total_size) * 100
                 assert percentage < 100, f"Percentage should be < 100%, got {percentage}%"
             else:
                 # Should report actual progress
-                assert reported_bytes == bytes_read, f"Should report actual reading progress"
+                assert reported_bytes == bytes_read, "Should report actual reading progress"
 
     def test_upload_completion_sequence(self):
         """Test the complete sequence for large file uploads with proper completion"""
@@ -213,9 +213,9 @@ class TestLargeFileProgressFixes:
         simulate_upload_progress(3000000000, file_size)  # 100% but not completed
 
         # Verify no progress reached 100% yet
-        assert all(
-            p < 100 for p in progress_history
-        ), f"Progress reached 100% before completion: {max(progress_history)}%"
+        assert all(p < 100 for p in progress_history), (
+            f"Progress reached 100% before completion: {max(progress_history)}%"
+        )
 
         # Now mark upload as completed (this happens in FileProcessor after WebDAV returns success)
         upload_completed = True
@@ -223,9 +223,9 @@ class TestLargeFileProgressFixes:
         mock_status_update("file.raw", "Upload complete", "/test/file.raw")
 
         # Verify final progress is 100%
-        assert (
-            progress_history[-1] == 100
-        ), f"Final progress should be 100%, got {progress_history[-1]}%"
+        assert progress_history[-1] == 100, (
+            f"Final progress should be 100%, got {progress_history[-1]}%"
+        )
 
         # Verify status progression
         assert "Upload complete" in status_history
@@ -278,32 +278,32 @@ class TestLargeFileProgressFixes:
         large_progress, large_statuses = simulate_file_upload_sequence(10 * 1024 * 1024 * 1024)
 
         # Verify both have same progression pattern
-        assert len(small_progress) == len(
-            large_progress
-        ), "Small and large files should have same number of progress updates"
-        assert len(small_statuses) == len(
-            large_statuses
-        ), "Small and large files should have same number of status updates"
+        assert len(small_progress) == len(large_progress), (
+            "Small and large files should have same number of progress updates"
+        )
+        assert len(small_statuses) == len(large_statuses), (
+            "Small and large files should have same number of status updates"
+        )
 
         # Verify both cap at same point before completion
         pre_completion_small = small_progress[:-1]  # All except final 100%
         pre_completion_large = large_progress[:-1]  # All except final 100%
 
-        assert all(
-            p < 100 for p in pre_completion_small
-        ), "Small file progress should be capped before completion"
-        assert all(
-            p < 100 for p in pre_completion_large
-        ), "Large file progress should be capped before completion"
+        assert all(p < 100 for p in pre_completion_small), (
+            "Small file progress should be capped before completion"
+        )
+        assert all(p < 100 for p in pre_completion_large), (
+            "Large file progress should be capped before completion"
+        )
 
         # Verify both reach 100% at the end
         assert small_progress[-1] == 100, "Small file should reach 100%"
         assert large_progress[-1] == 100, "Large file should reach 100%"
 
         # Verify status message patterns are identical
-        assert (
-            small_statuses == large_statuses
-        ), "Small and large files should have identical status progressions"
+        assert small_statuses == large_statuses, (
+            "Small and large files should have identical status progressions"
+        )
 
 
 class TestProgressMessageRefinements:

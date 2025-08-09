@@ -80,9 +80,9 @@ class TestQueueTableIntegrationLogic:
                         display_path = f"./{relative_path.replace(os.sep, '/').rsplit('/', 1)[0]}"
 
             if expected_display != filepath:  # Only check when we expect transformation
-                assert (
-                    display_path == expected_display
-                ), f"Failed for {filepath}: got {display_path}, expected {expected_display}"
+                assert display_path == expected_display, (
+                    f"Failed for {filepath}: got {display_path}, expected {expected_display}"
+                )
 
 
 class TestPersistentChecksumCachingLogic:

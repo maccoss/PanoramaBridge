@@ -335,7 +335,7 @@ class TestCachePersistenceWorkflow:
 
         # Simulate filling cache beyond capacity
         for i in range(1200):
-            cache_key = f"file{i}.raw:{i*1000}:164099{i%10}000"
+            cache_key = f"file{i}.raw:{i * 1000}:164099{i % 10}000"
             cache[cache_key] = f"checksum_{i}"
 
         # Verify cache exceeded capacity

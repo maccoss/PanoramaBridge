@@ -224,16 +224,16 @@ class TestProgressFileIterator:
             chunks_large = list(iterator)
 
         # Verify both reach 100% but with different granularity
-        assert len(progress_calls_small) > len(
-            progress_calls_large
-        ), "Small chunks should generate more progress updates"
+        assert len(progress_calls_small) > len(progress_calls_large), (
+            "Small chunks should generate more progress updates"
+        )
         assert progress_calls_small[-1][0] == file_size, "Small chunks should reach full file size"
         assert progress_calls_large[-1][0] == file_size, "Large chunks should reach full file size"
 
         # Verify chunk counts are different
-        assert len(chunks_small) > len(
-            chunks_large
-        ), "Small chunks should create more chunk objects"
+        assert len(chunks_small) > len(chunks_large), (
+            "Small chunks should create more chunk objects"
+        )
 
 
 class TestFileProcessorProgress:
@@ -368,9 +368,9 @@ class TestWebDAVClientProgress:
         assert error == ""
 
         # Verify progress callback was called at least once (for large files it might use different upload strategy)
-        assert (
-            len(progress_calls) >= 1
-        ), f"Progress callback should be called at least once, got {len(progress_calls)} calls"
+        assert len(progress_calls) >= 1, (
+            f"Progress callback should be called at least once, got {len(progress_calls)} calls"
+        )
 
         # Verify initial call starts with 0 progress
         first_call = progress_calls[0]
@@ -470,9 +470,9 @@ class TestProgressIntegration:
         for i in range(1, len(progress_updates)):
             prev_percent = progress_updates[i - 1][3]
             curr_percent = progress_updates[i][3]
-            assert (
-                curr_percent >= prev_percent
-            ), f"Progress should be monotonic: {prev_percent} -> {curr_percent}"
+            assert curr_percent >= prev_percent, (
+                f"Progress should be monotonic: {prev_percent} -> {curr_percent}"
+            )
 
 
 if __name__ == "__main__":

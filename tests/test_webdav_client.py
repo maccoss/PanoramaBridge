@@ -3,6 +3,7 @@ Tests for WebDAV client functionality.
 """
 
 import os
+
 # Import the module under test
 import sys
 import tempfile

@@ -1,13 +1,15 @@
 """
 Pytest configuration and fixtures for PanoramaBridge tests.
 """
-import pytest
-import tempfile
-import shutil
-import os
+
 import hashlib
+import os
 import queue
+import shutil
+import tempfile
 from unittest.mock import Mock
+
+import pytest
 
 
 @pytest.fixture
@@ -23,7 +25,7 @@ def sample_file(temp_dir):
     """Create a sample test file with known content."""
     file_path = os.path.join(temp_dir, "test_file.raw")
     content = b"Sample mass spectrometry data file content for testing"
-    with open(file_path, 'wb') as f:
+    with open(file_path, "wb") as f:
         f.write(content)
     return file_path, content
 
@@ -34,7 +36,7 @@ def large_sample_file(temp_dir):
     file_path = os.path.join(temp_dir, "large_test_file.raw")
     # Create a 10MB file
     content = b"0" * (10 * 1024 * 1024)
-    with open(file_path, 'wb') as f:
+    with open(file_path, "wb") as f:
         f.write(content)
     return file_path, content
 
@@ -44,7 +46,7 @@ def mock_webdav_client():
     """Create a mock WebDAV client for testing."""
     client = Mock()
     client.test_connection.return_value = True
-    client.get_file_info.return_value = {'exists': False}
+    client.get_file_info.return_value = {"exists": False}
     client.upload_file_chunked.return_value = (True, "")
     client.create_directory.return_value = True
     client.store_checksum.return_value = True
@@ -61,7 +63,7 @@ def mock_app_instance():
     app.processing_files = set()
     app.created_directories = set()
     app.file_remote_paths = {}
-    
+
     # Mock UI controls for locked file handling
     app.enable_locked_retry_check = Mock()
     app.enable_locked_retry_check.isChecked.return_value = False
@@ -71,7 +73,7 @@ def mock_app_instance():
     app.retry_interval_spin.value.return_value = 5  # 5 seconds for testing
     app.max_retries_spin = Mock()
     app.max_retries_spin.value.return_value = 3
-    
+
     return app
 
 
@@ -84,13 +86,13 @@ def file_queue():
 @pytest.fixture
 def sample_extensions():
     """Standard file extensions for testing."""
-    return ['raw', 'wiff', 'mzML', 'mzXML']
+    return ["raw", "wiff", "mzML", "mzXML"]
 
 
 def calculate_test_checksum(filepath: str) -> str:
     """Calculate SHA256 checksum for test files."""
     hash_obj = hashlib.sha256()
-    with open(filepath, 'rb') as f:
+    with open(filepath, "rb") as f:
         while chunk := f.read(8192):
             hash_obj.update(chunk)
     return hash_obj.hexdigest()
@@ -100,8 +102,8 @@ def calculate_test_checksum(filepath: str) -> str:
 def webdav_test_config():
     """Test configuration for WebDAV connection."""
     return {
-        'url': 'https://test.example.com',
-        'username': 'test_user',
-        'password': 'test_password',
-        'auth_type': 'basic'
+        "url": "https://test.example.com",
+        "username": "test_user",
+        "password": "test_password",
+        "auth_type": "basic",
     }

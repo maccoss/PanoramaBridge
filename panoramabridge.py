@@ -22,6 +22,7 @@ import json  # For configuration file storage
 import logging
 import os
 import queue  # For thread-safe file processing queue
+
 # Standard library imports
 import sys
 import tempfile  # For temporary file operations during verification
@@ -30,21 +31,46 @@ import time  # For file stability checks and timestamps
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 from urllib.parse import quote, unquote, urljoin
 
 # WebDAV client using requests library
 import requests
 from PyQt6.QtCore import Q_ARG, QMetaObject, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QFont, QIcon
+
 # Third-party imports (must be installed via pip)
-from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout,
-                             QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow,
-                             QMenu, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSpinBox,
-                             QTableWidget, QTableWidgetItem, QTabWidget, QTextEdit, QTreeWidget,
-                             QTreeWidgetItem, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QRadioButton,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QTextEdit,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 from watchdog.events import FileSystemEventHandler
+
 # File monitoring using watchdog library
 from watchdog.observers import Observer
 
@@ -151,7 +177,7 @@ class WebDAVClient:
             logger.error(f"Connection test failed: {e}")
             return False
 
-    def list_directory(self, path: str = "/") -> List[Dict]:
+    def list_directory(self, path: str = "/") -> list[dict]:
         """List contents of a WebDAV directory"""
         logger.info(f"list_directory called with path: {path}")
         url = urljoin(self.url, quote(path))
@@ -234,7 +260,7 @@ class WebDAVClient:
         logger.debug(f"Including item: {item_name} (is_dir: {is_dir})")
         return True
 
-    def _parse_propfind_response(self, xml_response: str, base_path: str) -> List[Dict]:
+    def _parse_propfind_response(self, xml_response: str, base_path: str) -> list[dict]:
         """Parse PROPFIND XML response"""
         logger.info(f"Parsing PROPFIND response for base_path: {base_path}")
         items = []
@@ -309,7 +335,7 @@ class WebDAVClient:
         logger.info(f"Total items returned for {base_path}: {len(items)}")
         return items
 
-    def get_file_info(self, path: str) -> Optional[Dict]:
+    def get_file_info(self, path: str) -> dict | None:
         """Get information about a remote file"""
         url = urljoin(self.url, quote(path))
 
@@ -377,7 +403,7 @@ class WebDAVClient:
             logger.error(f"Error getting file info for {path}: {e}")
             return None
 
-    def download_file_head(self, path: str, size: int = 8192) -> Optional[bytes]:
+    def download_file_head(self, path: str, size: int = 8192) -> bytes | None:
         """Download the first few bytes of a remote file for checksum comparison"""
         url = urljoin(self.url, quote(path))
 
@@ -394,7 +420,7 @@ class WebDAVClient:
             logger.error(f"Error downloading file head for {path}: {e}")
             return None
 
-    def download_file(self, remote_path: str, local_path: str) -> Tuple[bool, str]:
+    def download_file(self, remote_path: str, local_path: str) -> tuple[bool, str]:
         """Download a complete file from the WebDAV server
         Returns: (success, error_message)
         """
@@ -448,7 +474,7 @@ class WebDAVClient:
 
     def upload_file_chunked(
         self, local_path: str, remote_path: str, progress_callback=None
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """Upload a file in chunks with progress callback using manual HTTP chunking"""
         try:
             file_size = os.path.getsize(local_path)
@@ -601,7 +627,6 @@ class WebDAVClient:
                         if time_elapsed >= self.report_interval or bytes_changed >= (
                             1024 * 1024
                         ):  # 1MB threshold
-
                             if self.progress_callback:
                                 # Don't report 100% until file is completely read
                                 report_bytes = self.bytes_read
@@ -660,7 +685,7 @@ class WebDAVClient:
             logger.error(f"Error storing checksum for {file_path}: {e}")
             return False
 
-    def get_stored_checksum(self, file_path: str) -> Optional[str]:
+    def get_stored_checksum(self, file_path: str) -> str | None:
         """Retrieve stored checksum for a file from the remote server"""
         try:
             checksum_path = f"{file_path}.checksum"
@@ -702,7 +727,7 @@ class FileMonitorHandler(FileSystemEventHandler):
 
     def __init__(
         self,
-        extensions: List[str],
+        extensions: list[str],
         file_queue: queue.Queue,
         monitor_subdirs: bool = True,
         app_instance=None,
@@ -839,7 +864,7 @@ class FileMonitorHandler(FileSystemEventHandler):
                             # Update tracking
                             self.pending_files[filepath] = (current_size, current_time)
                             logger.debug(f"File size changed, continuing to monitor: {filepath}")
-                    except (OSError, IOError, PermissionError) as e:
+                    except (OSError, PermissionError) as e:
                         # Handle file access errors gracefully - common during copying
                         logger.warning(
                             f"File access error for {filepath} (likely being copied): {e}"
@@ -929,7 +954,7 @@ class FileMonitorHandler(FileSystemEventHandler):
                                                 logger.info(
                                                     f"File already queued or processing, skipping: {filepath}"
                                                 )
-                                    except (OSError, IOError, PermissionError) as e:
+                                    except (OSError, PermissionError) as e:
                                         logger.warning(
                                             f"File access error during delayed check for {filepath}: {e}"
                                         )
@@ -1015,7 +1040,7 @@ class FileMonitorHandler(FileSystemEventHandler):
                                                     logger.info(
                                                         f"File already queued or processing, skipping: {filepath}"
                                                     )
-                                        except (OSError, IOError, PermissionError) as e:
+                                        except (OSError, PermissionError) as e:
                                             logger.warning(
                                                 f"File access error during immediate check for {filepath}: {e}"
                                             )
@@ -1042,7 +1067,7 @@ class FileMonitorHandler(FileSystemEventHandler):
                                 f"Test environment detected, using immediate check for {filepath}"
                             )
 
-                    except (OSError, IOError, PermissionError) as e:
+                    except (OSError, PermissionError) as e:
                         logger.warning(
                             f"File access error when starting to monitor {filepath} (likely being copied): {e}"
                         )
@@ -1149,7 +1174,7 @@ class FileProcessor(QThread):
         self.running = True  # Control flag for thread loop
         self.preserve_structure = True  # Whether to preserve local directory structure
         self.local_base_path = ""  # Local directory base path
-        self.conflict_resolution: Optional[str] = None  # User's conflict resolution choice
+        self.conflict_resolution: str | None = None  # User's conflict resolution choice
         self.apply_to_all = False  # Apply resolution to all conflicts
 
     def set_webdav_client(self, client: WebDAVClient, remote_path: str):
@@ -1173,7 +1198,7 @@ class FileProcessor(QThread):
         self.local_base_path = path
 
     def calculate_checksum(
-        self, filepath: str, algorithm: str = "sha256", chunk_size: Optional[int] = None
+        self, filepath: str, algorithm: str = "sha256", chunk_size: int | None = None
     ) -> str:
         """
         Calculate file checksum for integrity verification with local caching.
@@ -1251,7 +1276,7 @@ class FileProcessor(QThread):
 
     def verify_uploaded_file(
         self, local_path: str, remote_path: str, expected_checksum: str
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """Verify uploaded file integrity by downloading and comparing checksums
         Returns: (is_verified, message)
         """
@@ -1319,8 +1344,8 @@ class FileProcessor(QThread):
             return False, f"Verification error: {str(e)}"
 
     def compare_files(
-        self, local_path: str, remote_info: Dict, local_checksum: str
-    ) -> Tuple[str, Dict]:
+        self, local_path: str, remote_info: dict, local_checksum: str
+    ) -> tuple[str, dict]:
         """Compare local and remote files to detect conflicts with smart checksum optimization
         Returns: (status, details) where status is 'identical', 'different', 'newer_local', 'newer_remote', 'new'
         """
@@ -1435,7 +1460,7 @@ class FileProcessor(QThread):
             # Fall back to date comparison
             return self._check_file_dates(comparison_details)
 
-    def _check_file_dates(self, details: Dict) -> Tuple[str, Dict]:
+    def _check_file_dates(self, details: dict) -> tuple[str, dict]:
         """Check file modification dates to determine upload preference"""
         local_mtime = details.get("local_mtime", 0)
         remote_mtime = details.get("remote_mtime", 0)
@@ -1556,7 +1581,7 @@ class FileProcessor(QThread):
             if self.app_instance:
                 self.app_instance.processing_files.discard(filepath)
 
-    def is_file_accessible(self, filepath: str) -> Tuple[bool, str]:
+    def is_file_accessible(self, filepath: str) -> tuple[bool, str]:
         """Check if a file can be opened for reading"""
         try:
             with open(filepath, "rb") as f:
@@ -1565,7 +1590,7 @@ class FileProcessor(QThread):
             return True, ""
         except PermissionError as e:
             return False, f"Permission denied: {str(e)}"
-        except IOError as e:
+        except OSError as e:
             return False, f"IO error: {str(e)}"
         except Exception as e:
             return False, f"Access error: {str(e)}"
@@ -1782,7 +1807,7 @@ class FileProcessor(QThread):
             self.status_update.emit(filename, "Calculating checksum...", filepath)
             try:
                 local_checksum = self.calculate_checksum(filepath)
-            except (PermissionError, IOError) as e:
+            except (OSError, PermissionError) as e:
                 # File became locked during checksum calculation (locked file handling always enabled)
                 error_msg = f"File locked during checksum: {str(e)}"
                 self.schedule_locked_file_retry(filepath, remote_path, filename, error_msg)
@@ -1931,7 +1956,7 @@ class FileProcessor(QThread):
             self.status_update.emit(filename, "Calculating checksum...", filepath)
             try:
                 local_checksum = self.calculate_checksum(filepath)
-            except (PermissionError, IOError) as e:
+            except (OSError, PermissionError) as e:
                 # File became locked during checksum calculation - always handle locked files
                 error_msg = f"File locked during checksum: {str(e)}"
                 self.schedule_locked_file_retry(filepath, remote_path, filename, error_msg)
@@ -2074,7 +2099,7 @@ class FileProcessor(QThread):
 class FileConflictDialog(QDialog):
     """Dialog for resolving file conflicts"""
 
-    def __init__(self, filename: str, conflict_details: Dict, parent=None):
+    def __init__(self, filename: str, conflict_details: dict, parent=None):
         super().__init__(parent)
         self.filename = filename
         self.conflict_details = conflict_details
@@ -2376,7 +2401,7 @@ class RemoteBrowserDialog(QDialog):
 
                 # Check recent log entries for specific error details
                 try:
-                    with open("panoramabridge.log", "r") as f:
+                    with open("panoramabridge.log") as f:
                         log_lines = f.readlines()
                         recent_errors = [
                             line
@@ -2462,9 +2487,7 @@ class MainWindow(QMainWindow):
         self.processing_files = set()  # Track files currently being processed
         self.created_directories = set()  # Cache of successfully created remote directories
         self.failed_files = {}  # Track files that failed verification for re-upload
-        self.file_remote_paths = (
-            {}
-        )  # Track filepath -> remote_path mappings to prevent duplicate uploads
+        self.file_remote_paths = {}  # Track filepath -> remote_path mappings to prevent duplicate uploads
         self.local_checksum_cache = {}  # Local checksum cache to avoid recalculation
 
         # Load application configuration from disk
@@ -3021,7 +3044,7 @@ class MainWindow(QMainWindow):
 
         # Try to read the log file
         try:
-            with open("panoramabridge.log", "r") as f:
+            with open("panoramabridge.log") as f:
                 log_content.setText(f.read())
         except FileNotFoundError:
             log_content.setText(
@@ -3249,7 +3272,7 @@ class MainWindow(QMainWindow):
                     f"{datetime.now().strftime('%H:%M:%S')} - OS file events only (backup polling disabled)"
                 )
 
-    def scan_existing_files(self, directory: str, extensions: List[str], recursive: bool):
+    def scan_existing_files(self, directory: str, extensions: list[str], recursive: bool):
         """Scan directory for existing files and add them to the queue"""
         logger.info(f"Scanning existing files in {directory}")
         logger.info(f"Recursive scanning: {recursive}")
@@ -3510,7 +3533,7 @@ class MainWindow(QMainWindow):
                 and stat1.st_mtime == stat2.st_mtime
                 and time.time() - stat1.st_mtime > stability_time
             )
-        except (OSError, IOError):
+        except OSError:
             return False
 
     @pyqtSlot(str, str, str)
@@ -3602,7 +3625,6 @@ class MainWindow(QMainWindow):
         if unique_key in self.transfer_rows:
             row = self.transfer_rows[unique_key]
             if row < self.transfer_table.rowCount():
-
                 status = "Complete" if success else "Failed"
                 status_item = self.transfer_table.item(row, 1)  # Status is now column 1
                 message_item = self.transfer_table.item(row, 3)  # Message is now column 3
@@ -3916,7 +3938,7 @@ class MainWindow(QMainWindow):
 
         if config_file.exists():
             try:
-                with open(config_file, "r") as f:
+                with open(config_file) as f:
                     return json.load(f)
             except Exception:
                 pass
@@ -3926,7 +3948,7 @@ class MainWindow(QMainWindow):
             if old_config_file.exists():
                 logger.info("Found old configuration, migrating to new location...")
                 try:
-                    with open(old_config_file, "r") as f:
+                    with open(old_config_file) as f:
                         config = json.load(f)
 
                     # Create new config directory and save

@@ -33,10 +33,10 @@ def test_add_queued_file_to_table_method():
     filepath = "/test/directory/test_file.raw"
 
     # Mock all PyQt components that the method uses
-    with patch("panoramabridge.QProgressBar", return_value=mock_progress_bar), patch(
-        "panoramabridge.QTableWidgetItem", return_value=mock_table_item
+    with (
+        patch("panoramabridge.QProgressBar", return_value=mock_progress_bar),
+        patch("panoramabridge.QTableWidgetItem", return_value=mock_table_item),
     ):
-
         # Create a simplified version of the method that avoids PyQt calls
         def mock_add_queued_file_to_table(self, filepath):
             # Simulate the core logic without actual GUI operations
@@ -100,10 +100,11 @@ def test_save_config_includes_checksum_cache():
     mock_file.__enter__ = Mock(return_value=mock_file)
     mock_file.__exit__ = Mock(return_value=None)
 
-    with patch("builtins.open", return_value=mock_file), patch(
-        "json.dump"
-    ) as mock_json_dump, patch("pathlib.Path.mkdir"):
-
+    with (
+        patch("builtins.open", return_value=mock_file),
+        patch("json.dump") as mock_json_dump,
+        patch("pathlib.Path.mkdir"),
+    ):
         # Call save_config
         mock_main_window.save_config()
 

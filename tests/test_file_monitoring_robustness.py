@@ -123,7 +123,7 @@ class TestFileMonitoringRobustness:
             f.write("test content")
 
         # Mock os.path.getsize to raise IO error
-        with patch("os.path.getsize", side_effect=IOError("File locked")):
+        with patch("os.path.getsize", side_effect=OSError("File locked")):
             # This should not crash
             self.monitor._handle_file(test_file)
 
@@ -180,9 +180,9 @@ class TestFileMonitoringRobustness:
 
         # System should still be functioning despite thread error
         # File should be removed from pending due to error cleanup
-        assert (
-            test_file not in self.monitor.pending_files
-        ), "File should be cleaned up after thread error"
+        assert test_file not in self.monitor.pending_files, (
+            "File should be cleaned up after thread error"
+        )
 
     def test_concurrent_file_operations(self):
         """Test handling of concurrent file operations"""

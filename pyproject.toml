@@ -1,0 +1,83 @@
+[tool.ruff]
+# Ruff configuration for PanoramaBridge
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Enable specific rule sets
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings  
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "PIE",  # flake8-pie
+    "SIM",  # flake8-simplify
+    "RET",  # flake8-return
+]
+
+# Disable specific rules that are problematic for this project
+ignore = [
+    # Import related
+    "F401",   # Unused imports (many test imports are for fixtures)
+    "F841",   # Unused variables (test scaffolding)
+    "E402",   # Module import not at top (tests need sys.path mods)
+    
+    # PyQt6/Qt naming conventions
+    "N802",   # Function names should be lowercase (Qt uses camelCase)
+    "N803",   # Argument names should be lowercase (Qt uses camelCase)
+    "N806",   # Variable names should be lowercase (Qt uses camelCase)
+    "N815",   # Mixed case variable in class scope (Qt naming)
+    "N816",   # Mixed case variable in global scope (Qt naming)
+    
+    # Type annotations (compatibility)
+    "UP006",  # Use `list` instead of `List` for type annotations
+    "UP007",  # Use `X | Y` for type unions
+    
+    # Style preferences (readability over strict rules)
+    "RET504", # Unnecessary assignment before return (clarity)
+    "RET505", # Unnecessary `elif` after `return` (readability)
+    "RET506", # Unnecessary `elif` after `raise` (readability)
+    "SIM102", # Nested if statements (readability in complex cases)
+    "SIM103", # Return condition directly (readability) 
+    "SIM105", # Use contextlib.suppress (explicit is better)
+    "SIM108", # Use ternary operator (readability in complex cases)
+    "SIM113", # Use enumerate (not always clearer)
+    "SIM115", # Use context manager (test code patterns)
+    "SIM117", # Use single with statement (complex test setup)
+    
+    # Loop variables  
+    "B007",   # Loop control variables (common pattern)
+    
+    # Test-specific patterns
+    "B011",   # Don't use assert False (legitimate in tests)
+    "E712",   # Compare to True/False (acceptable in tests for clarity)
+    "PIE800", # Unnecessary `pass` statement (test scaffolding)
+    "PIE810", # Multiple startswith calls (readability)
+    
+    # Complex exception handling
+    "B025",   # Duplicate exception in try-except (legitimate patterns)
+]
+
+# Line length errors are mostly acceptable for long log messages
+extend-ignore = [
+    "E501",   # Line too long (we set line-length=100, some log messages are longer)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Additional ignores for test files only
+"tests/*" = [
+    "E501",   # Long lines acceptable in tests
+    "F841",   # Unused variables (test setup)
+    "SIM102", # Nested ifs (test readability)
+    "SIM103", # Return conditions (test clarity)
+]
+
+[tool.ruff.format]
+# Use Black-compatible formatting
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

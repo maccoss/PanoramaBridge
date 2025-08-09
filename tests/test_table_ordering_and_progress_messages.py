@@ -31,10 +31,11 @@ class TestTableOrderingAndProgressMessages:
     @pytest.fixture
     def main_window(self):
         """Create a MainWindow instance for testing with proper mocking"""
-        with patch("PyQt6.QtWidgets.QApplication.instance", return_value=Mock()), patch(
-            "PyQt6.QtWidgets.QMainWindow.__init__", return_value=None
-        ), patch("panoramabridge.MainWindow.__init__", return_value=None):
-
+        with (
+            patch("PyQt6.QtWidgets.QApplication.instance", return_value=Mock()),
+            patch("PyQt6.QtWidgets.QMainWindow.__init__", return_value=None),
+            patch("panoramabridge.MainWindow.__init__", return_value=None),
+        ):
             window = MainWindow()
 
             # Mock the transfer table and its methods

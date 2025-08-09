@@ -148,10 +148,11 @@ class TestPersistentChecksumCaching:
         main_window.get_conflict_resolution_setting.return_value = "ask"
 
         # Mock file operations
-        with patch("builtins.open", Mock()) as mock_open, patch(
-            "json.dump"
-        ) as mock_json_dump, patch("pathlib.Path.mkdir") as mock_mkdir:
-
+        with (
+            patch("builtins.open", Mock()) as mock_open,
+            patch("json.dump") as mock_json_dump,
+            patch("pathlib.Path.mkdir") as mock_mkdir,
+        ):
             # Call save_config
             main_window.save_config()
 

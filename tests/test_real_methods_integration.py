@@ -304,7 +304,7 @@ class TestEndToEndCacheWorkflow:
             load_window = MagicMock()
 
             # Read the saved config
-            with open(temp_config_path, "r") as f:
+            with open(temp_config_path) as f:
                 load_window.config = json.load(f)
 
             # Mock UI components for load_settings

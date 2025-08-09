@@ -4,6 +4,7 @@ Tests only functionality that actually exists in the implementation.
 """
 
 import os
+
 # Import the module under test
 import sys
 import tempfile

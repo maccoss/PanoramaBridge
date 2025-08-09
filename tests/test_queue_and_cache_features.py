@@ -395,7 +395,7 @@ class TestCacheIntegration:
 
         try:
             # Read the config back
-            with open(config_file, "r") as f:
+            with open(config_file) as f:
                 loaded_config = json.load(f)
 
             # Verify the cache data roundtrip
