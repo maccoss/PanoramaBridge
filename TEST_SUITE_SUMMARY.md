@@ -74,6 +74,12 @@ The test suite validates multiple critical aspects:
 - `test_no_crash_with_none_app_instance`: Robustness when app_instance is None
 - `test_file_queuing_with_ui_updates`: Integration of file queuing and UI updates
 
+### 5. `test_upload_progress.py`
+**Upload Progress Tracking** - Validates progress reporting functionality
+
+#### TestUploadProgress
+- `test_upload_progress`: Tests upload progress tracking and reporting mechanisms
+
 ## Key Improvements Validated
 
 ### ✅ Table Ordering
@@ -127,11 +133,12 @@ The test suite validates multiple critical aspects:
 
 ## Current Test Results
 
-**Total Tests**: 42 tests across 4 test files
+**Total Tests**: 43 tests across 5 test files
 - **Table & UI Logic**: 12 tests ✅ PASS
 - **Workflow Integration**: 8 tests ✅ PASS  
-- **File Monitoring Robustness**: 18 tests ✅ PASS
+- **File Monitoring Robustness**: 9 tests ✅ PASS
 - **Thread Safety**: 5 tests ✅ PASS
+- **Upload Progress**: 1 test ✅ PASS
 
 ## Critical Issues Resolved
 
@@ -164,6 +171,7 @@ pytest tests/test_file_monitoring_robustness.py -v    # Crash prevention
 pytest tests/test_thread_safe_ui_updates.py -v       # Thread safety
 pytest tests/test_table_ordering_logic.py -v         # UI logic
 pytest tests/test_workflow_integration.py -v         # End-to-end workflows
+pytest tests/test_upload_progress.py -v              # Progress tracking
 ```
 
 Run critical robustness tests:
