@@ -6,6 +6,7 @@ A Python Qt6 application for monitoring local directories and automatically tran
 - **[Installation](#installation-steps)** - Get started with setup
 - **[User Guide](#user-interface)** - How to use the application
 - **[Windows Build](build_scripts/BUILD_WINDOWS.md)** - Create executable
+- **[GitHub Actions](build_scripts/GITHUB_ACTIONS.md)** - Automated builds and releases
 - **[Technical Docs](#additional-documentation)** - Performance and optimization details
 
 ## Features

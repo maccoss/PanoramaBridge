@@ -1,28 +1,34 @@
-# GitHub Actions Build Setup
+# GitHub Actions CI/CD Setup
 
-This directory contains GitHub Actions workflows for automatically building PanoramaBridge.
+This document explains the automated build system for PanoramaBridge using GitHub Actions.
+
+## Overview
+
+Two workflows automate building Windows executables:
+- **`build-windows.yml`** - Continuous Integration (builds on every push)
+- **`release.yml`** - Release Builder (creates tagged releases)
 
 ## Workflows
 
-### 1. `build-windows.yml` - Continuous Integration
+### Continuous Integration (`build-windows.yml`)
 **Triggers:**
 - Every push to `main` branch
 - Every pull request to `main` branch  
 - Manual trigger from GitHub UI
 - New releases
 
-**What it does:**
+**Actions:**
 - Builds Windows executable on every code change
 - Runs on Windows runner with Python 3.12
 - Uploads executable as artifact for 30 days
 - Automatically attaches executable to GitHub releases
 
-### 2. `release.yml` - Release Builder  
+### Release Builder (`release.yml`)
 **Triggers:**
 - Git tags starting with `v` (e.g., `v1.0.0`)
 - Manual trigger with release options
 
-**What it does:**
+**Actions:**
 - Builds production-ready Windows executable
 - Runs tests before building
 - Creates detailed build information
@@ -30,17 +36,9 @@ This directory contains GitHub Actions workflows for automatically building Pano
 - Creates GitHub releases with download files
 - Includes SHA256 checksums for security
 
-## Usage
+## Creating Releases
 
-### Automatic Builds
-Every time you push code to `main`, GitHub will automatically:
-1. Build a new Windows executable
-2. Upload it as a downloadable artifact
-3. Keep it available for 30 days
-
-### Creating Releases
-
-#### Method 1: Git Tags (Recommended)
+### Method 1: Git Tags (Recommended)
 ```bash
 # Create and push a version tag
 git tag v1.0.0
@@ -48,7 +46,7 @@ git push origin v1.0.0
 ```
 This automatically creates a GitHub release with the executable.
 
-#### Method 2: Manual Release
+### Method 2: Manual Release
 1. Go to your GitHub repository
 2. Click "Actions" tab
 3. Select "Release Builder" workflow
@@ -59,15 +57,15 @@ This automatically creates a GitHub release with the executable.
    - Release name: `PanoramaBridge v1.0.0`
 6. Click "Run workflow"
 
-### Downloading Built Executables
+## Downloading Built Executables
 
-#### From Artifacts (Development Builds)
+### From Artifacts (Development Builds)
 1. Go to "Actions" tab in GitHub
 2. Click on any completed workflow run
 3. Scroll down to "Artifacts" section
 4. Download `PanoramaBridge-Windows-Build-XXX.zip`
 
-#### From Releases (Production Builds)  
+### From Releases (Production Builds)  
 1. Go to "Releases" section on main repository page
 2. Download `PanoramaBridge.exe` from latest release
 3. Verify SHA256 hash if needed for security
@@ -105,12 +103,3 @@ Check the Actions tab for error logs:
 - Large file sizes may take time to upload/download
 - Artifacts expire (30 days for CI, 90 days for releases)
 - Use releases for long-term downloads
-
-## Future Enhancements
-
-Possible improvements:
-- Code signing for trusted executables
-- Multi-OS builds (Linux, macOS)
-- Automated testing before builds
-- Version number automation
-- Build notifications
