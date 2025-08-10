@@ -151,9 +151,11 @@ jobs:
           4. Start monitoring your files!
           
           **What's New:**
-          - Removed unused chunk size UI setting
-          - Improved adaptive chunking based on file size
-          - Enhanced thread safety for file monitoring
+          - Fixed an infinite loop bug
+          - Much better remote file integrity check
+          - Improved documentation
+          - Significantly improved the logic for checking for file conflicts
+          - Better handling of OS events
           
           **System Requirements:**
           - Windows 11 (recommended) or Windows 10
@@ -161,3 +163,4 @@ jobs:
           
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
