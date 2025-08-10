@@ -199,7 +199,7 @@ class WebDAVClient:
         headers = {"Depth": "1", "Content-Type": "application/xml"}
 
         # PROPFIND request body
-        body = """<?xml version="1.0" encoding="utf - 8"?>
+        body = """<?xml version="1.0" encoding="utf-8"?>
         <propfind xmlns="DAV:">
             <prop>
                 <displayname/>
@@ -685,7 +685,7 @@ class WebDAVClient:
             url = urljoin(self.url + "/", checksum_path.lstrip("/"))
 
             # Upload checksum as a small text file
-            response = self.session.put(url, data=checksum.encode("utf - 8"))
+            response = self.session.put(url, data=checksum.encode("utf-8"))
 
             if response.status_code in [200, 201, 204]:
                 logger.debug(f"Stored checksum for {file_path}: {checksum}")
