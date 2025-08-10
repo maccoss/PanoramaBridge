@@ -6,7 +6,7 @@
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
     "python.testing.autoTestDiscoverOnSaveEnabled": true,
-    "python.defaultInterpreterPath": "/mnt/d/GitHub-Repo/maccoss/PanoramaBridge/.venv/bin/python",
+    "python.defaultInterpreterPath": ".venv/bin/python",
     "python.terminal.activateEnvironment": true,
     
     // Test discovery and execution settings

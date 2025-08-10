@@ -7,7 +7,8 @@ A Python Qt6 application for monitoring local directories and automatically tran
 - **[User Guide](#user-interface)** - How to use the application
 - **[Windows Build](build_scripts/BUILD_WINDOWS.md)** - Create executable
 - **[GitHub Actions](build_scripts/GITHUB_ACTIONS.md)** - Automated builds and releases
-- **[Technical Docs](#additional-documentation)** - Performance and optimization details
+- **[Technical Docs](docs/README.md)** - Performance and optimization details
+- **[Demo Scripts](demo_scripts/README.md)** - Example scripts and diagnostic tools
 
 ## Features
 
@@ -581,19 +582,22 @@ Application logs are saved to: `panoramabridge.log`
 ## Additional Documentation
 
 ### Technical Documentation
-- **[Checksum Caching Implementation](CHECKSUM_CACHING_SUMMARY.md)** - Details about the local checksum caching system that provides dramatic performance improvements
-- **[File Monitoring Optimization](FILE_MONITORING_OPTIMIZATION.md)** - Technical details about the optimized file monitoring system and performance benchmarks
-- **[File Monitoring Robustness](FILE_MONITORING_ROBUSTNESS_IMPROVEMENTS.md)** - Thread safety and robustness improvements for file monitoring
-- **[Queue and Cache Implementation](QUEUE_CACHE_IMPLEMENTATION_SUMMARY.md)** - Transfer queue management and persistent caching features
+- **[Checksum Caching Implementation](docs/CHECKSUM_CACHING_SUMMARY.md)** - Details about the local checksum caching system that provides dramatic performance improvements
+- **[File Monitoring Optimization](docs/FILE_MONITORING_OPTIMIZATION.md)** - Technical details about the optimized file monitoring system and performance benchmarks
+- **[File Monitoring Robustness](docs/FILE_MONITORING_ROBUSTNESS_IMPROVEMENTS.md)** - Thread safety and robustness improvements for file monitoring
+- **[Queue and Cache Implementation](docs/QUEUE_CACHE_IMPLEMENTATION_SUMMARY.md)** - Transfer queue management and persistent caching features
 
 ### Development and Testing
-- **[Test Suite Documentation](TEST_SUITE_SUMMARY.md)** - Comprehensive test coverage and testing methodology
-- **[Test Setup Guide](TEST_SETUP.md)** - Instructions for setting up and running tests
+- **[Test Suite Documentation](docs/TEST_SUITE_SUMMARY.md)** - Comprehensive test coverage and testing methodology
+- **[Test Setup Guide](docs/TEST_SETUP.md)** - Instructions for setting up and running tests
 
 ### Build and Deployment
 - **[Windows Build Instructions](build_scripts/BUILD_WINDOWS.md)** - Complete guide for building Windows executables
 - **[GitHub Actions CI/CD](build_scripts/GITHUB_ACTIONS.md)** - Automated builds and releases
 - **[Build Scripts Overview](build_scripts/README.md)** - Build automation and deployment tools
+
+### Demo Scripts and Examples
+- **[Demo Scripts Overview](demo_scripts/README.md)** - Example scripts and diagnostic tools for development and testing
 
 ## Support and Resources
 
