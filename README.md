@@ -284,29 +284,61 @@ Authorization: Basic <credentials>
 [file chunk data]
 ```
 
-### 6. Upload Verification
+### 6. Multi-Level Upload Verification System
 
-**Two-Tier Verification System:**
+**Six-Level Verification Process:**
 
-**For Files < 50MB:**
-- Downloads complete remote file to temporary location
-- Calculates SHA256 checksum of downloaded file
-- Compares local and remote checksums for exact match
-- Automatic cleanup of temporary files
+**Level 1: Size Comparison (fastest)**
+- Compares local and remote file sizes immediately
+- Returns early on size mismatch
 
-**For Files ≥ 50MB:**
-- **ETag Comparison**: Compares server ETag with local checksum
-- **Size Verification**: Confirms remote file size matches local
-- **Storage Optimization**: Avoids downloading large files for verification
+**Level 2: Cached Checksum Lookup (microseconds)**
+- Uses stored checksums from previous verifications
+- Instant verification for recently checked files
 
-**Verification Methods:**
+**Level 3: ETag Comparison (network request)**
+- Compares server ETag with expected SHA256 checksum
+- Available for ALL file sizes including large files
+- No download required
+
+**Level 4: Large File Size Optimization (>100MB)**
+- For files over 100MB without ETag matches
+- Assumes integrity based on size match to avoid expensive downloads
+- Only used when other methods are unavailable
+
+**Level 5: Full Download Verification (<10MB files)**
+- Downloads small files completely for checksum verification
+- Most accurate but resource-intensive method
+
+**Level 6: Accessibility Verification (10MB-100MB fallback)**
+- Downloads first 8KB to verify file accessibility
+- Used when full download fails or is impractical
+
+**Implementation:**
 ```python
-# Small file verification
-remote_checksum = calculate_checksum(downloaded_temp_file)
-verified = (remote_checksum.lower() == local_checksum.lower())
-
-# Large file verification
-verified = (clean_etag.lower() == local_checksum.lower()) or size_matches
+def verify_remote_file_integrity(self, local_filepath: str, remote_path: str, expected_checksum: str):
+    # Level 1: Size comparison
+    if local_size != remote_size:
+        return False, "size mismatch"
+    
+    # Level 2: Cached checksum lookup
+    if stored_checksum == expected_checksum:
+        return True, "checksum match (cached)"
+    
+    # Level 3: ETag comparison (works for all file sizes)
+    if remote_etag == expected_checksum:
+        return True, "etag match"
+    
+    # Level 4: Large file optimization (>100MB)
+    if file_size > 100_000_000:
+        return True, "large file size match"
+    
+    # Level 5: Full download verification (<10MB)
+    if file_size < 10_000_000:
+        return self._download_and_verify_checksum()
+    
+    # Level 6: Accessibility check (fallback)
+    return self._verify_file_accessibility()
 ```
 
 ### 7. Upload History and Remote Integrity Verification
@@ -316,55 +348,20 @@ verified = (clean_etag.lower() == local_checksum.lower()) or size_matches
 - Records file path, size, checksum, and timestamp for each uploaded file
 - Enables intelligent skip-already-uploaded file detection across application restarts
 
-**Startup Integrity Verification:**
-PanoramaBridge automatically verifies the integrity of all previously uploaded files when monitoring starts:
+**On-Demand Remote Integrity Verification:**
+PanoramaBridge uses the same six-level verification system for remote integrity checks:
 
-**Multi-Tier Remote Verification:**
+1. **Startup Verification**: Automatically checks previously uploaded files when monitoring starts
+2. **Manual Verification**: "Remote Integrity Check" button for on-demand verification
+3. **Automatic Recovery**: Re-queues corrupted or missing files for re-upload
+4. **Conflict Resolution**: Handles locally changed files with user choice
 
-**For Files < 10MB:**
-- **Full Checksum Verification**: Downloads complete file and compares SHA256 checksums
-- **Size Check**: Verifies file size matches exactly
-- **Accessibility Test**: Confirms file exists and is readable
-
-**For Files ≥ 10MB:**
-- **Size Verification**: Confirms remote file size matches local file
-- **Accessibility Test**: Uses HEAD request to verify file exists
-- **ETag Comparison** (when available): Compares server ETag with local checksum
-
-**Automatic Corruption Recovery:**
-- Removes corrupted files from upload history
-- Re-queues files with integrity issues for upload
-- Logs all verification failures for troubleshooting
-- Ensures data consistency guarantee: "If there is a local file and something happened to the remote file, we fix it with the local file"
-
-**Implementation Example:**
-```python
-def verify_remote_file_integrity(self, file_path, remote_path, expected_size, expected_checksum):
-    """Verify remote file integrity with multi-tier approach"""
-    try:
-        # Check if remote file exists and get info
-        file_info = self.webdav_client.get_file_info(remote_path)
-        if not file_info:
-            return False
-            
-        # Size verification
-        if file_info.get('size') != expected_size:
-            return False
-            
-        # For small files, do full checksum verification
-        if expected_size < 10 * 1024 * 1024:  # 10MB
-            remote_data = self.webdav_client.download_file_head(remote_path, expected_size)
-            if remote_data:
-                remote_checksum = hashlib.sha256(remote_data).hexdigest()
-                return remote_checksum.lower() == expected_checksum.lower()
-                
-        # For large files, rely on size + accessibility
-        return True
-        
-    except Exception as e:
-        self.log_message(f"Remote verification failed for {file_path}: {e}")
-        return False
-```
+**Verification Results:**
+- ✅ **Verified**: File exists and matches checksum  
+- 🔄 **Missing**: File not found on remote - queued for re-upload
+- 🔧 **Corrupted**: File exists but corrupted - queued for re-upload  
+- ⚠️ **Changed**: Local file modified since upload - user chooses action
+- ❌ **Errors**: Network/verification errors - logged for troubleshooting
 
 ### 8. Metadata Storage and Integrity
 

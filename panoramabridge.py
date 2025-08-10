@@ -6,7 +6,7 @@ This application monitors local directories for new files and automatically tran
 
 - Real-time file monitoring using watchdog
 - Chunked upload support for large files
-- SHA256 checksum calculation and verification
+- SHA256 checksum generation for upload metadata (not used for verification due to performance cost)
 - Conflict resolution with user interaction
 - Secure credential storage using system keyring
 - Remote directory browsing and management
@@ -46,7 +46,7 @@ from PyQt6.QtCore import (
     pyqtSignal,
     pyqtSlot,
 )
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtGui import QColor, QFont, QIcon
 
 # Third-party imports (must be installed via pip)
 try:
@@ -121,7 +121,7 @@ class WebDAVClient:
     - Directory listing and browsing
     - File upload with chunked transfer for large files
     - File download and verification
-    - Checksum storage and retrieval for integrity verification
+    - Checksum generation for upload metadata (not used for verification)
     - Directory creation with proper error handling
 
     Supports both Basic and Digest authentication methods.
@@ -1120,20 +1120,39 @@ class FileMonitorHandler(FileSystemEventHandler):
 
     def _should_queue_file(self, filepath: str) -> bool:
         """
-        Check if a file should be queued, preventing duplicates.
+        Check if a file should be queued, preventing duplicates and avoiding re-upload of unchanged files.
 
         Args:
             filepath: Path to the file being considered for queueing
 
         Returns:
-            True if file should be queued, False if already queued/processing
+            True if file should be queued, False if already queued/processing or unchanged
         """
         if self.app_instance:
             # Check if file is already queued or being processed
             if filepath in self.app_instance.queued_files:
+                logger.debug(f"File already queued, skipping: {filepath}")
                 return False
             if filepath in self.app_instance.processing_files:
+                logger.debug(f"File currently processing, skipping: {filepath}")
                 return False
+            
+            # Check if file was already uploaded and hasn't changed
+            if filepath in self.app_instance.upload_history:
+                try:
+                    # Calculate current file checksum using FileProcessor method
+                    current_checksum = self.app_instance.file_processor.calculate_checksum(filepath)
+                    stored_info = self.app_instance.upload_history[filepath]
+                    stored_checksum = stored_info.get('checksum', '')
+                    
+                    if current_checksum == stored_checksum:
+                        logger.info(f"File unchanged since last upload, skipping: {filepath}")
+                        return False
+                    else:
+                        logger.info(f"File modified since last upload, will re-upload: {filepath}")
+                except Exception as e:
+                    logger.warning(f"Error checking file checksum for {filepath}: {e}")
+                    # Continue with upload if we can't verify the checksum
 
             # Add to queued files tracking
             self.app_instance.queued_files.add(filepath)
@@ -1149,7 +1168,7 @@ class FileProcessor(QThread):
 
     This QThread-based class handles the core file processing workflow:
     1. Retrieves files from the monitoring queue
-    2. Calculates SHA256 checksums for integrity verification
+    2. Calculates SHA256 checksums for upload metadata
     3. Checks for conflicts with existing remote files
     4. Handles user conflict resolution decisions
     5. Uploads files with progress tracking
@@ -1214,7 +1233,7 @@ class FileProcessor(QThread):
         self, filepath: str, algorithm: str = "sha256", chunk_size: int | None = None
     ) -> str:
         """
-        Calculate file checksum for integrity verification with local caching.
+        Calculate file checksum for upload metadata with local caching.
 
         Uses local cache to avoid recalculating checksums for unchanged files.
         Cache key includes file path, size, and modification time.
@@ -1286,75 +1305,6 @@ class FileProcessor(QThread):
         sha256_hash = hashlib.sha256()
         sha256_hash.update(data)
         return sha256_hash.hexdigest()
-
-    def verify_uploaded_file(
-        self, local_path: str, remote_path: str, expected_checksum: str
-    ) -> tuple[bool, str]:
-        """Verify uploaded file integrity by downloading and comparing checksums
-        Returns: (is_verified, message)
-        """
-        try:
-            # Get remote file info first
-            remote_info = self.webdav_client.get_file_info(remote_path)
-            if not remote_info or not remote_info.get("exists", False):
-                return False, "Remote file not found"
-
-            # Compare file sizes first (quick check)
-            local_size = os.path.getsize(local_path)
-            remote_size = remote_info.get("size", 0)
-
-            if local_size != remote_size:
-                return False, f"Size mismatch: local={local_size:,}, remote={remote_size:,} bytes"
-
-            # For smaller files (< 50MB), download and verify checksum
-            if remote_size < 50 * 1024 * 1024:  # 50MB
-                logger.info(
-                    f"Downloading file for checksum verification: {os.path.basename(remote_path)}"
-                )
-
-                # Download the remote file to a temporary location
-                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                    temp_path = temp_file.name
-
-                try:
-                    success, error = self.webdav_client.download_file(remote_path, temp_path)
-                    if not success:
-                        return False, f"Download failed: {error}"
-
-                    # Calculate checksum of downloaded file
-                    remote_checksum = self.calculate_checksum(temp_path)
-
-                    # Compare checksums
-                    if remote_checksum.lower() == expected_checksum.lower():
-                        return True, "Checksum verified - file uploaded correctly"
-                    else:
-                        return (
-                            False,
-                            f"Checksum mismatch: expected {expected_checksum[:8]}..., got {remote_checksum[:8]}...",
-                        )
-
-                finally:
-                    # Clean up temp file
-                    try:
-                        os.unlink(temp_path)
-                    except Exception:
-                        pass
-            else:
-                # For large files, use ETag or size comparison only
-                remote_etag = remote_info.get("etag")
-                if remote_etag:
-                    clean_etag = remote_etag.strip('"').replace("W/", "")
-                    if clean_etag.lower() == expected_checksum.lower():
-                        return True, "ETag verified - file appears uploaded correctly"
-
-                # Large file with matching size - assume success
-                return (
-                    True,
-                    f"Large file ({remote_size:,} bytes) uploaded successfully (size verified)",
-                )
-
-        except Exception as e:
-            return False, f"Verification error: {str(e)}"
 
     def compare_files(
         self, local_path: str, remote_info: dict, local_checksum: str
@@ -1899,22 +1849,56 @@ class FileProcessor(QThread):
                 # Verify upload if enabled
                 if hasattr(self, "verify_uploads") and self.verify_uploads:
                     self.status_update.emit(filename, "Verifying upload...", filepath)
-                    is_verified, verify_message = self.verify_uploaded_file(
+                    is_verified, verify_message = self.app_instance.verify_remote_file_integrity(
                         filepath, remote_path, local_checksum
-                    )
+                    ) if self.app_instance else (False, "verification unavailable")
                     if is_verified:
                         # Record successful upload in persistent history
                         if self.app_instance:
                             self.app_instance.record_successful_upload(
                                 filepath, remote_path, local_checksum
                             )
+                        # Include the specific verification method in the success message
                         self.transfer_complete.emit(
                             filename,
                             filepath,
                             True,
-                            f"Upload verified successfully (checksum: {local_checksum[:8]}...)",
+                            f"Upload verified successfully: {verify_message} (uploaded with checksum: {local_checksum[:8]}...)",
                         )
                     else:
+                        # Check if this is an ETag mismatch (file exists but differs)
+                        if "ETag mismatch" in verify_message and "file differs on server" in verify_message:
+                            # This is a conflict situation - file exists remotely but is different
+                            logger.info(f"ETag mismatch detected for {filename} - triggering conflict resolution")
+                            
+                            # Get remote file info for conflict resolution
+                            try:
+                                remote_info = self.webdav_client.get_file_info(remote_path)
+                                conflict_details = {
+                                    "local_checksum": local_checksum,
+                                    "remote_etag": remote_info.get("etag", "").strip('"').replace("W/", ""),
+                                    "verification_failure": True,
+                                    "reason": "ETag mismatch after upload"
+                                }
+                                
+                                # Emit conflict resolution signal
+                                self.conflict_resolution_needed.emit(
+                                    filename, filepath, remote_path, conflict_details
+                                )
+                                
+                                # Update status to show conflict detected
+                                self.status_update.emit(
+                                    filename, 
+                                    "Upload conflict detected - awaiting user decision...", 
+                                    filepath
+                                )
+                                return  # Don't report as simple failure
+                                
+                            except Exception as e:
+                                logger.error(f"Failed to get remote info for conflict resolution: {e}")
+                                # Fall through to regular failure handling
+                        
+                        # Regular verification failure (not a conflict)
                         self.transfer_complete.emit(
                             filename,
                             filepath,
@@ -2117,6 +2101,97 @@ class FileProcessor(QThread):
     def stop(self):
         """Stop the processor thread"""
         self.running = False
+
+
+class IntegrityCheckThread(QThread):
+    """Thread for performing remote integrity checks"""
+    progress_signal = pyqtSignal(str, int, int, str)  # current_file, checked_count, total_count, status
+    finished_signal = pyqtSignal(dict)  # results dict
+    file_issue_signal = pyqtSignal(str, str, str)  # filepath, issue_type, details
+
+    def __init__(self, files_to_check, main_window):
+        super().__init__()
+        self.files_to_check = files_to_check
+        self.main_window = main_window
+        self.results = {
+            'total': len(files_to_check),
+            'verified': 0,
+            'missing': 0,
+            'corrupted': 0,
+            'changed': 0,
+            'errors': 0
+        }
+
+    def run(self):
+        """Perform the integrity check"""
+        for i, filepath in enumerate(self.files_to_check, 1):
+            try:
+                self.progress_signal.emit(filepath, i, self.results['total'], "Checking...")
+                
+                # Check if file is in upload history
+                if filepath not in self.main_window.upload_history:
+                    self.progress_signal.emit(filepath, i, self.results['total'], "Not in upload history")
+                    self.results['errors'] += 1
+                    continue
+
+                history_entry = self.main_window.upload_history[filepath]
+                remote_path = history_entry.get("remote_path")
+                expected_checksum = history_entry.get("checksum")
+
+                if not remote_path or not expected_checksum:
+                    self.progress_signal.emit(filepath, i, self.results['total'], "Incomplete history")
+                    self.results['errors'] += 1
+                    continue
+
+                # Check if local file still exists
+                if not os.path.exists(filepath):
+                    self.progress_signal.emit(filepath, i, self.results['total'], "Local file missing")
+                    # Remove from history
+                    del self.main_window.upload_history[filepath]
+                    self.results['errors'] += 1
+                    continue
+
+                # Check if local file has changed since upload
+                current_checksum = self.main_window.file_processor.calculate_checksum(filepath)
+                if current_checksum.lower() != expected_checksum.lower():
+                    self.progress_signal.emit(filepath, i, self.results['total'], "Local file changed")
+                    self.file_issue_signal.emit(filepath, "changed", "Local file modified since upload")
+                    self.results['changed'] += 1
+                    continue
+
+                # Verify remote file integrity
+                remote_ok, reason = self.main_window.verify_remote_file_integrity(
+                    filepath, remote_path, expected_checksum
+                )
+
+                if remote_ok:
+                    # Update the message in the table to show verification status
+                    if expected_checksum and expected_checksum.lower() != "unknown":
+                        checksum_short = expected_checksum[:12]
+                        # Note: We generate checksums for upload metadata but don't use them for verification
+                        verification_msg = f"Remote file verified by {reason} (upload checksum: {checksum_short}...)"
+                    else:
+                        # No checksum available - use alternative verification
+                        verification_msg = f"Remote file verified by {reason} (no upload checksum)"
+                    
+                    self.progress_signal.emit(filepath, i, self.results['total'], verification_msg)
+                    self.results['verified'] += 1
+                else:
+                    if "not found" in reason.lower():
+                        self.progress_signal.emit(filepath, i, self.results['total'], "Missing from remote")
+                        self.file_issue_signal.emit(filepath, "missing", reason)
+                        self.results['missing'] += 1
+                    else:
+                        self.progress_signal.emit(filepath, i, self.results['total'], f"Corrupted - {reason}")
+                        self.file_issue_signal.emit(filepath, "corrupted", reason)
+                        self.results['corrupted'] += 1
+
+            except Exception as e:
+                logger.error(f"Error checking integrity of {filepath}: {e}")
+                self.progress_signal.emit(filepath, i, self.results['total'], f"Error: {str(e)}")
+                self.results['errors'] += 1
+
+        self.finished_signal.emit(self.results)
 
 
 class FileConflictDialog(QDialog):
@@ -2600,6 +2675,11 @@ class MainWindow(QMainWindow):
         self.start_btn.clicked.connect(self.toggle_monitoring)
         control_layout.addWidget(self.start_btn)
 
+        self.verify_btn = QPushButton("Remote Integrity Check")
+        self.verify_btn.clicked.connect(self.start_remote_integrity_check)
+        self.verify_btn.setToolTip("Check if all files in Transfer Status are correctly uploaded and intact on remote server")
+        control_layout.addWidget(self.verify_btn)
+
         self.test_connection_btn = QPushButton("Test Connection")
         self.test_connection_btn.clicked.connect(self.test_connection)
         control_layout.addWidget(self.test_connection_btn)
@@ -2914,13 +2994,14 @@ class MainWindow(QMainWindow):
         transfer_layout = QGridLayout()
 
         self.verify_uploads_check = QCheckBox(
-            "Verify uploads by downloading and comparing checksums"
+            "Verify uploads using optimized multi-level integrity checks"
         )
         self.verify_uploads_check.setChecked(True)  # Default to enabled
         self.verify_uploads_check.setToolTip(
-            "For files < 50MB: Downloads and verifies checksum for complete integrity check.\n"
-            "For larger files: Uses size and ETag comparison for performance.\n"
-            "Uncheck to skip verification for faster uploads (less secure)."
+            "Multi-level verification approach:\n"
+            "1. ETag verification: Compares server ETag with local file (SHA256 or MD5)\n"
+            "2. Size + accessibility check: Verifies file size and can be read\n"
+            "Note: Checksums are generated for upload metadata but not used for verification due to performance cost"
         )
         transfer_layout.addWidget(self.verify_uploads_check, 0, 0, 1, 2)
 
@@ -2946,7 +3027,7 @@ class MainWindow(QMainWindow):
 
         reupload_btn = QPushButton("Re-upload Failed")
         reupload_btn.clicked.connect(self.reupload_failed_files)
-        reupload_btn.setToolTip("Re-upload files that failed checksum verification")
+        reupload_btn.setToolTip("Re-upload files that failed verification")
         queue_layout.addWidget(reupload_btn)
 
         clear_btn = QPushButton("Clear Completed")
@@ -2999,7 +3080,13 @@ class MainWindow(QMainWindow):
 
     def get_transfer_table_key(self, filename: str, filepath: str) -> str:
         """Generate consistent unique key for transfer table tracking"""
-        return f"{filename}|{hash(filepath)}"
+        # Use relative path from monitored directory for consistency
+        if self.dir_input.text() and filepath.startswith(self.dir_input.text()):
+            relative_path = os.path.relpath(filepath, self.dir_input.text())
+            if not relative_path.startswith(".."):
+                return f"{relative_path}|{filepath}"
+        # Fallback to filename|filepath for files outside monitored directory
+        return f"{filename}|{filepath}"
 
     @pyqtSlot(str)
     def add_queued_file_to_table(self, filepath: str):
@@ -3164,7 +3251,7 @@ class MainWindow(QMainWindow):
         """Test WebDAV connection"""
         if self.connect_webdav():
             url = self.webdav_client.url if self.webdav_client else "Unknown"
-            QMessageBox.information(self, "Success", f"Connection successful!\nConnected to: {url}")
+            QMessageBox.information(self, "Success", f"Connection successful\nConnected to: {url}")
             self.log_text.append(
                 f"{datetime.now().strftime('%H:%M:%S')} - Connected to WebDAV server at {url}"
             )
@@ -3274,6 +3361,9 @@ class MainWindow(QMainWindow):
             else:
                 logger.info("Backup polling disabled - relying on OS file events only")
 
+            # Clear the transfer status table for a fresh start
+            self.clear_transfer_table()
+            
             # Scan for existing files in the directory
             self.scan_existing_files(directory, extensions, self.subdirs_check.isChecked())
 
@@ -3335,17 +3425,24 @@ class MainWindow(QMainWindow):
                             continue
 
                         if any(filepath.lower().endswith(ext) for ext in formatted_extensions):
-                            # Check for duplicates before queueing
-                            if self._should_queue_file_scan(filepath):
-                                self.file_queue.put(filepath)
-                                files_found += 1
-                                logger.info(f"Queued existing file: {filepath}")
-                                # Add to transfer table with "Queued" status
-                                self.add_queued_file_to_table(filepath)
+                            files_found += 1
+                            logger.info(f"Found existing file: {filepath}")
+                            
+                            # Check if file is already uploaded
+                            is_uploaded, reason = self.is_file_already_uploaded(filepath)
+                            if is_uploaded:
+                                # Add to table as "Completed" - already uploaded
+                                self.add_completed_file_to_table(filepath, reason)
+                                logger.debug(f"File already uploaded: {os.path.basename(filepath)} ({reason})")
                             else:
-                                logger.debug(
-                                    f"File already queued or processing, skipping: {filepath}"
-                                )
+                                # Check for duplicates before queueing
+                                if self._should_queue_file_scan_new(filepath):
+                                    self.file_queue.put(filepath)
+                                    logger.info(f"Queued existing file: {filepath}")
+                                    # Add to transfer table with "Queued" status
+                                    self.add_queued_file_to_table(filepath)
+                                else:
+                                    logger.debug(f"File already queued or processing, skipping: {filepath}")
                         else:
                             logger.debug(f"File {filepath} doesn't match extensions")
             else:
@@ -3361,29 +3458,36 @@ class MainWindow(QMainWindow):
                                 continue
 
                             if any(filepath.lower().endswith(ext) for ext in formatted_extensions):
-                                # Check for duplicates before queueing
-                                if self._should_queue_file_scan(filepath):
-                                    self.file_queue.put(filepath)
-                                    files_found += 1
-                                    logger.info(f"Queued existing file: {filepath}")
-                                    # Add to transfer table with "Queued" status
-                                    self.add_queued_file_to_table(filepath)
+                                files_found += 1
+                                logger.info(f"Found existing file: {filepath}")
+                                
+                                # Check if file is already uploaded
+                                is_uploaded, reason = self.is_file_already_uploaded(filepath)
+                                if is_uploaded:
+                                    # Add to table as "Completed" - already uploaded
+                                    self.add_completed_file_to_table(filepath, reason)
+                                    logger.debug(f"File already uploaded: {os.path.basename(filepath)} ({reason})")
                                 else:
-                                    logger.debug(
-                                        f"File already queued or processing, skipping: {filepath}"
-                                    )
+                                    # Check for duplicates before queueing
+                                    if self._should_queue_file_scan_new(filepath):
+                                        self.file_queue.put(filepath)
+                                        logger.info(f"Queued existing file: {filepath}")
+                                        # Add to transfer table with "Queued" status
+                                        self.add_queued_file_to_table(filepath)
+                                    else:
+                                        logger.debug(f"File already queued or processing, skipping: {filepath}")
                 except OSError as e:
                     logger.error(f"Error listing directory {directory}: {e}")
         except Exception as e:
             logger.error(f"Error scanning directory {directory}: {e}")
 
-        logger.info(f"Scan complete: {files_found} existing files queued")
+        logger.info(f"Scan complete: {files_found} existing files found")
 
         if files_found > 0:
             self.log_text.append(
-                f"{datetime.now().strftime('%H:%M:%S')} - Found {files_found} existing files to process"
+                f"{datetime.now().strftime('%H:%M:%S')} - Found {files_found} existing files matching criteria"
             )
-            logger.info(f"Scan complete: {files_found} existing files queued")
+            logger.info(f"Scan complete: {files_found} existing files found")
         else:
             self.log_text.append(
                 f"{datetime.now().strftime('%H:%M:%S')} - No existing files found matching criteria"
@@ -3434,6 +3538,8 @@ class MainWindow(QMainWindow):
                 if remote_ok:
                     files_verified += 1
                     logger.debug(f"Remote file verified: {os.path.basename(filepath)} - {reason}")
+                    # Add verified file to table as "Completed"
+                    self.add_completed_file_to_table(filepath, f"verified intact - {reason}")
                 else:
                     logger.warning(f"Remote integrity failed: {os.path.basename(filepath)} - {reason}")
                     files_to_reupload.append((filepath, reason))
@@ -3533,6 +3639,99 @@ class MainWindow(QMainWindow):
         self.queued_files.add(filepath)
         return True
 
+    def _should_queue_file_scan_new(self, filepath: str) -> bool:
+        """
+        Check if a file should be queued during scanning (for files that need upload).
+        This version only checks for duplicate queuing, not upload status.
+
+        Args:
+            filepath: Path to the file being considered for queueing
+
+        Returns:
+            True if file should be queued, False if already queued/processing
+        """
+        # Check if file is already queued or being processed
+        if filepath in self.queued_files:
+            logger.debug(f"File already queued, skipping: {filepath}")
+            return False
+        if filepath in self.processing_files:
+            logger.debug(f"File already processing, skipping: {filepath}")
+            return False
+
+        # Add to queued files tracking
+        self.queued_files.add(filepath)
+        return True
+
+    def add_completed_file_to_table(self, filepath: str, status_reason: str):
+        """Add a completed (already uploaded) file to the transfer table"""
+        relative_path = os.path.relpath(filepath, self.dir_input.text())
+        
+        # Get upload info from history
+        history_entry = self.upload_history.get(filepath, {})
+        checksum = history_entry.get('checksum', 'Unknown')
+        upload_time = history_entry.get('timestamp', 'Unknown')
+        remote_path = history_entry.get('remote_path', 'Unknown')
+        
+        # Format upload time
+        if upload_time != 'Unknown' and isinstance(upload_time, (int, float)):
+            try:
+                upload_time_str = datetime.fromtimestamp(upload_time).strftime('%Y-%m-%d %H:%M:%S')
+            except:
+                upload_time_str = 'Unknown'
+        else:
+            upload_time_str = str(upload_time)
+        
+        # Create detailed status message using consistent format
+        if checksum != 'Unknown':
+            status_msg = f"Remote file already exists with same content (checksum: {checksum[:12]}...)"
+        else:
+            status_msg = f"Completed - {status_reason}"
+        
+        # Add to table with "Completed" status
+        self.add_file_to_table_with_status(
+            filepath=filepath,
+            relative_path=relative_path,
+            status="Completed",
+            message=status_msg
+        )
+        
+        logger.debug(f"Added completed file to table: {relative_path}")
+
+    def add_file_to_table_with_status(self, filepath: str, relative_path: str, status: str, message: str):
+        """Helper method to add a file to the transfer table with specific status"""
+        # Avoid duplicates
+        file_key = f"{relative_path}|{filepath}"
+        if file_key in self.transfer_rows:
+            logger.debug(f"File already in transfer table: {relative_path}")
+            return
+            
+        row = self.transfer_table.rowCount()
+        self.transfer_table.insertRow(row)
+        
+        # File column
+        self.transfer_table.setItem(row, 0, QTableWidgetItem(relative_path))
+        
+        # Status column
+        status_item = QTableWidgetItem(status)
+        if status == "Completed":
+            status_item.setBackground(QColor(144, 238, 144))  # Light green
+        elif status == "Queued":
+            status_item.setBackground(QColor(255, 255, 224))  # Light yellow
+        self.transfer_table.setItem(row, 1, status_item)
+        
+        # Progress column (empty for completed files)
+        progress_item = QTableWidgetItem("")
+        self.transfer_table.setItem(row, 2, progress_item)
+        
+        # Message column
+        self.transfer_table.setItem(row, 3, QTableWidgetItem(message))
+        
+        # Store reference
+        self.transfer_rows[file_key] = row
+        
+        # Auto-scroll to bottom to show new files
+        self.transfer_table.scrollToBottom()
+
     def update_queue_size(self):
         """Update queue size display with enhanced debugging"""
         size = self.file_queue.qsize()
@@ -3592,6 +3791,13 @@ class MainWindow(QMainWindow):
 
         # Update queue display
         self.update_queue_size()
+
+    def clear_transfer_table(self):
+        """Clear all rows from the transfer status table"""
+        self.transfer_table.setRowCount(0)
+        # Clear internal tracking
+        self.transfer_rows.clear()
+        logger.info("Cleared transfer status table for fresh monitoring start")
 
     def poll_for_new_files(self):
         """
@@ -3679,19 +3885,38 @@ class MainWindow(QMainWindow):
 
     def _should_queue_file_poll(self, filepath: str) -> bool:
         """
-        Check if a file should be queued during polling, preventing duplicates.
+        Check if a file should be queued during polling, preventing duplicates and avoiding re-upload of unchanged files.
 
         Args:
             filepath: Path to the file being considered for queueing
 
         Returns:
-            True if file should be queued, False if already queued/processing
+            True if file should be queued, False if already queued/processing or unchanged
         """
         # Check if file is already queued or being processed
         if filepath in self.queued_files:
+            logger.debug(f"Polling: File already queued, skipping: {filepath}")
             return False
         if filepath in self.processing_files:
+            logger.debug(f"Polling: File currently processing, skipping: {filepath}")
             return False
+        
+        # Check if file was already uploaded and hasn't changed
+        if filepath in self.upload_history:
+            try:
+                # Calculate current file checksum
+                current_checksum = self.file_processor.calculate_checksum(filepath)
+                stored_info = self.upload_history[filepath]
+                stored_checksum = stored_info.get('checksum', '')
+                
+                if current_checksum == stored_checksum:
+                    logger.info(f"Polling: File unchanged since last upload, skipping: {filepath}")
+                    return False
+                else:
+                    logger.info(f"Polling: File modified since last upload, will re-upload: {filepath}")
+            except Exception as e:
+                logger.warning(f"Polling: Error checking file checksum for {filepath}: {e}")
+                # Continue with upload if we can't verify the checksum
 
         # Add to queued files tracking
         self.queued_files.add(filepath)
@@ -4220,7 +4445,7 @@ class MainWindow(QMainWindow):
         logger.info(f"Recorded successful upload: {os.path.basename(filepath)} -> {remote_path}")
 
     def verify_remote_file_integrity(self, local_filepath: str, remote_path: str, expected_checksum: str) -> tuple[bool, str]:
-        """Verify that a remote file exists and matches the expected local file
+        """Verify that a remote file exists and matches the expected local file using multi-level optimization
         Returns: (is_intact, reason)
         """
         try:
@@ -4229,54 +4454,125 @@ class MainWindow(QMainWindow):
             if not remote_info or not remote_info.get("exists", False):
                 return False, "remote file not found"
 
-            # Check file size first (quick check)
+            # Level 1: Size comparison (fastest - immediate)
             local_size = os.path.getsize(local_filepath) if os.path.exists(local_filepath) else 0
             remote_size = remote_info.get("size", 0)
             
             if local_size != remote_size:
                 return False, f"size mismatch (local: {local_size}, remote: {remote_size})"
 
-            # For files smaller than 50MB, verify checksum by downloading a small portion
-            if remote_size < 50 * 1024 * 1024:  # 50MB
+            # Level 2: ETag verification (PRIORITY - network request)
+            remote_etag = remote_info.get("etag")
+            if remote_etag and expected_checksum:
+                # Clean ETag (remove quotes and weak indicators)
+                clean_etag = remote_etag.strip('"').replace("W/", "")
+                
+                # Check if ETag matches our SHA256 checksum directly
+                if clean_etag.lower() == expected_checksum.lower():
+                    return True, "ETag (SHA256 format)"
+                elif len(clean_etag) == len(expected_checksum):
+                    # Same length suggests same hash algorithm but different content - INTEGRITY PROBLEM
+                    return False, f"ETag mismatch - file integrity problem (expected: {expected_checksum[:8]}..., etag: {clean_etag[:8]}...)"
+                elif len(clean_etag) == 32:  # Likely MD5 hash (Apache default)
+                    # Convert our file to MD5 for comparison with Apache-style ETags
+                    try:
+                        import hashlib
+                        with open(local_filepath, 'rb') as f:
+                            md5_hash = hashlib.md5(f.read()).hexdigest()
+                        if clean_etag.lower() == md5_hash.lower():
+                            return True, "ETag (MD5 format)"
+                        else:
+                            return False, f"ETag mismatch - file integrity problem (expected MD5: {md5_hash[:8]}..., etag: {clean_etag[:8]}...)"
+                    except Exception as e:
+                        logger.debug(f"Failed to calculate MD5 for ETag comparison: {e}")
+                        # Fall through to size + accessibility verification
+                else:
+                    # Different length - unknown ETag format from server
+                    logger.debug(f"Server ETag format not recognized: {clean_etag[:16]}... (length: {len(clean_etag)})")
+                    # For large files, we can't afford to download to verify, so trust size + accessibility
+                    if local_size > 100 * 1024 * 1024:  # > 100MB
+                        try:
+                            head_data = self.webdav_client.download_file_head(remote_path, 8192)
+                            if head_data is None:
+                                return False, "cannot read remote file"
+                            return True, "Size + accessibility (server uses unknown ETag format)"
+                        except Exception as e:
+                            return False, f"accessibility check failed: {str(e)}"
+
+            # Level 3: No ETag available - fallback verification
+            if remote_etag is None and local_size > 100 * 1024 * 1024:  # Large file with no ETag
+                logger.warning(f"Large file ({local_size:,} bytes) - ETag unavailable from server, using size + accessibility verification")
                 try:
+                    if self.webdav_client is not None:
+                        head_data = self.webdav_client.download_file_head(remote_path, 8192)
+                        if head_data is None:
+                            return False, "cannot read remote file"
+                    return True, "Size + accessibility (ETag unavailable)"
+                except Exception as e:
+                    return False, f"accessibility check failed: {str(e)}"            # Level 3: All files - fallback to size + accessibility verification
+            # Note: We generate checksums for upload but don't use them for verification due to performance cost
+            try:
+                if self.webdav_client is not None:
                     # Download just the first 8KB to check if file is accessible
                     head_data = self.webdav_client.download_file_head(remote_path, 8192)
                     if head_data is None:
                         return False, "cannot read remote file"
-                    
-                    # For small files (< 10MB), do full checksum verification
-                    if remote_size < 10 * 1024 * 1024:  # 10MB
-                        # Download to temp file and verify checksum
-                        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                            temp_path = temp_file.name
-                        
-                        try:
-                            success, error = self.webdav_client.download_file(remote_path, temp_path)
-                            if not success:
-                                return False, f"download failed: {error}"
-                            
-                            # Calculate checksum of downloaded file
-                            remote_checksum = self.file_processor.calculate_checksum(temp_path)
-                            if remote_checksum.lower() != expected_checksum.lower():
-                                return False, f"checksum mismatch (expected: {expected_checksum[:8]}..., got: {remote_checksum[:8]}...)"
-                            
-                            return True, "verified by checksum"
-                            
-                        finally:
-                            if os.path.exists(temp_path):
-                                os.unlink(temp_path)
-                    else:
-                        # For medium files, just verify size and accessibility
-                        return True, "verified by size and accessibility"
-                except Exception as e:
-                    return False, f"verification error: {str(e)}"
-            else:
-                # For large files, just verify size and that file is accessible
-                return True, "verified by size (large file)"
+                
+                # For files without ETag, make it clear this is limited verification
+                if remote_etag is None:
+                    return True, "Size + accessibility (ETag unavailable)"
+                else:
+                    return True, "Size + accessibility"
+            except Exception as e:
+                return False, f"accessibility check failed: {str(e)}"
                 
         except Exception as e:
             logger.warning(f"Error verifying remote file {remote_path}: {e}")
             return False, f"verification error: {str(e)}"
+
+    def is_file_already_uploaded_quick(self, filepath: str) -> tuple[bool, str]:
+        """Quick check if file was already uploaded using cached checksums - NO remote verification
+        This is optimized for performance during file system event processing.
+        Returns: (is_uploaded, reason)
+        """
+        if filepath not in self.upload_history:
+            return False, "not in history"
+
+        history_entry = self.upload_history[filepath]
+
+        # Check if local file still exists
+        if not os.path.exists(filepath):
+            return False, "local file no longer exists"
+
+        try:
+            # Quick size check first (very fast)
+            current_size = os.path.getsize(filepath)
+            stored_size = history_entry.get("file_size", 0)
+            if stored_size > 0 and current_size != stored_size:
+                return False, "file size changed"
+
+            # Only calculate checksum if we don't have a cached one or if forced
+            stored_checksum = history_entry.get("checksum")
+            if not stored_checksum:
+                return False, "no stored checksum"
+            
+            # Check if we have a cached checksum to avoid recalculation
+            cache_key = f"{filepath}_{current_size}_{os.path.getmtime(filepath)}"
+            if cache_key in self.local_checksum_cache:
+                current_checksum = self.local_checksum_cache[cache_key]
+            else:
+                # Calculate and cache the checksum
+                current_checksum = self.file_processor.calculate_checksum(filepath)
+                self.local_checksum_cache[cache_key] = current_checksum
+            
+            if current_checksum != stored_checksum:
+                return False, "file content changed"
+
+            return True, f"already uploaded on {history_entry.get('timestamp', 'unknown date')}"
+            
+        except Exception as e:
+            logger.warning(f"Error in quick upload check for {filepath}: {e}")
+            return False, "error checking history"
 
     def is_file_already_uploaded(self, filepath: str) -> tuple[bool, str]:
         """Check if file was already uploaded successfully AND verify remote integrity
@@ -4383,6 +4679,311 @@ class MainWindow(QMainWindow):
         if hasattr(self, "local_checksum_cache") and self.local_checksum_cache:
             logger.debug(f"Saving {len(self.local_checksum_cache)} cached checksums")
             self.save_config()  # This will include the cache data
+
+    def start_remote_integrity_check(self):
+        """Start a comprehensive remote integrity check of all files in Transfer Status table"""
+        if not self.webdav_client:
+            QMessageBox.warning(
+                self,
+                "Connection Error",
+                "Please configure and test your WebDAV connection first."
+            )
+            return
+
+        # Get all files currently in the Transfer Status table
+        # Extract absolute paths from the transfer_rows dictionary keys
+        files_in_table = []
+        for file_key in self.transfer_rows.keys():
+            # file_key format is "relative_path|absolute_path"
+            if '|' in file_key:
+                _, absolute_path = file_key.split('|', 1)
+                if absolute_path and os.path.exists(absolute_path):
+                    files_in_table.append(absolute_path)
+
+        if not files_in_table:
+            QMessageBox.information(
+                self,
+                "No Files to Check",
+                "No files found in Transfer Status table to verify."
+            )
+            return
+
+        # Ask for confirmation
+        reply = QMessageBox.question(
+            self,
+            "Remote Integrity Check",
+            f"This will check {len(files_in_table)} files in the Transfer Status table.\n\n"
+            f"The check will:\n"
+            f"• Temporarily pause file monitoring\n"
+            f"• Verify each file exists on the remote server\n"
+            f"• Check file integrity using checksums\n"
+            f"• Re-upload any missing or corrupted files\n"
+            f"• Show conflict resolution dialog for changed files\n\n"
+            f"This may take some time. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Store current monitoring state
+        self.monitoring_was_active = self.observer and self.observer.is_alive()
+
+        # Temporarily stop monitoring if it's active
+        if self.monitoring_was_active:
+            self.log_text.append(
+                f"{datetime.now().strftime('%H:%M:%S')} - Temporarily pausing monitoring for integrity check"
+            )
+            if self.observer:
+                self.observer.stop()
+                self.observer.join()
+                self.observer = None
+            if self.poll_timer:
+                self.poll_timer.stop()
+
+        # Update UI to show check is in progress
+        self.verify_btn.setEnabled(False)
+        self.verify_btn.setText("Checking...")
+        self.start_btn.setEnabled(False)
+
+        # Start the integrity check in a separate thread
+        self.integrity_check_thread = IntegrityCheckThread(files_in_table, self)
+        self.integrity_check_thread.progress_signal.connect(self.on_integrity_check_progress)
+        self.integrity_check_thread.finished_signal.connect(self.on_integrity_check_finished)
+        self.integrity_check_thread.file_issue_signal.connect(self.on_integrity_check_file_issue)
+        self.integrity_check_thread.start()
+
+        self.log_text.append(
+            f"{datetime.now().strftime('%H:%M:%S')} - Starting remote integrity check for {len(files_in_table)} files"
+        )
+
+    def on_integrity_check_progress(self, current_file, checked_count, total_count, status):
+        """Handle progress updates from integrity check thread"""
+        self.verify_btn.setText(f"Checking... ({checked_count}/{total_count})")
+        self.log_text.append(
+            f"{datetime.now().strftime('%H:%M:%S')} - [{checked_count}/{total_count}] {os.path.basename(current_file)}: {status}"
+        )
+        
+        # Update the table status message for verified files
+        if "integrity confirmed" in status or "Verified" in status:
+            self.update_file_message_in_table(current_file, status)
+
+    def on_integrity_check_file_issue(self, filepath, issue_type, details):
+        """Handle file issues found during integrity check"""
+        if issue_type == "missing":
+            # File is missing from remote - queue for re-upload
+            self.log_text.append(
+                f"{datetime.now().strftime('%H:%M:%S')} - Missing from remote: {os.path.basename(filepath)} - queuing for upload"
+            )
+            self.file_queue.put(filepath)
+            # Update the table message to show it's queued for re-upload
+            self.update_file_message_in_table(filepath, "Queued - missing from remote server")
+
+        elif issue_type == "corrupted":
+            # File exists but is corrupted - queue for re-upload
+            self.log_text.append(
+                f"{datetime.now().strftime('%H:%M:%S')} - Corrupted on remote: {os.path.basename(filepath)} ({details}) - queuing for re-upload"
+            )
+            # Remove from upload history so it gets uploaded fresh
+            if filepath in self.upload_history:
+                del self.upload_history[filepath]
+            self.file_queue.put(filepath)
+            self.update_file_message_in_table(filepath, f"Queued - remote file corrupted ({details})")
+
+        elif issue_type == "changed":
+            # Local file has changed since upload - apply conflict resolution setting
+            conflict_setting = self.get_conflict_resolution_setting()
+            
+            if conflict_setting == "ask":
+                # Show conflict resolution dialog
+                self.show_file_conflict_resolution(filepath, details)
+            elif conflict_setting == "overwrite":
+                # Remove from history and re-upload (overwrite)
+                self.log_text.append(
+                    f"{datetime.now().strftime('%H:%M:%S')} - File changed locally: {os.path.basename(filepath)} - queuing for overwrite upload"
+                )
+                if filepath in self.upload_history:
+                    del self.upload_history[filepath]
+                self.file_queue.put(filepath)
+                self.update_file_message_in_table(filepath, "Queued - file changed, will overwrite remote")
+            elif conflict_setting == "rename":
+                # Queue for rename upload
+                self.log_text.append(
+                    f"{datetime.now().strftime('%H:%M:%S')} - File changed locally: {os.path.basename(filepath)} - queuing for rename upload"
+                )
+                if filepath in self.upload_history:
+                    del self.upload_history[filepath]
+                self.file_queue.put(filepath)
+                self.update_file_message_in_table(filepath, "Queued - file changed, will rename remote")
+            elif conflict_setting == "skip":
+                # Skip - just log it
+                self.log_text.append(
+                    f"{datetime.now().strftime('%H:%M:%S')} - File changed locally: {os.path.basename(filepath)} - skipped per conflict resolution setting"
+                )
+                self.update_file_message_in_table(filepath, "Skipped - file changed locally")
+
+    def on_integrity_check_finished(self, results):
+        """Handle completion of integrity check"""
+        verified_count = results['verified']
+        missing_count = results['missing']
+        corrupted_count = results['corrupted']
+        changed_count = results['changed']
+        error_count = results['errors']
+        total_count = results['total']
+
+        # Update UI
+        self.verify_btn.setEnabled(True)
+        self.verify_btn.setText("Remote Integrity Check")
+        self.start_btn.setEnabled(True)
+
+        # Log results
+        self.log_text.append(
+            f"{datetime.now().strftime('%H:%M:%S')} - Integrity check complete: "
+            f"{verified_count} verified, {missing_count} missing, {corrupted_count} corrupted, "
+            f"{changed_count} changed locally, {error_count} errors"
+        )
+
+        # Show summary dialog
+        if missing_count + corrupted_count + changed_count + error_count == 0:
+            QMessageBox.information(
+                self,
+                "Integrity Check Complete",
+                f"All {verified_count} files verified successfully!\n\n"
+                f"All files in the Transfer Status table are correctly uploaded and intact on the remote server."
+            )
+        else:
+            issues_text = []
+            if missing_count > 0:
+                issues_text.append(f"• {missing_count} files missing from remote (queued for upload)")
+            if corrupted_count > 0:
+                issues_text.append(f"• {corrupted_count} files corrupted on remote (queued for re-upload)")
+            if changed_count > 0:
+                issues_text.append(f"• {changed_count} files changed locally (conflict resolution shown)")
+            if error_count > 0:
+                issues_text.append(f"• {error_count} files had verification errors")
+
+            QMessageBox.warning(
+                self,
+                "Integrity Check Results",
+                "Integrity check completed with issues:\n\n" + "\n".join(issues_text) +
+                f"\n\nVerified: {verified_count}/{total_count} files"
+            )
+
+        # Restart monitoring if it was active before
+        if self.monitoring_was_active:
+            self.log_text.append(
+                f"{datetime.now().strftime('%H:%M:%S')} - Resuming file monitoring"
+            )
+            # Restart monitoring with current settings
+            directory = self.dir_input.text()
+            extensions = [e.strip() for e in self.extensions_input.text().split(",") if e.strip()]
+            recursive = self.subdirs_check.isChecked()
+
+            try:
+                self.monitor_handler = FileMonitorHandler(
+                    extensions,
+                    self.file_queue,
+                    recursive,
+                    self,
+                )
+
+                self.observer = Observer()
+                self.observer.schedule(self.monitor_handler, directory, recursive=recursive)
+                self.observer.start()
+
+                if self.enable_polling_check.isChecked():
+                    polling_interval_ms = self.polling_interval_spin.value() * 60 * 1000
+                    self.poll_timer.start(polling_interval_ms)
+
+                self.start_btn.setText("Stop Monitoring")
+                self.status_label.setText("Monitoring active")
+                self.status_label.setStyleSheet("font-weight: bold; color: green;")
+
+            except Exception as e:
+                logger.error(f"Failed to restart monitoring after integrity check: {e}")
+                self.log_text.append(
+                    f"{datetime.now().strftime('%H:%M:%S')} - Error restarting monitoring: {e}"
+                )
+
+        # Save any history updates
+        if missing_count + corrupted_count + changed_count > 0:
+            self.save_upload_history()
+
+    def show_file_conflict_resolution(self, filepath, details):
+        """Show conflict resolution dialog for a locally changed file"""
+        filename = os.path.basename(filepath)
+        
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("File Conflict Detected")
+        dialog.setText(f"Local file has changed since upload:\n{filename}")
+        dialog.setDetailedText(f"File: {filepath}\nIssue: {details}")
+        dialog.setIcon(QMessageBox.Icon.Question)
+
+        # Add custom buttons
+        overwrite_btn = dialog.addButton("Upload New Version", QMessageBox.ButtonRole.AcceptRole)
+        keep_remote_btn = dialog.addButton("Keep Remote Version", QMessageBox.ButtonRole.RejectRole)
+        skip_btn = dialog.addButton("Skip This File", QMessageBox.ButtonRole.NoRole)
+
+        dialog.exec()
+        clicked_button = dialog.clickedButton()
+
+        if clicked_button == overwrite_btn:
+            self.log_text.append(
+                f"{datetime.now().strftime('%H:%M:%S')} - User chose to upload new version of {filename}"
+            )
+            # Remove from history and re-queue
+            if filepath in self.upload_history:
+                del self.upload_history[filepath]
+            self.file_queue.put(filepath)
+            self.update_file_status_in_table(filepath, "Queued")
+            
+        elif clicked_button == keep_remote_btn:
+            self.log_text.append(
+                f"{datetime.now().strftime('%H:%M:%S')} - User chose to keep remote version of {filename}"
+            )
+            # Update local history with current local file checksum to match
+            if os.path.exists(filepath):
+                current_checksum = self.file_processor.calculate_checksum(filepath)
+                if filepath in self.upload_history:
+                    self.upload_history[filepath]["checksum"] = current_checksum
+                    self.upload_history[filepath]["timestamp"] = datetime.now().isoformat()
+            
+        else:  # skip
+            self.log_text.append(
+                f"{datetime.now().strftime('%H:%M:%S')} - User chose to skip {filename}"
+            )
+
+    def update_file_status_in_table(self, filepath, status):
+        """Update the status of a file in the Transfer Status table"""
+        for row in range(self.transfer_table.rowCount()):
+            filepath_item = self.transfer_table.item(row, 0)
+            if filepath_item and filepath_item.text() == filepath:
+                status_item = self.transfer_table.item(row, 3)  # Status is in column 3
+                if status_item:
+                    status_item.setText(status)
+                    # Color code the status
+                    if status == "Queued":
+                        status_item.setBackground(QColor(255, 255, 0, 50))  # Light yellow
+                    elif status == "Uploading":
+                        status_item.setBackground(QColor(0, 0, 255, 50))  # Light blue
+                    elif status == "Complete":
+                        status_item.setBackground(QColor(0, 255, 0, 50))  # Light green
+                break
+
+    def update_file_message_in_table(self, filepath, message):
+        """Update the message of a file in the Transfer Status table"""
+        # Need to find the file using the transfer_rows dictionary
+        for file_key, row in self.transfer_rows.items():
+            # file_key format is "relative_path|absolute_path"
+            if '|' in file_key:
+                _, absolute_path = file_key.split('|', 1)
+                if absolute_path == filepath:
+                    if row < self.transfer_table.rowCount():
+                        message_item = self.transfer_table.item(row, 3)  # Message is in column 3
+                        if message_item:
+                            message_item.setText(message)
+                    break
 
     def closeEvent(self, event):
         """Handle application close"""

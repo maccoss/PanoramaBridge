@@ -63,6 +63,11 @@ def mock_app_instance():
     app.processing_files = set()
     app.created_directories = set()
     app.file_remote_paths = {}
+    app.upload_history = {}  # Add upload_history for our infinite loop fix
+
+    # Mock file_processor with calculate_checksum method
+    app.file_processor = Mock()
+    app.file_processor.calculate_checksum = Mock(return_value="dummy_checksum_for_testing")
 
     # Mock UI controls for locked file handling
     app.enable_locked_retry_check = Mock()

@@ -36,6 +36,8 @@ class TestThreadSafeUIUpdates(unittest.TestCase):
         self.mock_app.add_queued_file_to_table = Mock()
         self.mock_app.queued_files = set()  # Add this for _should_queue_file check
         self.mock_app.processing_files = set()  # Add this for _should_queue_file check
+        self.mock_app.upload_history = {}  # Add this for _should_queue_file check
+        self.mock_app.file_processor = Mock()  # Add this for _should_queue_file check
 
         # Track QMetaObject.invokeMethod calls
         self.invoke_method_calls = []

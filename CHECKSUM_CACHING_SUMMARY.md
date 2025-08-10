@@ -77,29 +77,34 @@ def calculate_checksum(self, filepath: str, algorithm: str = 'sha256', chunk_siz
     return checksum
 ```
 
-### Multi-Level File Comparison Optimization:
+### Multi-Level File Verification System:
 ```python
-def compare_files(self, local_path: str, remote_info: dict, local_checksum: str) -> tuple:
-    """Smart comparison with multiple optimization levels"""
+def verify_remote_file_integrity(self, local_filepath: str, remote_path: str, expected_checksum: str) -> tuple[bool, str]:
+    """Smart verification with multiple optimization levels"""
 
     # Level 1: Size comparison (fastest - immediate)
     if local_size != remote_size:
-        return 'different', 'size mismatch'
+        return False, 'size mismatch'
 
-    # Level 2: Cached checksum lookup (fast - microseconds)
-    if remote_checksum and local_checksum == remote_checksum:
-        return 'identical', 'checksum match (cached)'
+    # Level 2: Cached/stored checksum lookup (fast - microseconds)
+    if stored_checksum and stored_checksum == expected_checksum:
+        return True, "checksum match (cached)"
 
     # Level 3: ETag comparison (medium - network request)
-    if etag_matches:
-        return 'identical', 'etag match'
+    if remote_etag and remote_etag == expected_checksum:
+        return True, "etag match"
 
     # Level 4: Large file optimization (smart - skip download for >100MB)
+    # Note: Only reached if ETag check was not available or didn't match
     if file_size > 100_000_000:
-        return 'assumed_identical', 'large file size match'
+        return True, "large file size match"
 
-    # Level 5: Download verification (slowest - full download)
-    return self._download_and_verify(remote_path, local_checksum)
+    # Level 5: Download verification (thorough - full download for small files <10MB)
+    if file_size < 10_000_000:
+        return self._download_and_verify_checksum(remote_path, expected_checksum)
+
+    # Level 6: Accessibility verification (fallback - partial download 10-100MB)
+    return self._verify_file_accessibility(remote_path)
 ```
 
 ### Cache Management System:

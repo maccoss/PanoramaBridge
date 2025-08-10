@@ -37,6 +37,11 @@ class TestFileMonitoringRobustness:
         self.mock_app = Mock()
         self.mock_app.queued_files = set()
         self.mock_app.processing_files = set()
+        self.mock_app.upload_history = {}  # Add for infinite loop fix
+        
+        # Mock file_processor with calculate_checksum method
+        self.mock_app.file_processor = Mock()
+        self.mock_app.file_processor.calculate_checksum = Mock(return_value="dummy_checksum_for_testing")
 
         # Create monitor handler
         self.monitor = FileMonitorHandler(
