@@ -6,10 +6,10 @@ This demonstrates when ETags might be missing or mismatch, and how we handle eac
 
 def demonstrate_etag_scenarios():
     """Show different ETag scenarios and our improved handling."""
-    
+
     print("=== FILE VERIFICATION SCENARIOS WITH IMPROVED ETag HANDLING ===")
     print()
-    
+
     scenarios = [
         {
             "name": "Perfect Case - Small File with ETag Match",
@@ -20,7 +20,7 @@ def demonstrate_etag_scenarios():
             "notes": "Most efficient - no download needed"
         },
         {
-            "name": "Good Case - Large File with ETag Match", 
+            "name": "Good Case - Large File with ETag Match",
             "size": "150 MB",
             "etag": '"def456ghi789"',
             "local_checksum": "def456ghi789",
@@ -29,7 +29,7 @@ def demonstrate_etag_scenarios():
         },
         {
             "name": "Fallback Case - Small File ETag Mismatch",
-            "size": "5 MB", 
+            "size": "5 MB",
             "etag": '"server123"',
             "local_checksum": "local456",
             "result": "Upload verified successfully: Checksum verified - file uploaded correctly (checksum: local456...)",
@@ -52,7 +52,7 @@ def demonstrate_etag_scenarios():
             "notes": "🚨 VERIFICATION FAILS - indicates file corruption or upload failure"
         }
     ]
-    
+
     for i, scenario in enumerate(scenarios, 1):
         print(f"{i}. {scenario['name']}")
         print(f"   File Size: {scenario['size']}")
@@ -61,7 +61,7 @@ def demonstrate_etag_scenarios():
         print(f"   User Message: {scenario['result']}")
         print(f"   Notes: {scenario['notes']}")
         print()
-    
+
     print("=== LOG WARNINGS FOR PROBLEMATIC CASES ===")
     print()
     print("Missing ETag Warning:")
@@ -70,7 +70,7 @@ def demonstrate_etag_scenarios():
     print("ETag Mismatch Warning:")
     print("WARNING - ETag mismatch for file myfile.zip: expected sha256abc..., got apache12... This may indicate different checksum algorithms or file corruption.")
     print()
-    
+
     print("=== YOUR INSIGHT IS ABSOLUTELY CORRECT ===")
     print()
     print("🔴 ETag Mismatch = FILE INTEGRITY PROBLEM (SHOULD FAIL)")
@@ -88,7 +88,7 @@ def demonstrate_etag_scenarios():
     print("   Wrong ETag   = 'File content doesn't match' → FAIL")
     print()
     print("IMPROVED BEHAVIOR:")
-    print("   ✅ ETag match → Verification success")  
+    print("   ✅ ETag match → Verification success")
     print("   🟡 No ETag → Warning + size fallback")
     print("   ❌ ETag mismatch → Verification FAILURE (triggers re-upload)")
 

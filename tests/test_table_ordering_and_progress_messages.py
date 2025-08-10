@@ -31,7 +31,7 @@ class TestTableOrderingAndProgressMessages:
         """Test that table fills from top to bottom as files are queued"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that transfer table exists and can track rows
         assert hasattr(window, 'transfer_table')
         assert hasattr(window, 'transfer_rows')
@@ -40,7 +40,7 @@ class TestTableOrderingAndProgressMessages:
         """Test that table auto-scrolls to bottom when new files are added"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that scrolling infrastructure exists
         assert hasattr(window, 'transfer_table')
         assert callable(getattr(window.transfer_table, 'scrollToBottom', None))
@@ -49,7 +49,7 @@ class TestTableOrderingAndProgressMessages:
         """Test that unique keys are generated consistently for table rows"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that row tracking infrastructure exists
         assert hasattr(window, 'transfer_rows')
         assert isinstance(window.transfer_rows, dict)
@@ -58,7 +58,7 @@ class TestTableOrderingAndProgressMessages:
         """Test that duplicate files are prevented from being added"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test duplicate prevention infrastructure
         assert hasattr(window, 'transfer_rows')
         assert hasattr(window, 'queued_files')
@@ -67,7 +67,7 @@ class TestTableOrderingAndProgressMessages:
         """Test that status updates don't disrupt table order"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that table structure supports status updates
         assert hasattr(window, 'transfer_table')
         assert hasattr(window, 'transfer_rows')
@@ -76,7 +76,7 @@ class TestTableOrderingAndProgressMessages:
         """Test fallback behavior for status updates"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test fallback infrastructure exists
         assert hasattr(window, 'transfer_table')
 
@@ -84,7 +84,7 @@ class TestTableOrderingAndProgressMessages:
         """Test that table scrolls to show processing files"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test scroll to item functionality exists
         assert hasattr(window, 'transfer_table')
 
@@ -104,7 +104,7 @@ class TestSimplifiedProgressMessages:
         """Test that upload status messages are simplified"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that status update infrastructure exists
         assert hasattr(window, 'transfer_table')
 
@@ -112,7 +112,7 @@ class TestSimplifiedProgressMessages:
         """Test that percentage info is separate from status messages"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test progress tracking separation
         assert hasattr(window, 'transfer_table')
 
@@ -120,7 +120,7 @@ class TestSimplifiedProgressMessages:
         """Test that progress bars are separate from status text"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test UI component separation
         assert hasattr(window, 'transfer_table')
 
@@ -128,7 +128,7 @@ class TestSimplifiedProgressMessages:
         """Test that status updates are less frequent to reduce UI spam"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test update frequency control infrastructure
         assert hasattr(window, 'transfer_table')
 
@@ -148,7 +148,7 @@ class TestTableScrollingBehavior:
         """Test scrolling to bottom when files are added to queue"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test scroll to bottom functionality
         assert hasattr(window, 'transfer_table')
         assert callable(getattr(window.transfer_table, 'scrollToBottom', None))
@@ -157,7 +157,7 @@ class TestTableScrollingBehavior:
         """Test scrolling to active file when processing starts"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test scroll to item functionality
         assert hasattr(window, 'transfer_table')
 
@@ -165,7 +165,7 @@ class TestTableScrollingBehavior:
         """Test that status updates on queued files don't trigger scrolling"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test controlled scrolling behavior
         assert hasattr(window, 'transfer_table')
         assert hasattr(window, 'transfer_rows')

@@ -4,28 +4,29 @@ Test the Remote Integrity Check functionality for PanoramaBridge
 
 This test verifies:
 1. Remote Integrity Check button functionality
-2. Startup integrity verification 
+2. Startup integrity verification
 3. File conflict resolution handling
 4. Missing file re-uploading
 5. Corrupted file handling
 6. Thread-based integrity checking
 """
 
-import os
-import sys
-import tempfile
-import shutil
 import hashlib
 import json
+import os
+import shutil
+import sys
+import tempfile
 from datetime import datetime
-from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 
 # Add the project directory to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Import the main application
-from panoramabridge import MainWindow, IntegrityCheckThread, FileProcessor
+from panoramabridge import FileProcessor, IntegrityCheckThread, MainWindow
+
 
 def calculate_file_checksum(filepath):
     """Calculate SHA256 checksum of a file"""
@@ -70,7 +71,7 @@ class TestRemoteIntegrityCheck:
         self.file2_checksum = calculate_file_checksum(self.test_file2)
         self.file3_checksum = calculate_file_checksum(self.test_file3)
 
-        print(f"\n=== Test Setup ===")
+        print("\n=== Test Setup ===")
         print(f"Test directory: {self.test_dir}")
         print(f"Local files: {os.listdir(self.local_dir)}")
         print(f"File 1 checksum: {self.file1_checksum[:8]}...")
@@ -84,11 +85,11 @@ class TestRemoteIntegrityCheck:
     def create_mock_main_window(self):
         """Create a mock MainWindow with necessary components"""
         main_window = Mock(spec=MainWindow)
-        
+
         # Mock the transfer table
         main_window.transfer_table = Mock()
         main_window.transfer_table.rowCount.return_value = 3
-        
+
         # Mock table items
         def mock_item(row, col):
             if col == 0:  # File path column
@@ -103,9 +104,9 @@ class TestRemoteIntegrityCheck:
             elif col == 3:  # Status column
                 return Mock()
             return None
-        
+
         main_window.transfer_table.item = mock_item
-        
+
         # Mock upload history
         main_window.upload_history = {
             self.test_file1: {
@@ -115,7 +116,7 @@ class TestRemoteIntegrityCheck:
                 "file_size": os.path.getsize(self.test_file1)
             },
             self.test_file2: {
-                "remote_path": "/remote/test2.txt", 
+                "remote_path": "/remote/test2.txt",
                 "checksum": self.file2_checksum,
                 "timestamp": datetime.now().isoformat(),
                 "file_size": os.path.getsize(self.test_file2)
@@ -134,7 +135,7 @@ class TestRemoteIntegrityCheck:
 
         # Mock WebDAV client
         main_window.webdav_client = Mock()
-        
+
         # Mock file integrity verification
         def mock_verify_integrity(local_path, remote_path, expected_checksum):
             # Simulate different scenarios based on file
@@ -145,9 +146,9 @@ class TestRemoteIntegrityCheck:
             elif local_path == self.test_file3:
                 return False, "checksum mismatch"  # Corrupted file
             return True, "verified"
-        
+
         main_window.verify_remote_file_integrity = mock_verify_integrity
-        
+
         # Mock other required methods
         main_window.save_upload_history = Mock()
         main_window.file_queue = Mock()
@@ -158,151 +159,151 @@ class TestRemoteIntegrityCheck:
     def test_integrity_check_thread_all_scenarios(self):
         """Test IntegrityCheckThread with various file scenarios"""
         print("\n=== Testing IntegrityCheckThread ===")
-        
+
         main_window = self.create_mock_main_window()
-        
+
         # Create files to check
         files_to_check = [self.test_file1, self.test_file2, self.test_file3]
-        
+
         # Create and run integrity check thread
         thread = IntegrityCheckThread(files_to_check, main_window)
-        
+
         # Collect emitted signals
         progress_signals = []
         file_issue_signals = []
         finished_signal = None
-        
+
         thread.progress_signal.connect(lambda *args: progress_signals.append(args))
         thread.file_issue_signal.connect(lambda *args: file_issue_signals.append(args))
         thread.finished_signal.connect(lambda results: progress_signals.append(("FINISHED", results)))
-        
+
         # Run the thread synchronously
         thread.run()
-        
+
         print(f"Progress signals: {len(progress_signals)}")
         print(f"File issue signals: {len(file_issue_signals)}")
-        
+
         # Verify results
         finished_results = None
         for signal in progress_signals:
             if signal[0] == "FINISHED":
                 finished_results = signal[1]
                 break
-                
+
         assert finished_results is not None, "Thread should emit finished signal"
-        
+
         print(f"Final results: {finished_results}")
-        
+
         # Check expected results based on our mock setup:
         # - test_file1: verified (1 verified)
-        # - test_file2: missing (1 missing) 
+        # - test_file2: missing (1 missing)
         # - test_file3: corrupted (1 corrupted)
         assert finished_results['total'] == 3
         assert finished_results['verified'] == 1
-        assert finished_results['missing'] == 1 
+        assert finished_results['missing'] == 1
         assert finished_results['corrupted'] == 1
         assert finished_results['changed'] == 0
         assert finished_results['errors'] == 0
-        
+
         # Verify file issue signals were emitted
         assert len(file_issue_signals) == 2  # Missing and corrupted files
-        
+
         issue_types = [signal[1] for signal in file_issue_signals]
         assert "missing" in issue_types
         assert "corrupted" in issue_types
-        
+
         print("✅ IntegrityCheckThread test passed!")
 
     def test_changed_file_detection(self):
         """Test detection of locally changed files"""
         print("\n=== Testing Changed File Detection ===")
-        
+
         main_window = self.create_mock_main_window()
-        
+
         # Modify a local file to simulate change
         modified_content = "This file has been modified!"
         with open(self.test_file1, 'w') as f:
             f.write(modified_content)
-        
+
         new_checksum = calculate_file_checksum(self.test_file1)
         print(f"Original checksum: {self.file1_checksum[:8]}...")
         print(f"New checksum: {new_checksum[:8]}...")
         assert new_checksum != self.file1_checksum, "File should have different checksum"
-        
+
         # Test with IntegrityCheckThread
         thread = IntegrityCheckThread([self.test_file1], main_window)
-        
+
         file_issue_signals = []
         thread.file_issue_signal.connect(lambda *args: file_issue_signals.append(args))
-        
+
         thread.run()
-        
+
         # Verify changed file was detected
         assert len(file_issue_signals) == 1
         filepath, issue_type, details = file_issue_signals[0]
         assert filepath == self.test_file1
         assert issue_type == "changed"
         assert "modified" in details.lower()
-        
+
         print("✅ Changed file detection test passed!")
 
     def test_startup_integrity_verification_logic(self):
         """Test the startup integrity verification logic"""
         print("\n=== Testing Startup Integrity Logic ===")
-        
+
         # This tests the logic that would be called during startup monitoring
         main_window = self.create_mock_main_window()
-        
+
         # Mock the _is_file_in_monitoring_scope method
         def mock_in_scope(filepath, directory, extensions, recursive):
             return filepath.startswith(directory) and any(filepath.endswith(ext) for ext in extensions)
-        
+
         main_window._is_file_in_monitoring_scope = mock_in_scope
-        
+
         # Test parameters
         directory = self.local_dir
         extensions = [".txt"]
         recursive = True
-        
+
         # Verify the logic would work for our test files
         for filepath in [self.test_file1, self.test_file2, self.test_file3]:
             in_scope = main_window._is_file_in_monitoring_scope(filepath, directory, extensions, recursive)
             assert in_scope, f"File {filepath} should be in monitoring scope"
-        
+
         print("✅ Startup integrity verification logic test passed!")
 
     def test_missing_file_handling(self):
         """Test handling of files missing from remote"""
         print("\n=== Testing Missing File Handling ===")
-        
+
         # Create fresh test instance to avoid interference from previous tests
         main_window = self.create_mock_main_window()
-        
+
         # Recreate files to ensure they're unchanged
-        create_test_file(self.test_file1, "File 1 content") 
+        create_test_file(self.test_file1, "File 1 content")
         create_test_file(self.test_file2, "File 2 content")
-        
+
         # Update checksums in upload history to match current files
         main_window.upload_history[self.test_file1]["checksum"] = calculate_file_checksum(self.test_file1)
         main_window.upload_history[self.test_file2]["checksum"] = calculate_file_checksum(self.test_file2)
-        
+
         # Set up mock to simulate all files missing from remote
         def mock_verify_missing(local_path, remote_path, expected_checksum):
             return False, "remote file not found"
-        
+
         main_window.verify_remote_file_integrity = mock_verify_missing
-        
+
         # Run integrity check
         thread = IntegrityCheckThread([self.test_file1, self.test_file2], main_window)
-        
+
         file_issue_signals = []
         finished_signals = []
-        
+
         thread.file_issue_signal.connect(lambda *args: file_issue_signals.append(args))
         thread.finished_signal.connect(lambda results: finished_signals.append(results))
-        
+
         thread.run()
-        
+
         # Verify all files reported as missing
         assert len(file_issue_signals) == 2
         for i, signal in enumerate(file_issue_signals):
@@ -310,78 +311,78 @@ class TestRemoteIntegrityCheck:
             print(f"Signal {i}: {filepath}, {issue_type}, {details}")
             assert issue_type == "missing"
             assert "not found" in details
-        
+
         # Verify final results
         results = finished_signals[0]
         assert results['missing'] == 2
         assert results['verified'] == 0
-        
+
         print("✅ Missing file handling test passed!")
 
     def test_verification_error_handling(self):
         """Test handling of verification errors"""
         print("\n=== Testing Error Handling ===")
-        
+
         main_window = self.create_mock_main_window()
-        
+
         # Make verify_remote_file_integrity raise an exception
         def mock_verify_error(local_path, remote_path, expected_checksum):
             raise Exception("Network connection failed")
-        
+
         main_window.verify_remote_file_integrity = mock_verify_error
-        
+
         # Run integrity check
         thread = IntegrityCheckThread([self.test_file1], main_window)
-        
+
         finished_signals = []
         thread.finished_signal.connect(lambda results: finished_signals.append(results))
-        
+
         thread.run()
-        
+
         # Verify error was counted
         results = finished_signals[0]
         assert results['errors'] == 1
         assert results['verified'] == 0
-        
+
         print("✅ Error handling test passed!")
 
 def run_all_tests():
     """Run all tests"""
     test_instance = TestRemoteIntegrityCheck()
-    
+
     try:
         test_instance.setup_method()
-        
+
         # Run individual tests
         test_instance.test_integrity_check_thread_all_scenarios()
-        test_instance.test_changed_file_detection() 
+        test_instance.test_changed_file_detection()
         test_instance.test_startup_integrity_verification_logic()
         test_instance.test_missing_file_handling()
         test_instance.test_verification_error_handling()
-        
+
         print("\n🎉 ALL TESTS PASSED! 🎉")
         print("\nRemote Integrity Check implementation is working correctly:")
         print("✅ IntegrityCheckThread handles all file scenarios")
-        print("✅ Changed files are properly detected") 
+        print("✅ Changed files are properly detected")
         print("✅ Missing files trigger re-upload")
         print("✅ Corrupted files are identified")
         print("✅ Verification errors are handled gracefully")
         print("✅ Startup integrity logic works correctly")
-        
+
         return True
-        
+
     except Exception as e:
         print(f"\n❌ TEST FAILED: {e}")
         import traceback
         traceback.print_exc()
         return False
-        
+
     finally:
         test_instance.teardown_method()
 
 if __name__ == "__main__":
     print("Remote Integrity Check Test Suite")
     print("=" * 50)
-    
+
     success = run_all_tests()
     sys.exit(0 if success else 1)

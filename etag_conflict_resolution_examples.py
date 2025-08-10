@@ -6,7 +6,7 @@ Shows how the system handles different conflict resolution settings when ETag mi
 
 def demonstrate_etag_conflict_resolution():
     """Show how ETag mismatches trigger different conflict resolution behaviors."""
-    
+
     print("=== ETag MISMATCH CONFLICT RESOLUTION SCENARIOS ===")
     print()
     print("When an ETag mismatch is detected after upload, it means:")
@@ -14,7 +14,7 @@ def demonstrate_etag_conflict_resolution():
     print("• BUT the remote file content differs from what we expected")
     print("• This triggers the conflict resolution system")
     print()
-    
+
     scenarios = [
         {
             "setting": "Ask me each time (recommended)",
@@ -28,7 +28,7 @@ def demonstrate_etag_conflict_resolution():
             "notes": "Best for interactive use - user maintains control"
         },
         {
-            "setting": "Skip uploading the file", 
+            "setting": "Skip uploading the file",
             "behavior": "Automatic - keeps remote version",
             "options": ["File marked as 'Skipped due to conflict'"],
             "user_choice": "Automatic: remote version wins",
@@ -36,7 +36,7 @@ def demonstrate_etag_conflict_resolution():
         },
         {
             "setting": "Overwrite the remote file",
-            "behavior": "Automatic - replaces remote version", 
+            "behavior": "Automatic - replaces remote version",
             "options": ["Re-uploads local version to replace remote"],
             "user_choice": "Automatic: local version wins",
             "notes": "Aggressive - local version always takes precedence"
@@ -49,20 +49,20 @@ def demonstrate_etag_conflict_resolution():
             "notes": "Safe - preserves both local and remote versions"
         }
     ]
-    
+
     print("CONFLICT RESOLUTION BEHAVIORS:")
     print("=" * 60)
-    
+
     for i, scenario in enumerate(scenarios, 1):
         print(f"{i}. SETTING: {scenario['setting']}")
         print(f"   BEHAVIOR: {scenario['behavior']}")
-        print(f"   OPTIONS:")
+        print("   OPTIONS:")
         for option in scenario['options']:
             print(f"     • {option}")
         print(f"   RESULT: {scenario['user_choice']}")
         print(f"   NOTES: {scenario['notes']}")
         print()
-    
+
     print("=== EXAMPLE ETag MISMATCH WORKFLOW ===")
     print()
     print("1. User uploads 'data.csv' (local checksum: abc123...)")
@@ -75,7 +75,7 @@ def demonstrate_etag_conflict_resolution():
     print("   If 'Ask each time':")
     print("   ┌─ Conflict Dialog ─────────────────────────────────┐")
     print("   │ File Conflict Detected: data.csv                 │")
-    print("   │                                                   │") 
+    print("   │                                                   │")
     print("   │ The remote file exists but has different content  │")
     print("   │ Local checksum:  abc123...                        │")
     print("   │ Remote ETag:     def456...                        │")
@@ -89,10 +89,10 @@ def demonstrate_etag_conflict_resolution():
     print("   └───────────────────────────────────────────────────┘")
     print()
     print("   If 'Auto Overwrite': → Re-uploads local version")
-    print("   If 'Auto Skip':      → Keeps remote version") 
+    print("   If 'Auto Skip':      → Keeps remote version")
     print("   If 'Auto Rename':    → Uploads as conflict_123456_data.csv")
     print()
-    
+
     print("=== KEY BENEFITS OF THIS APPROACH ===")
     print()
     print("✅ DETECTS REAL CONFLICTS: ETag mismatch means files truly differ")

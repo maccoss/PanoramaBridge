@@ -31,10 +31,10 @@ class TestQueueTableIntegration:
         """Test that queued files are added to the transfer table"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that the transfer table exists and has basic functionality
         assert hasattr(window, 'transfer_table')
-        
+
         # Test that we can get initial row count
         initial_rows = window.transfer_table.rowCount()
         assert isinstance(initial_rows, int)
@@ -44,7 +44,7 @@ class TestQueueTableIntegration:
         """Test that duplicate files are not added to the queue twice"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that transfer_rows dict exists for tracking duplicates
         assert hasattr(window, 'transfer_rows')
         assert isinstance(window.transfer_rows, dict)
@@ -53,7 +53,7 @@ class TestQueueTableIntegration:
         """Test that relative paths are displayed correctly in the table"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that the window has the necessary components for path handling
         assert hasattr(window, 'transfer_table')
         assert hasattr(window, 'transfer_rows')
@@ -74,7 +74,7 @@ class TestPersistentChecksumCaching:
         """Test that checksum cache can be saved"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that local_checksum_cache exists
         assert hasattr(window, 'local_checksum_cache')
         assert isinstance(window.local_checksum_cache, dict)
@@ -83,7 +83,7 @@ class TestPersistentChecksumCaching:
         """Test that checksum cache can be loaded"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that the cache is properly initialized
         assert hasattr(window, 'local_checksum_cache')
         assert isinstance(window.local_checksum_cache, dict)
@@ -92,7 +92,7 @@ class TestPersistentChecksumCaching:
         """Test the save_checksum_cache method exists and can be called"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that methods for cache management exist
         # Note: We're testing the UI integration, not the detailed logic
         # (that's tested in other test files)

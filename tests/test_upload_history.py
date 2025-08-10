@@ -24,7 +24,7 @@ class MockMainWindow:
     """
     A testable version of MainWindow that includes just the methods we need to test
     without the full Qt UI initialization.
-    
+
     This is a helper class for testing, not a test class.
     """
 
@@ -258,7 +258,7 @@ class TestUploadHistory(unittest.TestCase):
     def test_is_file_already_uploaded_file_missing(self):
         """Test checking upload status when file doesn't exist"""
         missing_file = "/path/to/nonexistent.raw"
-        
+
         # Add to history
         self.app.upload_history[missing_file] = {
             'checksum': 'abc123',

@@ -1136,7 +1136,7 @@ class FileMonitorHandler(FileSystemEventHandler):
             if filepath in self.app_instance.processing_files:
                 logger.debug(f"File currently processing, skipping: {filepath}")
                 return False
-            
+
             # Check if file was already uploaded and hasn't changed
             if filepath in self.app_instance.upload_history:
                 try:
@@ -1144,7 +1144,7 @@ class FileMonitorHandler(FileSystemEventHandler):
                     current_checksum = self.app_instance.file_processor.calculate_checksum(filepath)
                     stored_info = self.app_instance.upload_history[filepath]
                     stored_checksum = stored_info.get('checksum', '')
-                    
+
                     if current_checksum == stored_checksum:
                         logger.info(f"File unchanged since last upload, skipping: {filepath}")
                         return False
@@ -1792,7 +1792,7 @@ class FileProcessor(QThread):
             upload_completed = False
 
             def progress_callback(current, total):
-                nonlocal last_status_percentage, upload_completed  # noqa: F824
+                nonlocal last_status_percentage, upload_completed
 
                 # Calculate percentage for progress bar updates
                 if total > 0:
@@ -1870,7 +1870,7 @@ class FileProcessor(QThread):
                         if "ETag mismatch" in verify_message and "file differs on server" in verify_message:
                             # This is a conflict situation - file exists remotely but is different
                             logger.info(f"ETag mismatch detected for {filename} - triggering conflict resolution")
-                            
+
                             # Get remote file info for conflict resolution
                             try:
                                 remote_info = self.webdav_client.get_file_info(remote_path)
@@ -1880,24 +1880,24 @@ class FileProcessor(QThread):
                                     "verification_failure": True,
                                     "reason": "ETag mismatch after upload"
                                 }
-                                
+
                                 # Emit conflict resolution signal
                                 self.conflict_resolution_needed.emit(
                                     filename, filepath, remote_path, conflict_details
                                 )
-                                
+
                                 # Update status to show conflict detected
                                 self.status_update.emit(
-                                    filename, 
-                                    "Upload conflict detected - awaiting user decision...", 
+                                    filename,
+                                    "Upload conflict detected - awaiting user decision...",
                                     filepath
                                 )
                                 return  # Don't report as simple failure
-                                
+
                             except Exception as e:
                                 logger.error(f"Failed to get remote info for conflict resolution: {e}")
                                 # Fall through to regular failure handling
-                        
+
                         # Regular verification failure (not a conflict)
                         self.transfer_complete.emit(
                             filename,
@@ -2127,7 +2127,7 @@ class IntegrityCheckThread(QThread):
         for i, filepath in enumerate(self.files_to_check, 1):
             try:
                 self.progress_signal.emit(filepath, i, self.results['total'], "Checking...")
-                
+
                 # Check if file is in upload history
                 if filepath not in self.main_window.upload_history:
                     self.progress_signal.emit(filepath, i, self.results['total'], "Not in upload history")
@@ -2173,7 +2173,7 @@ class IntegrityCheckThread(QThread):
                     else:
                         # No checksum available - use alternative verification
                         verification_msg = f"Remote file verified by {reason} (no upload checksum)"
-                    
+
                     self.progress_signal.emit(filepath, i, self.results['total'], verification_msg)
                     self.results['verified'] += 1
                 else:
@@ -3363,7 +3363,7 @@ class MainWindow(QMainWindow):
 
             # Clear the transfer status table for a fresh start
             self.clear_transfer_table()
-            
+
             # Scan for existing files in the directory
             self.scan_existing_files(directory, extensions, self.subdirs_check.isChecked())
 
@@ -3427,7 +3427,7 @@ class MainWindow(QMainWindow):
                         if any(filepath.lower().endswith(ext) for ext in formatted_extensions):
                             files_found += 1
                             logger.info(f"Found existing file: {filepath}")
-                            
+
                             # Check if file is already uploaded
                             is_uploaded, reason = self.is_file_already_uploaded(filepath)
                             if is_uploaded:
@@ -3460,7 +3460,7 @@ class MainWindow(QMainWindow):
                             if any(filepath.lower().endswith(ext) for ext in formatted_extensions):
                                 files_found += 1
                                 logger.info(f"Found existing file: {filepath}")
-                                
+
                                 # Check if file is already uploaded
                                 is_uploaded, reason = self.is_file_already_uploaded(filepath)
                                 if is_uploaded:
@@ -3516,7 +3516,7 @@ class MainWindow(QMainWindow):
                     continue
 
                 files_checked += 1
-                
+
                 # Check if local file still exists
                 if not os.path.exists(filepath):
                     logger.info(f"Local file no longer exists, removing from history: {filepath}")
@@ -3525,7 +3525,7 @@ class MainWindow(QMainWindow):
 
                 remote_path = history_entry.get("remote_path")
                 expected_checksum = history_entry.get("checksum")
-                
+
                 if not remote_path or not expected_checksum:
                     logger.warning(f"Incomplete history entry for {filepath}, will re-verify")
                     files_to_reupload.append((filepath, "incomplete history"))
@@ -3534,7 +3534,7 @@ class MainWindow(QMainWindow):
                 # Verify remote file integrity
                 logger.debug(f"Verifying remote integrity for: {os.path.basename(filepath)}")
                 remote_ok, reason = self.verify_remote_file_integrity(filepath, remote_path, expected_checksum)
-                
+
                 if remote_ok:
                     files_verified += 1
                     logger.debug(f"Remote file verified: {os.path.basename(filepath)} - {reason}")
@@ -3543,7 +3543,7 @@ class MainWindow(QMainWindow):
                 else:
                     logger.warning(f"Remote integrity failed: {os.path.basename(filepath)} - {reason}")
                     files_to_reupload.append((filepath, reason))
-                    
+
             except Exception as e:
                 logger.error(f"Error checking remote integrity for {filepath}: {e}")
                 files_to_reupload.append((filepath, f"verification error: {e}"))
@@ -3576,7 +3576,7 @@ class MainWindow(QMainWindow):
             # Check if file is under the monitoring directory
             filepath_abs = os.path.abspath(filepath)
             directory_abs = os.path.abspath(directory)
-            
+
             if not filepath_abs.startswith(directory_abs):
                 return False
 
@@ -3590,9 +3590,9 @@ class MainWindow(QMainWindow):
             formatted_extensions = [
                 ext.lower() if ext.startswith(".") else f".{ext.lower()}" for ext in extensions
             ]
-            
+
             return any(filepath_abs.lower().endswith(ext) for ext in formatted_extensions)
-            
+
         except Exception as e:
             logger.error(f"Error checking monitoring scope for {filepath}: {e}")
             return False
@@ -3602,7 +3602,7 @@ class MainWindow(QMainWindow):
         # Don't queue if already queued or processing
         if filepath in self.queued_files or filepath in self.processing_files:
             return False
-            
+
         # Add to tracking
         self.queued_files.add(filepath)
         return True
@@ -3665,28 +3665,28 @@ class MainWindow(QMainWindow):
     def add_completed_file_to_table(self, filepath: str, status_reason: str):
         """Add a completed (already uploaded) file to the transfer table"""
         relative_path = os.path.relpath(filepath, self.dir_input.text())
-        
+
         # Get upload info from history
         history_entry = self.upload_history.get(filepath, {})
         checksum = history_entry.get('checksum', 'Unknown')
         upload_time = history_entry.get('timestamp', 'Unknown')
         remote_path = history_entry.get('remote_path', 'Unknown')
-        
+
         # Format upload time
-        if upload_time != 'Unknown' and isinstance(upload_time, (int, float)):
+        if upload_time != 'Unknown' and isinstance(upload_time, int | float):
             try:
                 upload_time_str = datetime.fromtimestamp(upload_time).strftime('%Y-%m-%d %H:%M:%S')
-            except:
+            except (OSError, ValueError):
                 upload_time_str = 'Unknown'
         else:
             upload_time_str = str(upload_time)
-        
+
         # Create detailed status message using consistent format
         if checksum != 'Unknown':
             status_msg = f"Remote file already exists with same content (checksum: {checksum[:12]}...)"
         else:
             status_msg = f"Completed - {status_reason}"
-        
+
         # Add to table with "Completed" status
         self.add_file_to_table_with_status(
             filepath=filepath,
@@ -3694,7 +3694,7 @@ class MainWindow(QMainWindow):
             status="Completed",
             message=status_msg
         )
-        
+
         logger.debug(f"Added completed file to table: {relative_path}")
 
     def add_file_to_table_with_status(self, filepath: str, relative_path: str, status: str, message: str):
@@ -3704,13 +3704,13 @@ class MainWindow(QMainWindow):
         if file_key in self.transfer_rows:
             logger.debug(f"File already in transfer table: {relative_path}")
             return
-            
+
         row = self.transfer_table.rowCount()
         self.transfer_table.insertRow(row)
-        
+
         # File column
         self.transfer_table.setItem(row, 0, QTableWidgetItem(relative_path))
-        
+
         # Status column
         status_item = QTableWidgetItem(status)
         if status == "Completed":
@@ -3718,17 +3718,17 @@ class MainWindow(QMainWindow):
         elif status == "Queued":
             status_item.setBackground(QColor(255, 255, 224))  # Light yellow
         self.transfer_table.setItem(row, 1, status_item)
-        
+
         # Progress column (empty for completed files)
         progress_item = QTableWidgetItem("")
         self.transfer_table.setItem(row, 2, progress_item)
-        
+
         # Message column
         self.transfer_table.setItem(row, 3, QTableWidgetItem(message))
-        
+
         # Store reference
         self.transfer_rows[file_key] = row
-        
+
         # Auto-scroll to bottom to show new files
         self.transfer_table.scrollToBottom()
 
@@ -3900,7 +3900,7 @@ class MainWindow(QMainWindow):
         if filepath in self.processing_files:
             logger.debug(f"Polling: File currently processing, skipping: {filepath}")
             return False
-        
+
         # Check if file was already uploaded and hasn't changed
         if filepath in self.upload_history:
             try:
@@ -3908,7 +3908,7 @@ class MainWindow(QMainWindow):
                 current_checksum = self.file_processor.calculate_checksum(filepath)
                 stored_info = self.upload_history[filepath]
                 stored_checksum = stored_info.get('checksum', '')
-                
+
                 if current_checksum == stored_checksum:
                     logger.info(f"Polling: File unchanged since last upload, skipping: {filepath}")
                     return False
@@ -4457,7 +4457,7 @@ class MainWindow(QMainWindow):
             # Level 1: Size comparison (fastest - immediate)
             local_size = os.path.getsize(local_filepath) if os.path.exists(local_filepath) else 0
             remote_size = remote_info.get("size", 0)
-            
+
             if local_size != remote_size:
                 return False, f"size mismatch (local: {local_size}, remote: {remote_size})"
 
@@ -4466,7 +4466,7 @@ class MainWindow(QMainWindow):
             if remote_etag and expected_checksum:
                 # Clean ETag (remove quotes and weak indicators)
                 clean_etag = remote_etag.strip('"').replace("W/", "")
-                
+
                 # Check if ETag matches our SHA256 checksum directly
                 if clean_etag.lower() == expected_checksum.lower():
                     return True, "ETag (SHA256 format)"
@@ -4517,7 +4517,7 @@ class MainWindow(QMainWindow):
                     head_data = self.webdav_client.download_file_head(remote_path, 8192)
                     if head_data is None:
                         return False, "cannot read remote file"
-                
+
                 # For files without ETag, make it clear this is limited verification
                 if remote_etag is None:
                     return True, "Size + accessibility (ETag unavailable)"
@@ -4525,7 +4525,7 @@ class MainWindow(QMainWindow):
                     return True, "Size + accessibility"
             except Exception as e:
                 return False, f"accessibility check failed: {str(e)}"
-                
+
         except Exception as e:
             logger.warning(f"Error verifying remote file {remote_path}: {e}")
             return False, f"verification error: {str(e)}"
@@ -4555,7 +4555,7 @@ class MainWindow(QMainWindow):
             stored_checksum = history_entry.get("checksum")
             if not stored_checksum:
                 return False, "no stored checksum"
-            
+
             # Check if we have a cached checksum to avoid recalculation
             cache_key = f"{filepath}_{current_size}_{os.path.getmtime(filepath)}"
             if cache_key in self.local_checksum_cache:
@@ -4564,12 +4564,12 @@ class MainWindow(QMainWindow):
                 # Calculate and cache the checksum
                 current_checksum = self.file_processor.calculate_checksum(filepath)
                 self.local_checksum_cache[cache_key] = current_checksum
-            
+
             if current_checksum != stored_checksum:
                 return False, "file content changed"
 
             return True, f"already uploaded on {history_entry.get('timestamp', 'unknown date')}"
-            
+
         except Exception as e:
             logger.warning(f"Error in quick upload check for {filepath}: {e}")
             return False, "error checking history"
@@ -4693,7 +4693,7 @@ class MainWindow(QMainWindow):
         # Get all files currently in the Transfer Status table
         # Extract absolute paths from the transfer_rows dictionary keys
         files_in_table = []
-        for file_key in self.transfer_rows.keys():
+        for file_key in self.transfer_rows:
             # file_key format is "relative_path|absolute_path"
             if '|' in file_key:
                 _, absolute_path = file_key.split('|', 1)
@@ -4764,7 +4764,7 @@ class MainWindow(QMainWindow):
         self.log_text.append(
             f"{datetime.now().strftime('%H:%M:%S')} - [{checked_count}/{total_count}] {os.path.basename(current_file)}: {status}"
         )
-        
+
         # Update the table status message for verified files
         if "integrity confirmed" in status or "Verified" in status:
             self.update_file_message_in_table(current_file, status)
@@ -4794,7 +4794,7 @@ class MainWindow(QMainWindow):
         elif issue_type == "changed":
             # Local file has changed since upload - apply conflict resolution setting
             conflict_setting = self.get_conflict_resolution_setting()
-            
+
             if conflict_setting == "ask":
                 # Show conflict resolution dialog
                 self.show_file_conflict_resolution(filepath, details)
@@ -4913,7 +4913,7 @@ class MainWindow(QMainWindow):
     def show_file_conflict_resolution(self, filepath, details):
         """Show conflict resolution dialog for a locally changed file"""
         filename = os.path.basename(filepath)
-        
+
         dialog = QMessageBox(self)
         dialog.setWindowTitle("File Conflict Detected")
         dialog.setText(f"Local file has changed since upload:\n{filename}")
@@ -4937,7 +4937,7 @@ class MainWindow(QMainWindow):
                 del self.upload_history[filepath]
             self.file_queue.put(filepath)
             self.update_file_status_in_table(filepath, "Queued")
-            
+
         elif clicked_button == keep_remote_btn:
             self.log_text.append(
                 f"{datetime.now().strftime('%H:%M:%S')} - User chose to keep remote version of {filename}"
@@ -4948,7 +4948,7 @@ class MainWindow(QMainWindow):
                 if filepath in self.upload_history:
                     self.upload_history[filepath]["checksum"] = current_checksum
                     self.upload_history[filepath]["timestamp"] = datetime.now().isoformat()
-            
+
         else:  # skip
             self.log_text.append(
                 f"{datetime.now().strftime('%H:%M:%S')} - User chose to skip {filename}"

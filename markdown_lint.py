@@ -6,10 +6,9 @@ Only checks for the most important markdown issues without noise.
 
 import sys
 from pathlib import Path
-from typing import List, Tuple
 
 
-def check_markdown_file(filepath: Path) -> List[Tuple[int, str, str]]:
+def check_markdown_file(filepath: Path) -> list[tuple[int, str, str]]:
     """Check a markdown file for important issues only."""
     issues = []
 
@@ -58,7 +57,7 @@ def main():
             print(f"❌ File not found: {filepath}")
             continue
 
-        if not filepath.suffix.lower() == ".md":
+        if filepath.suffix.lower() != ".md":
             print(f"⚠️  Skipping non-markdown file: {filepath}")
             continue
 

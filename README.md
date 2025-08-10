@@ -310,9 +310,13 @@ Authorization: Basic <credentials>
 - Downloads small files completely for checksum verification
 - Most accurate but resource-intensive method
 
-**Level 6: Accessibility Verification (10MB-100MB fallback)**
-- Downloads first 8KB to verify file accessibility
-- Used when full download fails or is impractical
+**Level 6: Accessibility Verification (fallback)**
+- **Purpose**: Verifies the remote file exists and can be read when other methods fail
+- **Method**: Downloads first 8KB of file content (not just metadata)
+- **Confirms**: File exists, is readable, user has permissions, server is functional
+- **Cannot Confirm**: Complete file integrity or content correctness
+- **Used When**: ETag unavailable, unknown ETag formats, or other verification methods fail
+- **Performance**: Minimal bandwidth usage (8KB vs full file download)
 
 **Implementation:**
 ```python
@@ -405,8 +409,9 @@ This systematic approach ensures reliable, efficient, and verified file transfer
 
 - **Chunked Upload**: Handles large files efficiently with configurable chunk sizes
 - **Progress Tracking**: Real-time progress bars for each transfer
-- **Checksum Verification**: Calculates SHA256 checksums for integrity with post-upload verification
-- **Upload Integrity Check**: Downloads and verifies files < 50MB, uses ETag/size comparison for larger files
+- **Checksum Generation**: Calculates SHA256 checksums for upload metadata (not used for verification due to performance cost)
+- **Multi-Format ETag Verification**: Supports SHA256 and MD5 ETags for efficient integrity checking
+- **Accessibility Verification**: Downloads first 8KB to verify file readability when ETags unavailable
 - **Directory Structure**: Option to preserve local folder structure on remote
 - **Automatic Retry**: Robust error handling and connection management
 

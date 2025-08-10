@@ -31,7 +31,7 @@ class TestRealMethodsWithMocks:
         """Test that the real save_config method can be called"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that config-related components exist
         assert hasattr(window, 'config')
 
@@ -39,7 +39,7 @@ class TestRealMethodsWithMocks:
         """Test that the real load_settings method can be called"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that settings loading infrastructure exists
         assert hasattr(window, 'config')
 
@@ -47,7 +47,7 @@ class TestRealMethodsWithMocks:
         """Test that the real save_checksum_cache method works"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that checksum cache exists
         assert hasattr(window, 'local_checksum_cache')
         assert isinstance(window.local_checksum_cache, dict)
@@ -56,7 +56,7 @@ class TestRealMethodsWithMocks:
         """Test save_checksum_cache with empty cache"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that empty cache is handled properly
         assert hasattr(window, 'local_checksum_cache')
 
@@ -76,7 +76,7 @@ class TestEndToEndCacheWorkflow:
         """Test complete cache save/load roundtrip using real methods"""
         window = MainWindow()
         qtbot.addWidget(window)
-        
+
         # Test that cache workflow infrastructure exists
         assert hasattr(window, 'local_checksum_cache')
         assert hasattr(window, 'config')

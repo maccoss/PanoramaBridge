@@ -39,6 +39,47 @@ The system now supports multiple ETag formats:
 - **MD5 ETags** (Apache servers): Calculates MD5 of local file for comparison
 - **Unknown formats**: Falls back to size + accessibility verification
 
+### Accessibility Assessment
+
+When ETag verification is unavailable or fails, the system performs an **accessibility check** to verify
+that the remote file exists and can be read properly:
+
+**How Accessibility is Tested:**
+
+1. **HTTP HEAD Request**: Sends a partial content request to download only the first 8KB of the file
+2. **Read Verification**: Confirms the server can successfully serve file content (not just metadata)
+3. **Response Validation**: Ensures the server returns actual file data, not error pages or redirects
+
+**Technical Implementation:**
+
+```python
+# Downloads first 8192 bytes to verify file accessibility
+head_data = self.webdav_client.download_file_head(remote_path, 8192)
+if head_data is None:
+    return False, "cannot read remote file"
+```
+
+**What Accessibility Confirms:**
+
+- ✅ **File Exists**: Remote file is present on the server
+- ✅ **File Readable**: Server can successfully serve file content
+- ✅ **Not Corrupted Metadata**: File isn't a broken link or placeholder
+- ✅ **Permission Access**: User has read permissions for the file
+- ✅ **Server Functional**: WebDAV server is responding correctly
+
+**What Accessibility Cannot Confirm:**
+
+- ❌ **Content Integrity**: Cannot verify the entire file content is correct
+- ❌ **Checksum Match**: No cryptographic verification of file contents
+- ❌ **Complete File**: Only verifies first 8KB, not the entire file
+
+**When Accessibility is Used:**
+
+- Server doesn't provide ETags
+- Server uses unknown ETag formats
+- ETag verification fails but file might still be valid
+- As final verification step when other methods unavailable
+
 ### What Happens During Check
 
 - Button shows "Checking... (X/Y)" progress
