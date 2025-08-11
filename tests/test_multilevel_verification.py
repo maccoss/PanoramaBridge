@@ -14,7 +14,7 @@ def test_enhanced_etag_verification_code():
 
     # Read the main application file
     panorama_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'panoramabridge.py')
-    with open(panorama_path) as f:
+    with open(panorama_path, encoding='utf-8') as f:
         content = f.read()
 
     # Check for new enhanced verification implementation
@@ -51,7 +51,7 @@ def test_verify_remote_file_integrity_function_exists():
     """Test that the verify_remote_file_integrity function exists with correct signature"""
 
     panorama_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'panoramabridge.py')
-    with open(panorama_path) as f:
+    with open(panorama_path, encoding='utf-8') as f:
         content = f.read()
 
     # Check for function definition
@@ -66,7 +66,7 @@ def test_no_expensive_checksum_verification():
     """Test that expensive checksum verification has been removed"""
 
     panorama_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'panoramabridge.py')
-    with open(panorama_path) as f:
+    with open(panorama_path, encoding='utf-8') as f:
         content = f.read()
 
     # Check that old expensive verification patterns are gone
@@ -92,7 +92,7 @@ def test_enhanced_etag_format_support():
     """Test that multiple ETag formats are supported"""
 
     panorama_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'panoramabridge.py')
-    with open(panorama_path) as f:
+    with open(panorama_path, encoding='utf-8') as f:
         content = f.read()
 
     # Check for MD5 support
