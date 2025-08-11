@@ -108,8 +108,8 @@ jobs:
         1. Download PanoramaBridge.exe
         2. Run the executable (Windows may show security warning for unsigned files)
         3. Configure your WebDAV settings
+        "@
         
-                
         $buildInfo | Out-File -FilePath "dist/BUILD_INFO.txt" -Encoding UTF8
         Write-Host "Build info created"
       shell: powershell
@@ -153,7 +153,6 @@ jobs:
           - Nearly ready for people to start trying this.
           - Tested is for a number of scenarios
           - Currently more functionality for WebDav than Panorama can support like ETags and file chunking.
-          
           
           **System Requirements:**
           - Windows 11 (recommended) or Windows 10
