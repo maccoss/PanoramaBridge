@@ -151,9 +151,8 @@ jobs:
           
           **What's New:**
           - Nearly ready for people to start trying this.
-          - Fixed a yaml issue terminator in this file.
-          - Fixed a UTF-8 encoding issue in the test test_multilevel_verification.py. I forgot to specify UTF-8 and windows was defaulting to cp1252.
-          - Tested is for a number of scenarios
+          - Improved error handling and reporting for file uploads.
+          - Much better conflict resolution for file uploads and when files are modified.
           - Currently more functionality for WebDav than Panorama can support like ETags and file chunking.
           
           **System Requirements:**
