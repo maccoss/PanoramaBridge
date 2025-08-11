@@ -19,16 +19,43 @@ on:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          # x86_64 build on standard Windows runner
+          - arch: x64
+            runner: windows-latest
+            spec_file: PanoramaBridge.spec
+            executable_name: PanoramaBridge.exe
+            artifact_name: PanoramaBridge-Windows-x64
+            release_name: PanoramaBridge-Windows-x64.exe
+            python_arch: x64
+          # ARM64 build on ARM64 Windows runner
+          - arch: arm64
+            runner: windows-latest-arm64
+            spec_file: PanoramaBridge-arm64.spec
+            executable_name: PanoramaBridge-arm64.exe
+            artifact_name: PanoramaBridge-Windows-ARM64
+            release_name: PanoramaBridge-Windows-ARM64.exe
+            python_arch: arm64
+    
+    runs-on: ${{ matrix.runner }}
     
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
       
-    - name: Set up Python
+    - name: Set up Python (${{ matrix.arch }})
       uses: actions/setup-python@v4
       with:
         python-version: '3.12'
+        architecture: ${{ matrix.python_arch }}
+        
+    - name: Verify Python Architecture
+      run: |
+        python -c "import platform; print(f'Python platform: {platform.machine()} - {platform.architecture()[0]}')"
+        python -c "import sys; print(f'Python executable: {sys.executable}')"
+      shell: powershell
         
     - name: Install dependencies
       run: |
@@ -36,42 +63,58 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller
         
-    - name: Run tests
+    - name: Verify PyQt6 Installation
+      run: |
+        python -c "import PyQt6.QtCore; print(f'PyQt6 Version: {PyQt6.QtCore.PYQT_VERSION_STR}')"
+      shell: powershell
+        
+    - name: Run tests (x64 only)
+      if: matrix.arch == 'x64'
       run: |
         python -m pytest tests/test_upload_history.py tests/test_upload_history_simple.py tests/test_qt_ui.py tests/test_queue_table_integration.py tests/test_table_ordering_and_progress_messages.py tests/test_real_methods_integration.py -v --tb=short
         
-    - name: Build executable
+    - name: Build executable (${{ matrix.arch }})
       run: |
-        pyinstaller build_scripts/PanoramaBridge.spec
+        pyinstaller build_scripts/${{ matrix.spec_file }}
         
-    - name: Verify build
+    - name: Verify build (${{ matrix.arch }})
       run: |
-        if (Test-Path "dist/PanoramaBridge.exe") {
-          Write-Host "Build successful!" -ForegroundColor Green
-          $fileInfo = Get-Item "dist/PanoramaBridge.exe"
+        if (Test-Path "dist/${{ matrix.executable_name }}") {
+          Write-Host "Build successful for ${{ matrix.arch }}!" -ForegroundColor Green
+          $fileInfo = Get-Item "dist/${{ matrix.executable_name }}"
           $sizeInMB = [math]::Round($fileInfo.Length / 1MB, 2)
           Write-Host "File size: $($fileInfo.Length) bytes ($sizeInMB MB)" -ForegroundColor Yellow
+          
+          # Try to get executable architecture info
+          try {
+            $archInfo = & dumpbin /headers "dist/${{ matrix.executable_name }}" 2>$null | Select-String "machine"
+            if ($archInfo) {
+              Write-Host "Executable architecture: $archInfo" -ForegroundColor Yellow
+            }
+          } catch {
+            Write-Host "Could not verify executable architecture (dumpbin not available)" -ForegroundColor Yellow
+          }
         } else {
-          Write-Host "Build failed - executable not found!" -ForegroundColor Red
+          Write-Host "Build failed for ${{ matrix.arch }} - executable not found!" -ForegroundColor Red
           exit 1
         }
       shell: powershell
       
-    - name: Upload executable as artifact
+    - name: Upload executable as artifact (${{ matrix.arch }})
       uses: actions/upload-artifact@v4
       with:
-        name: PanoramaBridge-Windows-${{ github.sha }}
-        path: dist/PanoramaBridge.exe
+        name: ${{ matrix.artifact_name }}-${{ github.sha }}
+        path: dist/${{ matrix.executable_name }}
         retention-days: 30
         
     # Only create release assets if this is a tagged release
-    - name: Upload to Release
+    - name: Upload to Release (${{ matrix.arch }})
       if: github.event_name == 'release'
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./dist/PanoramaBridge.exe
-        asset_name: PanoramaBridge-Windows.exe
+        asset_path: ./dist/${{ matrix.executable_name }}
+        asset_name: ${{ matrix.release_name }}
         asset_content_type: application/octet-stream

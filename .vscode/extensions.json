@@ -6,6 +6,5 @@
         "ms-python.pylint",
         "littlefoxteam.vscode-python-test-adapter",
         "hbenl.vscode-test-explorer",
-        "anthropic.claude-code"
     ]
 }

@@ -1,5 +1,6 @@
 /.venv
 /.venv-win
+/.venv-arm64
 panoramabridge.log
 build/*
 /.pytest_cache

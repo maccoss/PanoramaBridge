@@ -28,104 +28,202 @@ on:
 
 # Required permissions for the GITHUB_TOKEN
 permissions:
-  contents: write  # Required to create releases
+  contents: write  # Required to create releases and download artifacts
   actions: read    # Required to read workflow artifacts
 
 jobs:
   build-and-release:
-    runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          # x86_64 build on standard Windows runner
+          - arch: x64
+            runner: windows-latest
+            spec_file: PanoramaBridge.spec
+            executable_name: PanoramaBridge.exe
+            artifact_name: PanoramaBridge-Windows-x64
+            release_name: PanoramaBridge-Windows-x64.exe
+            python_arch: x64
+            description: "Intel/AMD 64-bit"
+          # ARM64 build on ARM64 Windows runner
+          - arch: arm64
+            runner: windows-latest-arm64
+            spec_file: PanoramaBridge-arm64.spec
+            executable_name: PanoramaBridge-arm64.exe
+            artifact_name: PanoramaBridge-Windows-ARM64
+            release_name: PanoramaBridge-Windows-ARM64.exe
+            python_arch: arm64
+            description: "ARM64/Snapdragon"
+    
+    runs-on: ${{ matrix.runner }}
     
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
       
-    - name: Set up Python 3.12
+    - name: Set up Python 3.12 (${{ matrix.arch }})
       uses: actions/setup-python@v4
       with:
         python-version: '3.12'
+        architecture: ${{ matrix.python_arch }}
         cache: 'pip'
+        
+    - name: Verify Python Architecture
+      run: |
+        python -c "import platform; print(f'Python platform: {platform.machine()} - {platform.architecture()[0]}')"
+        python -c "import sys; print(f'Python executable: {sys.executable}')"
+        Write-Host "Building for: ${{ matrix.arch }} (${{ matrix.description }})" -ForegroundColor Cyan
+      shell: powershell
         
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller
+        
+    - name: Verify PyQt6 Installation
+      run: |
+        python -c "import PyQt6.QtCore; print(f'PyQt6 Version: {PyQt6.QtCore.PYQT_VERSION_STR}')"
+      shell: powershell
         pip install pytest
         
-    - name: Run tests (optional)
+    - name: Run tests (x64 only)
+      if: matrix.arch == 'x64'
       run: |
         python -m pytest tests/ -v --tb=short
       continue-on-error: true  # Don't fail build if tests fail
       
-    - name: Build Windows executable
+    - name: Build Windows executable (${{ matrix.arch }})
       run: |
-        Write-Host "Building PanoramaBridge executable..." -ForegroundColor Cyan
-        pyinstaller build_scripts/PanoramaBridge.spec
+        Write-Host "Building PanoramaBridge executable for ${{ matrix.arch }}..." -ForegroundColor Cyan
+        pyinstaller build_scripts/${{ matrix.spec_file }}
         
-        if (Test-Path "dist/PanoramaBridge.exe") {
-          Write-Host "Build completed successfully!" -ForegroundColor Green
+        if (Test-Path "dist/${{ matrix.executable_name }}") {
+          Write-Host "Build completed successfully for ${{ matrix.arch }}!" -ForegroundColor Green
           
           # Get file info
-          $fileInfo = Get-Item "dist/PanoramaBridge.exe"
+          $fileInfo = Get-Item "dist/${{ matrix.executable_name }}"
           $sizeInMB = [math]::Round($fileInfo.Length / 1MB, 2)
-          $hash = (Get-FileHash "dist/PanoramaBridge.exe" -Algorithm SHA256).Hash
+          $hash = (Get-FileHash "dist/${{ matrix.executable_name }}" -Algorithm SHA256).Hash
           
-          Write-Host "File: PanoramaBridge.exe" -ForegroundColor Yellow
+          Write-Host "File: ${{ matrix.executable_name }}" -ForegroundColor Yellow
           Write-Host "Size: $($fileInfo.Length) bytes ($sizeInMB MB)" -ForegroundColor Yellow
           Write-Host "SHA256: $hash" -ForegroundColor Yellow
+          Write-Host "Architecture: ${{ matrix.arch }} (${{ matrix.description }})" -ForegroundColor Yellow
           
-          # Save info for later steps
-          echo "EXECUTABLE_SIZE=$($fileInfo.Length)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "EXECUTABLE_SIZE_MB=$sizeInMB" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "EXECUTABLE_HASH=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # Try to get executable architecture info
+          try {
+            $archInfo = & dumpbin /headers "dist/${{ matrix.executable_name }}" 2>$null | Select-String "machine"
+            if ($archInfo) {
+              Write-Host "Executable target: $archInfo" -ForegroundColor Yellow
+            }
+          } catch {
+            Write-Host "Could not verify executable architecture (dumpbin not available)" -ForegroundColor Yellow
+          }
+          
+          # Save info for later steps with arch prefix to avoid conflicts
+          echo "EXECUTABLE_SIZE_${{ matrix.arch }}=$($fileInfo.Length)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "EXECUTABLE_SIZE_MB_${{ matrix.arch }}=$sizeInMB" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "EXECUTABLE_HASH_${{ matrix.arch }}=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         } else {
-          Write-Host "Build failed - executable not found!" -ForegroundColor Red
+          Write-Host "Build failed for ${{ matrix.arch }} - executable not found!" -ForegroundColor Red
           Get-ChildItem -Recurse dist/ -ErrorAction SilentlyContinue
           exit 1
         }
       shell: powershell
       
-    - name: Create build info
+    - name: Create build info (${{ matrix.arch }})
       run: |
         $buildInfo = @"
-        PanoramaBridge Windows Build
-        ============================
+        PanoramaBridge Windows Build (${{ matrix.arch }})
+        ===============================================
         
+        Architecture: ${{ matrix.arch }} (${{ matrix.description }})
         Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')
         Git Commit: ${{ github.sha }}
         Git Ref: ${{ github.ref }}
         
         Executable Info:
-        - Size: ${{ env.EXECUTABLE_SIZE }} bytes (${{ env.EXECUTABLE_SIZE_MB }} MB)
-        - SHA256: ${{ env.EXECUTABLE_HASH }}
+        - File: ${{ matrix.executable_name }}
+        - Size: ${{ env[format('EXECUTABLE_SIZE_{0}', matrix.arch)] }} bytes (${{ env[format('EXECUTABLE_SIZE_MB_{0}', matrix.arch)] }} MB)
+        - SHA256: ${{ env[format('EXECUTABLE_HASH_{0}', matrix.arch)] }}
         
         System Info:
         - OS: Windows Latest (GitHub Actions)
-        - Python: 3.12
+        - Runner: ${{ matrix.runner }}
+        - Python: 3.12 (${{ matrix.python_arch }})
         - PyInstaller: $(pip show pyinstaller | Select-String "Version:" | ForEach-Object { $_.ToString().Split(":")[1].Trim() })
         
         Installation:
-        1. Download PanoramaBridge.exe
+        1. Download ${{ matrix.executable_name }}
         2. Run the executable (Windows may show security warning for unsigned files)
         3. Configure your WebDAV settings
+        
+        Compatibility:
+        - ${{ matrix.description }} processors
+        - Windows 10/11
         "@
         
-        $buildInfo | Out-File -FilePath "dist/BUILD_INFO.txt" -Encoding UTF8
-        Write-Host "Build info created"
+        $buildInfo | Out-File -FilePath "dist/BUILD_INFO_${{ matrix.arch }}.txt" -Encoding UTF8
+        Write-Host "Build info created for ${{ matrix.arch }}"
       shell: powershell
       
-    - name: Upload Build Artifacts
+    - name: Upload Build Artifacts (${{ matrix.arch }})
       uses: actions/upload-artifact@v4
       with:
-        name: PanoramaBridge-Windows-Build-${{ github.run_number }}
+        name: ${{ matrix.artifact_name }}-Build-${{ github.run_number }}
         path: |
-          dist/PanoramaBridge.exe
-          dist/BUILD_INFO.txt
+          dist/${{ matrix.executable_name }}
+          dist/BUILD_INFO_${{ matrix.arch }}.txt
         retention-days: 90
         
-    # Create release if triggered by tag or manual input
+  # Separate job to create the release after all builds complete
+  create-release:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+    
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts
+        
+    - name: Prepare release assets
+      run: |
+        # Create release directory
+        mkdir -p release-assets
+        
+        # Find and copy all executables and build info files
+        find ./artifacts -name "*.exe" -exec cp {} ./release-assets/ \;
+        find ./artifacts -name "BUILD_INFO_*.txt" -exec cp {} ./release-assets/ \;
+        
+        # List what we found
+        echo "Release assets prepared:"
+        ls -la ./release-assets/
+        
+        # Get file sizes and hashes for release notes
+        cd ./release-assets
+        echo "## Build Information" > ../build-summary.md
+        echo "" >> ../build-summary.md
+        
+        for exe in *.exe; do
+          if [ -f "$exe" ]; then
+            size=$(stat -f%z "$exe" 2>/dev/null || stat -c%s "$exe")
+            size_mb=$(echo "scale=2; $size / 1048576" | bc -l 2>/dev/null || echo "$(($size / 1048576))")
+            hash=$(shasum -a 256 "$exe" | cut -d' ' -f1)
+            
+            echo "### $exe" >> ../build-summary.md
+            echo "- **Size:** $size bytes (${size_mb} MB)" >> ../build-summary.md
+            echo "- **SHA256:** \`$hash\`" >> ../build-summary.md
+            echo "" >> ../build-summary.md
+          fi
+        done
+        
     - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
@@ -134,30 +232,49 @@ jobs:
         prerelease: false
         generate_release_notes: true
         files: |
-          dist/PanoramaBridge.exe
-          dist/BUILD_INFO.txt
+          ./release-assets/*
         body: |
           ## PanoramaBridge ${{ github.ref_name }}
           
-          **Windows Executable Download:**
-          - **PanoramaBridge.exe** (${{ env.EXECUTABLE_SIZE_MB }} MB)
-          - **SHA256:** `${{ env.EXECUTABLE_HASH }}`
+          **Multi-Architecture Support:**
+          This release includes executables for both processor architectures:
           
-          **Installation:**
-          1. Download the `PanoramaBridge.exe` file below
-          2. Run the executable (Windows may show a security warning for unsigned applications)
+          ### 🖥️ Intel/AMD (x86_64)
+          - **PanoramaBridge.exe** - For standard desktop/laptop computers
+          - Compatible with Intel and AMD processors
+          - Works on all Windows 10/11 systems
+          
+          ### 📱 ARM64/Snapdragon  
+          - **PanoramaBridge-arm64.exe** - For ARM64 devices
+          - Optimized for Snapdragon laptops and ARM64 processors
+          - Native performance on ARM64 systems
+          
+          ### 📥 Download Instructions
+          **Choose the right version for your system:**
+          - **Most users**: Download `PanoramaBridge.exe` (Intel/AMD)
+          - **Snapdragon laptop users**: Download `PanoramaBridge-arm64.exe` (ARM64)
+          - **Not sure?** Try the regular `PanoramaBridge.exe` first
+          
+          ### 🚀 Installation
+          1. Download the appropriate executable for your system
+          2. Run the executable (Windows may show a security warning for unsigned applications - click "More info" then "Run anyway")
           3. Configure your WebDAV server settings
           4. Start monitoring your files!
           
-          **What's New:**
-          - Nearly ready for people to start trying this.
-          - Improved error handling and reporting for file uploads.
-          - Much better conflict resolution for file uploads and when files are modified.
-          - Currently more functionality for WebDav than Panorama can support like ETags and file chunking.
+          ### ✨ What's New
+          - Nearly ready for people to start trying this
+          - **Multi-architecture support** - native ARM64 builds for Snapdragon devices
+          - Improved error handling and reporting for file uploads
+          - Much better conflict resolution for file uploads and when files are modified
+          - Currently more functionality for WebDAV than Panorama can support like ETags and file chunking
           
-          **System Requirements:**
-          - Windows 11 (recommended) or Windows 10
-          - No additional installations required - this is a standalone executable
+          ### 🖥️ System Requirements
+          - **Windows 11** (recommended) or **Windows 10**
+          - **Intel/AMD processor** (for PanoramaBridge.exe) or **ARM64/Snapdragon processor** (for PanoramaBridge-arm64.exe)
+          - No additional installations required - these are standalone executables
+          
+          ### 📋 Build Details
+          See the `BUILD_INFO_*.txt` files for detailed build information including checksums.
           
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

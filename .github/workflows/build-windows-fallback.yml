@@ -1,0 +1,85 @@
+name: Build Windows Executable (Fallback)
+
+# Fallback workflow for building both x64 and ARM64 if native ARM64 runners fail
+# This uses x64 runners with cross-compilation attempts
+on:
+  # Manual trigger only - use this if the main build-windows.yml fails
+  workflow_dispatch:
+    inputs:
+      force_cross_compile:
+        description: 'Force cross-compilation for ARM64'
+        required: false
+        default: 'true'
+        type: boolean
+
+jobs:
+  build-windows-fallback:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          # x86_64 build (same as main workflow)
+          - arch: x64
+            spec_file: PanoramaBridge.spec
+            executable_name: PanoramaBridge.exe
+            artifact_name: PanoramaBridge-Windows-x64-fallback
+            python_arch: x64
+          # ARM64 cross-compile attempt (may not work perfectly)
+          - arch: arm64
+            spec_file: PanoramaBridge-arm64.spec
+            executable_name: PanoramaBridge-arm64.exe
+            artifact_name: PanoramaBridge-Windows-ARM64-fallback
+            python_arch: x64  # Use x64 Python but try to target ARM64
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        architecture: ${{ matrix.python_arch }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+        
+    - name: Run tests (x64 only)
+      if: matrix.arch == 'x64'
+      run: |
+        python -m pytest tests/test_upload_history.py tests/test_upload_history_simple.py tests/test_qt_ui.py -v --tb=short
+        
+    - name: Build executable (${{ matrix.arch }})
+      run: |
+        if ("${{ matrix.arch }}" -eq "arm64") {
+          Write-Host "WARNING: Cross-compiling ARM64 on x64 - this may not work properly!" -ForegroundColor Yellow
+          Write-Host "Consider using the main workflow with native ARM64 runners instead." -ForegroundColor Yellow
+        }
+        pyinstaller build_scripts/${{ matrix.spec_file }}
+        
+    - name: Verify build (${{ matrix.arch }})
+      run: |
+        if (Test-Path "dist/${{ matrix.executable_name }}") {
+          Write-Host "Build completed for ${{ matrix.arch }}!" -ForegroundColor Green
+          $fileInfo = Get-Item "dist/${{ matrix.executable_name }}"
+          $sizeInMB = [math]::Round($fileInfo.Length / 1MB, 2)
+          Write-Host "File size: $($fileInfo.Length) bytes ($sizeInMB MB)" -ForegroundColor Yellow
+          
+          if ("${{ matrix.arch }}" -eq "arm64") {
+            Write-Host "WARNING: ARM64 executable built via cross-compilation - test thoroughly on ARM64 hardware!" -ForegroundColor Yellow
+          }
+        } else {
+          Write-Host "Build failed for ${{ matrix.arch }} - executable not found!" -ForegroundColor Red
+          exit 1
+        }
+      shell: powershell
+      
+    - name: Upload executable as artifact (${{ matrix.arch }})
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}-${{ github.sha }}
+        path: dist/${{ matrix.executable_name }}
+        retention-days: 30
