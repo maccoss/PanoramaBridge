@@ -1,10 +1,14 @@
-# Remote Integrity Check System
+# Remote Integrity Check System (Updated 2025)
 
 ## Overview
 
-PanoramaBridge includes an on-demand verification system to check that uploaded files are intact on the
-remote server. **Note**: Checksums are generated for upload metadata but are **not used for verification**
-due to performance cost.
+PanoramaBridge includes a comprehensive verification system to check that all local files are properly uploaded and intact on the remote server. The system has been recently enhanced with improved conflict resolution logic that no longer assumes corruption when files differ.
+
+**Key Improvements (2025 Update):**
+- **No Corruption Assumptions**: File differences are treated as conflicts requiring user resolution, not assumed corruption
+- **Comprehensive File Coverage**: Checks ALL local files, not just those in upload history  
+- **Intelligent Conflict Resolution**: Uses your configured conflict resolution settings for all file differences
+- **Better User Feedback**: Clear, actionable error messages with specific guidance
 
 **Verification Messages You'll See:**
 
@@ -12,6 +16,7 @@ due to performance cost.
 - "Remote file verified by ETag (MD5 format)" - Server uses MD5-based ETags (Apache default)
 - "Remote file verified by Size + accessibility (ETag unavailable)" - Server doesn't provide ETags
 - "Remote file verified by Size + accessibility (server uses unknown ETag format)" - Unrecognized ETag format
+- "File conflict detected - applying conflict resolution" - File differs, using your settings to resolve
 
 ## How It Works
 
@@ -84,18 +89,31 @@ if head_data is None:
 
 - Button shows "Checking... (X/Y)" progress
 - File monitoring pauses temporarily
-- Results dialog shows verification status
-- Missing/corrupted files are automatically re-queued for upload
+- **All local files are verified**, not just previously uploaded ones
+- Missing files are automatically queued for re-upload
+- File differences trigger conflict resolution based on your settings
+- Results dialog shows verification status with specific details
 
 ### Results
 
 **If all files verified:** "All X files verified successfully!"
 
-**If issues found:** Shows counts of:
+**If issues found:** Shows counts and specific guidance for:
 
-- Files missing from remote (queued for upload)
-- Files corrupted on remote (queued for re-upload)
-- Files with verification errors
+- **Files missing from remote**: Automatically queued for upload
+- **Files with conflicts**: Handled according to your conflict resolution settings
+- **Files with verification errors**: Network or server issues requiring attention
+
+### Conflict Resolution Integration
+
+When the integrity check detects that a file differs between local and remote, it no longer assumes corruption. Instead:
+
+1. **Applies Your Settings**: Uses your configured conflict resolution setting ("Ask me each time", "Always upload", etc.)
+2. **Respects User Choice**: For "Ask me each time", shows conflict dialog for user decision
+3. **Clear Communication**: Explains that files differ without assuming which version is "correct"
+4. **Preserves Data**: Never automatically overwrites without user consent when set to "Ask me each time"
+
+This approach ensures that legitimate changes (whether made locally or on the server) are handled appropriately.
 
 ## When to Use
 

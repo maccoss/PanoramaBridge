@@ -24,15 +24,15 @@ A Python Qt6 application for monitoring local directories and automatically tran
 - **Smart Locked File Handling**: Automatically detects and retries locked files from mass spectrometers
 - **Checksum Caching**: Dramatic performance improvements (up to 1700x faster for unchanged files)
 - **Upload History Tracking**: Persistent tracking of successfully uploaded files with integrity verification
-- **Remote File Integrity Verification**: Validates remote file integrity on startup to ensure data consistency
+- **Remote File Integrity Verification**: Comprehensive verification system that ensures all local files are properly uploaded to the remote server, with intelligent conflict resolution for file differences
 - **Progress Indication**: Real-time progress bars with elapsed time and countdown timers
 - **Windows Native Support**: Optimized .venv-win virtual environment for better file system event detection
 - **Configurable Retry Logic**: Customizable wait times and retry attempts for locked files
 
 ### Performance & Reliability
 - **OS Event-Driven Monitoring**: Immediate file detection without polling overhead
-- **Intelligent Conflict Resolution**: Smart file comparison and duplicate handling
-- **Remote Integrity Guarantee**: Automatically re-uploads corrupted or missing remote files
+- **Intelligent Conflict Resolution**: Smart file comparison and conflict handling with user choice
+- **Remote Integrity Verification**: Automatically verifies and resolves missing or changed remote files
 - **Persistent State Management**: Maintains upload history across application restarts
 - **Comprehensive Logging**: Detailed logs with menu-based access for troubleshooting
 - **Cross-platform**: Works on Windows, Linux, and macOS (Windows native recommended)
@@ -297,7 +297,7 @@ Authorization: Basic <credentials>
 **Step 2: ETag Verification (Primary Method)**
 - Attempts SHA256 ETag comparison first (most servers)
 - Falls back to MD5 ETag comparison (Apache default)
-- ETag mismatch indicates file integrity problem and triggers conflict resolution
+- ETag mismatch indicates file difference and triggers conflict resolution
 
 **Step 3: Accessibility Check (Fallback)**  
 - Used only when ETag is unavailable or unknown format
@@ -328,11 +328,11 @@ def verify_remote_file_integrity(self, local_filepath: str, remote_path: str, ex
             if clean_etag.lower() == local_md5.lower():
                 return True, "ETag (MD5 format)"
             else:
-                return False, "ETag mismatch - file integrity problem"
+                return False, "ETag mismatch - file difference detected"
         
-        # ETag mismatch with same length = corruption
+        # ETag mismatch with same length = file difference requiring resolution
         elif len(clean_etag) == len(expected_checksum):
-            return False, "ETag mismatch - file integrity problem"
+            return False, "ETag mismatch - file difference detected"
     
     # Step 3: Accessibility check (fallback when ETag unavailable/unknown)
     head_data = self.webdav_client.download_file_head(remote_path, 8192)
@@ -353,19 +353,28 @@ def verify_remote_file_integrity(self, local_filepath: str, remote_path: str, ex
 - Enables intelligent skip-already-uploaded file detection across application restarts
 
 **On-Demand Remote Integrity Verification:**
-PanoramaBridge uses the same 3-step verification system for remote integrity checks:
+PanoramaBridge uses a comprehensive 3-step verification system for remote integrity checks:
 
-1. **Startup Verification**: Automatically checks previously uploaded files when monitoring starts
-2. **Manual Verification**: "Remote Integrity Check" button for on-demand verification
-3. **Automatic Recovery**: Re-queues corrupted or missing files for re-upload
-4. **Conflict Resolution**: Handles locally changed files with user choice
+1. **Startup Verification**: Automatically checks all local files when monitoring starts to ensure they exist on remote server
+2. **Manual Verification**: "Remote Integrity Check" button for on-demand verification of all files in the transfer table
+3. **Intelligent Conflict Resolution**: Handles file differences through configurable conflict resolution settings
+4. **Automatic Recovery**: Missing files are automatically queued for re-upload
 
 **Verification Results:**
 - ✅ **Verified**: File exists and integrity confirmed (ETag or accessibility check)
-- 🔄 **Missing**: File not found on remote - queued for re-upload
-- 🔧 **Corrupted**: File exists but corrupted - queued for re-upload  
-- ⚠️ **Changed**: Local file modified since upload - user chooses action
+- 🔄 **Missing**: File not found on remote - automatically queued for re-upload
+- ⚠️ **Changed/Conflict**: File differs between local and remote - uses conflict resolution settings to determine action
 - ❌ **Errors**: Network/verification errors - logged for troubleshooting
+
+**Conflict Resolution Approach:**
+When files differ between local and remote, PanoramaBridge no longer assumes corruption. Instead, it treats all differences as potential conflicts and applies your configured conflict resolution settings:
+
+- **"Ask me each time"**: Shows dialog for user to choose action (Upload, Skip, etc.)
+- **"Always upload"**: Automatically uploads the local version
+- **"Always skip"**: Keeps the remote version unchanged
+- **Other settings**: Applied according to your configuration
+
+This approach ensures that legitimate changes (whether local or server-side) are handled appropriately without assuming data corruption.
 
 ### 8. Metadata Storage and Integrity
 
@@ -496,6 +505,13 @@ Application logs are saved to: `panoramabridge.log`
      - ETag verification is very fast (no download required)
      - Accessibility check downloads only 8KB for file readability test
      - Disable verification for maximum upload speed (less secure)
+
+6. **File Conflict Resolution**
+   - **"File conflict detected" messages**: This is normal when files differ between local and remote
+   - **Not corruption**: The system no longer assumes files are corrupted when they differ
+   - **Conflict handling**: Uses your configured conflict resolution setting ("Ask me each time", "Always upload", etc.)
+   - **User choice respected**: When set to "Ask me each time", you'll see a dialog to choose the action
+   - **Clear guidance**: Messages explain what differences were detected and what actions will be taken
 
 5. **Folder Creation Failures (HTTP 403)**
    - **Permission Denied**: Most common issue

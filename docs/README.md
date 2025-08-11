@@ -13,6 +13,7 @@ This directory contains technical documentation and implementation guides for Pa
 ### Upload & Verification
 - **[Enhanced ETag Verification](ENHANCED_ETAG_VERIFICATION_SUMMARY.md)** - Advanced file verification using ETag headers
 - **[Remote Integrity Check Implementation](REMOTE_INTEGRITY_CHECK_IMPLEMENTATION.md)** - Remote file integrity verification system
+- **[Integrity Check System Improvements (2025)](INTEGRITY_CHECK_IMPROVEMENTS_2025.md)** - Recent enhancements to conflict resolution and verification
 - **[Upload Verification Improvements](UPLOAD_VERIFICATION_IMPROVEMENTS.md)** - Enhanced upload verification and error handling
 
 ### Development & Testing

@@ -2106,7 +2106,7 @@ class FileProcessor(QThread):
 class IntegrityCheckThread(QThread):
     """Thread for performing remote integrity checks"""
     progress_signal = pyqtSignal(str, int, int, str)  # current_file, checked_count, total_count, status
-    finished_signal = pyqtSignal(dict)  # results dict
+    finished_signal = pyqtSignal(dict, dict)  # results dict, error_details dict
     file_issue_signal = pyqtSignal(str, str, str)  # filepath, issue_type, details
 
     def __init__(self, files_to_check, main_window):
@@ -2121,77 +2121,144 @@ class IntegrityCheckThread(QThread):
             'changed': 0,
             'errors': 0
         }
+        # Track detailed error information for better user feedback
+        self.error_details = {
+            'missing_remote': [],       # Files missing from remote server
+            'changed_local': [],        # Files with conflicts (local/remote differences)
+            'network_errors': [],       # Network/connection issues
+            'other_errors': []          # Other unexpected errors
+        }
 
     def run(self):
-        """Perform the integrity check"""
+        """Perform the integrity check - ensure ALL local files are on remote server and intact"""
         for i, filepath in enumerate(self.files_to_check, 1):
             try:
                 self.progress_signal.emit(filepath, i, self.results['total'], "Checking...")
 
-                # Check if file is in upload history
-                if filepath not in self.main_window.upload_history:
-                    self.progress_signal.emit(filepath, i, self.results['total'], "Not in upload history")
-                    self.results['errors'] += 1
-                    continue
-
-                history_entry = self.main_window.upload_history[filepath]
-                remote_path = history_entry.get("remote_path")
-                expected_checksum = history_entry.get("checksum")
-
-                if not remote_path or not expected_checksum:
-                    self.progress_signal.emit(filepath, i, self.results['total'], "Incomplete history")
-                    self.results['errors'] += 1
-                    continue
-
                 # Check if local file still exists
                 if not os.path.exists(filepath):
-                    self.progress_signal.emit(filepath, i, self.results['total'], "Local file missing")
-                    # Remove from history
-                    del self.main_window.upload_history[filepath]
-                    self.results['errors'] += 1
+                    filename = os.path.basename(filepath)
+                    self.progress_signal.emit(filepath, i, self.results['total'], "Local file missing - removing from tracking")
+                    # Remove from history if it exists
+                    if filepath in self.main_window.upload_history:
+                        del self.main_window.upload_history[filepath]
+                    # This isn't really an error, just cleanup
                     continue
 
-                # Check if local file has changed since upload
+                # Calculate current checksum for this local file
                 current_checksum = self.main_window.file_processor.calculate_checksum(filepath)
-                if current_checksum.lower() != expected_checksum.lower():
-                    self.progress_signal.emit(filepath, i, self.results['total'], "Local file changed")
-                    self.file_issue_signal.emit(filepath, "changed", "Local file modified since upload")
-                    self.results['changed'] += 1
+                
+                # Determine remote path for this file
+                if filepath in self.main_window.upload_history:
+                    # File has been uploaded before - use tracked remote path
+                    history_entry = self.main_window.upload_history[filepath]
+                    remote_path = history_entry.get("remote_path")
+                    stored_checksum = history_entry.get("checksum")
+                else:
+                    # File not uploaded yet - determine where it should go
+                    remote_path = self.main_window.get_remote_path_for_file(filepath)
+                    stored_checksum = None
+
+                if not remote_path:
+                    # Can't determine remote path - this is an error
+                    filename = os.path.basename(filepath)
+                    self.progress_signal.emit(filepath, i, self.results['total'], "Cannot determine remote path")
+                    self.results['errors'] += 1
+                    self.error_details['other_errors'].append({
+                        'filepath': filepath,
+                        'filename': filename,
+                        'reason': 'Unable to determine remote path for file'
+                    })
                     continue
 
                 # Verify remote file integrity
+                # Use the stored checksum if available, otherwise use current checksum
+                checksum_for_verification = stored_checksum if stored_checksum else current_checksum
                 remote_ok, reason = self.main_window.verify_remote_file_integrity(
-                    filepath, remote_path, expected_checksum
+                    filepath, remote_path, checksum_for_verification
                 )
 
                 if remote_ok:
-                    # Update the message in the table to show verification status
-                    if expected_checksum and expected_checksum.lower() != "unknown":
-                        checksum_short = expected_checksum[:12]
-                        # Note: We generate checksums for upload metadata but don't use them for verification
+                    # File is intact on remote server
+                    if stored_checksum and stored_checksum.lower() != "unknown":
+                        checksum_short = stored_checksum[:12]
                         verification_msg = f"Remote file verified by {reason} (upload checksum: {checksum_short}...)"
                     else:
-                        # No checksum available - use alternative verification
-                        verification_msg = f"Remote file verified by {reason} (no upload checksum)"
+                        # No stored checksum - using current file checksum for verification
+                        checksum_short = current_checksum[:12]
+                        verification_msg = f"Remote file verified by {reason} (current checksum: {checksum_short}...)"
 
                     self.progress_signal.emit(filepath, i, self.results['total'], verification_msg)
                     self.results['verified'] += 1
                 else:
+                    # File is missing or corrupted on remote server
+                    filename = os.path.basename(filepath)
                     if "not found" in reason.lower():
-                        self.progress_signal.emit(filepath, i, self.results['total'], "Missing from remote")
-                        self.file_issue_signal.emit(filepath, "missing", reason)
-                        self.results['missing'] += 1
+                        # File is missing from remote server
+                        if self.main_window.is_file_in_upload_queue(filepath):
+                            # File is already queued for upload - that's good!
+                            self.progress_signal.emit(filepath, i, self.results['total'], 
+                                                    "Missing from remote - already queued for upload")
+                            # This isn't an error - it's expected behavior
+                        else:
+                            # File is missing but not queued - this needs attention
+                            self.progress_signal.emit(filepath, i, self.results['total'], 
+                                                    "Missing from remote - adding to upload queue")
+                            self.results['missing'] += 1
+                            self.error_details['missing_remote'].append({
+                                'filepath': filepath,
+                                'filename': filename,
+                                'reason': 'File missing from remote server and not in upload queue'
+                            })
+                            # Emit signal to notify UI about missing file
+                            self.file_issue_signal.emit(filepath, "missing", "File not found on remote server")
+                            # Add to upload queue
+                            self.main_window.queue_file_for_upload(filepath, "missing from remote during integrity check")
                     else:
-                        self.progress_signal.emit(filepath, i, self.results['total'], f"Corrupted - {reason}")
-                        self.file_issue_signal.emit(filepath, "corrupted", reason)
-                        self.results['corrupted'] += 1
+                        # File exists on remote but differs from expected
+                        # We cannot determine if it's corruption or legitimate change
+                        # Always treat as a conflict and use conflict resolution settings
+                        
+                        if stored_checksum and current_checksum.lower() != stored_checksum.lower():
+                            # Both local and remote have changed - definitely a conflict
+                            conflict_reason = "Both local and remote files have changed since last sync"
+                        else:
+                            # Local unchanged, remote different - could be corruption or server-side change
+                            conflict_reason = "Remote file differs from expected (possible corruption or server-side change)"
+                        
+                        self.progress_signal.emit(filepath, i, self.results['total'], 
+                                                "File conflict detected - applying conflict resolution")
+                        self.results['changed'] += 1
+                        self.error_details['changed_local'].append({
+                            'filepath': filepath,
+                            'filename': filename,
+                            'reason': conflict_reason
+                        })
+                        # Always trigger conflict resolution - let user decide what to do
+                        self.file_issue_signal.emit(filepath, "changed", conflict_reason)
 
             except Exception as e:
+                filename = os.path.basename(filepath)
                 logger.error(f"Error checking integrity of {filepath}: {e}")
                 self.progress_signal.emit(filepath, i, self.results['total'], f"Error: {str(e)}")
                 self.results['errors'] += 1
+                # Categorize the error based on the exception type/message
+                error_msg = str(e).lower()
+                if any(net_term in error_msg for net_term in ['connection', 'timeout', 'network', 'http']):
+                    self.error_details['network_errors'].append({
+                        'filepath': filepath,
+                        'filename': filename,
+                        'reason': f'Network error: {str(e)}'
+                    })
+                else:
+                    self.error_details['other_errors'].append({
+                        'filepath': filepath,
+                        'filename': filename,
+                        'reason': f'Unexpected error: {str(e)}'
+                    })
 
-        self.finished_signal.emit(self.results)
+        # Pass the detailed error information to the finished signal
+        self.finished_signal.emit(self.results, self.error_details)
 
 
 class FileConflictDialog(QDialog):
@@ -4680,6 +4747,58 @@ class MainWindow(QMainWindow):
             logger.debug(f"Saving {len(self.local_checksum_cache)} cached checksums")
             self.save_config()  # This will include the cache data
 
+    def queue_file_for_upload(self, filepath, reason):
+        """Add a file to the upload queue with a reason"""
+        try:
+            self.file_queue.put(filepath)
+            logger.info(f"Queued file for upload: {os.path.basename(filepath)} - {reason}")
+            self.log_text.append(
+                f"{datetime.now().strftime('%H:%M:%S')} - File queued for upload: "
+                f"{os.path.basename(filepath)} ({reason})"
+            )
+        except Exception as e:
+            logger.error(f"Error queueing file for upload: {e}")
+
+    def is_file_in_upload_queue(self, filepath):
+        """Check if a file is currently being processed or in the transfer table"""
+        # Note: We can't directly check the queue contents without consuming items,
+        # so we check if the file is currently in the transfer table (which indicates
+        # it's being processed or was recently processed)
+        for file_key in self.transfer_rows:
+            if '|' in file_key:
+                _, absolute_path = file_key.split('|', 1)
+                if absolute_path == filepath:
+                    return True
+        return False
+
+    def get_remote_path_for_file(self, filepath):
+        """Determine the remote path where a local file should be uploaded"""
+        try:
+            # Get the base remote directory from settings
+            remote_base = self.remote_path_input.text().strip()
+            if not remote_base:
+                return None
+
+            # Get the monitored directory
+            local_base = self.dir_input.text().strip()
+            if not local_base:
+                return None
+
+            # Calculate relative path from monitored directory
+            relative_path = os.path.relpath(filepath, local_base)
+            
+            # Don't allow relative paths that go outside the monitored directory
+            if relative_path.startswith('..'):
+                return None
+                
+            # Combine remote base with relative path, using forward slashes for WebDAV
+            remote_path = remote_base.rstrip('/') + '/' + relative_path.replace('\\', '/')
+            return remote_path
+            
+        except Exception as e:
+            logger.error(f"Error determining remote path for {filepath}: {e}")
+            return None
+
     def start_remote_integrity_check(self):
         """Start a comprehensive remote integrity check of all files in Transfer Status table"""
         if not self.webdav_client:
@@ -4712,13 +4831,14 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "Remote Integrity Check",
-            f"This will check {len(files_in_table)} files in the Transfer Status table.\n\n"
+            f"This will verify {len(files_in_table)} files are properly uploaded and intact.\n\n"
             f"The check will:\n"
             f"• Temporarily pause file monitoring\n"
-            f"• Verify each file exists on the remote server\n"
-            f"• Check file integrity using checksums\n"
-            f"• Re-upload any missing or corrupted files\n"
-            f"• Show conflict resolution dialog for changed files\n\n"
+            f"• Verify each local file exists and is intact on the remote server\n"
+            f"• Check if missing files are already queued for upload\n"
+            f"• Queue missing files for upload if not already queued\n"
+            f"• Show conflict resolution dialogs for files changed locally\n"
+            f"• Queue corrupted remote files for re-upload\n\n"
             f"This may take some time. Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
@@ -4823,7 +4943,7 @@ class MainWindow(QMainWindow):
                 )
                 self.update_file_message_in_table(filepath, "Skipped - file changed locally")
 
-    def on_integrity_check_finished(self, results):
+    def on_integrity_check_finished(self, results, error_details=None):
         """Handle completion of integrity check"""
         verified_count = results['verified']
         missing_count = results['missing']
@@ -4861,15 +4981,97 @@ class MainWindow(QMainWindow):
             if changed_count > 0:
                 issues_text.append(f"• {changed_count} files changed locally (conflict resolution shown)")
             if error_count > 0:
-                issues_text.append(f"• {error_count} files had verification errors")
+                # Create detailed error breakdown
+                error_breakdown = self._create_error_breakdown(error_details)
+                issues_text.append(f"• {error_count} files had verification errors:\n{error_breakdown}")
 
             QMessageBox.warning(
                 self,
                 "Integrity Check Results",
                 "Integrity check completed with issues:\n\n" + "\n".join(issues_text) +
-                f"\n\nVerified: {verified_count}/{total_count} files"
+                f"\n\nVerified: {verified_count}/{total_count} files" +
+                "\n\nRecommended Actions:\n" +
+                self._get_recommended_actions(error_details, missing_count, corrupted_count)
             )
 
+        # Restart monitoring after integrity check
+        self._finish_integrity_check_restart_monitoring()
+
+    def _create_error_breakdown(self, error_details):
+        """Create a detailed breakdown of integrity check errors"""
+        if not error_details:
+            return "  - Various errors occurred during verification"
+        
+        breakdown_parts = []
+        
+        if error_details.get('missing_remote'):
+            count = len(error_details['missing_remote'])
+            files = error_details['missing_remote'][:3]  # Show first 3
+            file_list = ", ".join([f['filename'] for f in files])
+            if count > 3:
+                file_list += f" (and {count - 3} more)"
+            breakdown_parts.append(f"  - {count} files missing from remote: {file_list}")
+            
+        if error_details.get('changed_local'):
+            count = len(error_details['changed_local'])
+            files = error_details['changed_local'][:3]
+            file_list = ", ".join([f['filename'] for f in files])
+            if count > 3:
+                file_list += f" (and {count - 3} more)"
+            breakdown_parts.append(f"  - {count} files with conflicts (local/remote differences): {file_list}")
+            
+        if error_details.get('network_errors'):
+            count = len(error_details['network_errors'])
+            files = error_details['network_errors'][:2]
+            file_list = ", ".join([f['filename'] for f in files])
+            if count > 2:
+                file_list += f" (and {count - 2} more)"
+            breakdown_parts.append(f"  - {count} network/connection errors: {file_list}")
+            
+        if error_details.get('other_errors'):
+            count = len(error_details['other_errors'])
+            files = error_details['other_errors'][:2]
+            file_list = ", ".join([f['filename'] for f in files])
+            if count > 2:
+                file_list += f" (and {count - 2} more)"
+            breakdown_parts.append(f"  - {count} other errors: {file_list}")
+        
+        return "\n".join(breakdown_parts) if breakdown_parts else "  - Various errors occurred"
+
+    def _get_recommended_actions(self, error_details, missing_count, corrupted_count):
+        """Generate recommended actions based on the types of issues found"""
+        actions = []
+        
+        # Handle files missing from remote
+        if error_details and error_details.get('missing_remote'):
+            count = len(error_details['missing_remote'])
+            actions.append(f"• {count} missing files have been automatically queued for upload")
+            
+        # Handle file conflicts (renamed from corrupted since we don't assume corruption)
+        if error_details and error_details.get('changed_local'):
+            count = len(error_details['changed_local'])
+            actions.append(f"• {count} files have differences - conflict resolution dialogs will appear")
+            
+        # Handle network errors
+        if error_details and error_details.get('network_errors'):
+            actions.append("• Check your network connection and retry integrity check")
+            
+        # Handle other errors
+        if error_details and error_details.get('other_errors'):
+            count = len(error_details['other_errors'])
+            actions.append(f"• {count} files had other errors - check the log for details")
+            
+        # General monitoring status
+        if missing_count > 0 or corrupted_count > 0:
+            actions.append("• File monitoring will continue and process queued uploads automatically")
+        else:
+            actions.append("• File monitoring continues - your conflict resolution settings will be applied")
+        
+        return "\n".join(actions) if actions else "• No immediate action required"
+
+    # Continue with the rest of the integrity check completion
+    def _finish_integrity_check_restart_monitoring(self):
+        """Restart monitoring if it was active before integrity check"""
         # Restart monitoring if it was active before
         if self.monitoring_was_active:
             self.log_text.append(
@@ -4907,8 +5109,7 @@ class MainWindow(QMainWindow):
                 )
 
         # Save any history updates
-        if missing_count + corrupted_count + changed_count > 0:
-            self.save_upload_history()
+        self.save_upload_history()
 
     def show_file_conflict_resolution(self, filepath, details):
         """Show conflict resolution dialog for a locally changed file"""
