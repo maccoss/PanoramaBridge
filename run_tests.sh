@@ -38,11 +38,13 @@ for arg in "$@"; do
             ;;
         --help|-h)
             echo "Options:"
-            echo "  --all, -a        Run all tests (including potentially unstable ones)"
-            echo "  --stable, -s     Run only stable tests (default)"
+            echo "  --all, -a        Run all tests in tests/ directory (218+ tests)"
+            echo "  --stable, -s     Run only stable core tests (26 tests, default)"
             echo "  --verbose, -v    Verbose output"
             echo "  --coverage, -c   Generate coverage report"
             echo "  --help, -h       Show this help"
+            echo ""
+            echo "Note: Demo scripts in demo_scripts/ are not run as tests"
             exit 0
             ;;
     esac
@@ -62,13 +64,15 @@ fi
 # Run tests based on selection
 if [[ "$RUN_STABLE_ONLY" == true ]]; then
     echo "🔧 Running stable tests only..."
-    echo "   Tests: test_upload_history_simple.py, test_qt_ui.py"
+    echo "   Tests: test_qt_ui.py, test_upload_history.py, test_app_integration.py"
+    echo "   These are the most reliable tests (26 total)"
     echo ""
-    $PYTEST_CMD tests/test_upload_history_simple.py tests/test_qt_ui.py --tb=short
+    $PYTEST_CMD tests/test_qt_ui.py tests/test_upload_history.py tests/test_app_integration.py --tb=short
     
 elif [[ "$RUN_ALL" == true ]]; then
     echo "🚀 Running all tests (may include experimental/unstable ones)..."
     echo "   Note: Some tests may be skipped or fail due to Qt initialization issues"
+    echo "   Demo scripts in demo_scripts/ are excluded from test runs"
     echo ""
     $PYTEST_CMD tests/ --tb=short
 fi

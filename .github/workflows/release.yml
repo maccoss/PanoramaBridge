@@ -109,8 +109,7 @@ jobs:
         2. Run the executable (Windows may show security warning for unsigned files)
         3. Configure your WebDAV settings
         
-        "@
-        
+                
         $buildInfo | Out-File -FilePath "dist/BUILD_INFO.txt" -Encoding UTF8
         Write-Host "Build info created"
       shell: powershell
@@ -151,11 +150,10 @@ jobs:
           4. Start monitoring your files!
           
           **What's New:**
-          - Fixed an infinite loop bug
-          - Much better remote file integrity check
-          - Improved documentation
-          - Significantly improved the logic for checking for file conflicts
-          - Better handling of OS events
+          - Nearly ready for people to start trying this.
+          - Tested is for a number of scenarios
+          - Currently more functionality for WebDav than Panorama can support like ETags and file chunking.
+          
           
           **System Requirements:**
           - Windows 11 (recommended) or Windows 10

@@ -16,7 +16,7 @@ from unittest.mock import Mock, patch
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-def test_comprehensive_infinite_loop_scenarios():
+def demo_comprehensive_infinite_loop_scenarios():
     """Test various scenarios that could cause infinite loops."""
 
     print("🔍 Testing comprehensive infinite loop scenarios...")
@@ -182,7 +182,7 @@ def test_comprehensive_infinite_loop_scenarios():
     return True
 
 
-def test_edge_cases():
+def demo_edge_cases():
     """Test edge cases that might cause issues."""
 
     print("\n🔍 Testing edge cases...")
@@ -231,9 +231,9 @@ def test_edge_cases():
 if __name__ == "__main__":
     print("Running comprehensive infinite loop diagnostic tests...\n")
 
-    success = test_comprehensive_infinite_loop_scenarios()
+    success = demo_comprehensive_infinite_loop_scenarios()
     if success:
-        test_edge_cases()
+        demo_edge_cases()
         print("\n🏆 ALL TESTS PASSED! The infinite loop fix is comprehensive and working.")
     else:
         print("\n💥 Some tests failed - there may still be infinite loop issues.")

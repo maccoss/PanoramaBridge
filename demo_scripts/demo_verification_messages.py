@@ -4,7 +4,7 @@ Test script to verify that upload verification messages include the verification
 This demonstrates the improvement made to show users exactly how their file was verified.
 """
 
-def test_verification_message_format():
+def demo_verification_message_format():
     """Test that verification messages now include the specific verification method used."""
 
     # Example messages that would be displayed after our improvement:
@@ -33,4 +33,4 @@ def test_verification_message_format():
     print("- Local checksum is still shown for reference")
 
 if __name__ == "__main__":
-    test_verification_message_format()
+    demo_verification_message_format()

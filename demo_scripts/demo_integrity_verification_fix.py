@@ -12,7 +12,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Mock test to demonstrate the fix
-def test_verification_logic():
+def demo_verification_logic():
     """Test the corrected verification logic"""
 
     print("🔍 Testing Corrected File Integrity Verification")
@@ -76,4 +76,4 @@ def test_verification_logic():
     print("• Appropriate verification method for each file size")
 
 if __name__ == "__main__":
-    test_verification_logic()
+    demo_verification_logic()

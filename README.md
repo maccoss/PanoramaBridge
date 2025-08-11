@@ -285,65 +285,64 @@ Authorization: Basic <credentials>
 [file chunk data]
 ```
 
-### 6. Multi-Level Upload Verification System
+### 6. Upload Verification System
 
-**Six-Level Verification Process:**
+**Simple 3-Step Verification Process:**
 
-**Level 1: Size Comparison (fastest)**
-- Compares local and remote file sizes immediately
-- Returns early on size mismatch
+**Step 1: File Existence & Size Check**
+- Confirms remote file exists at expected path
+- Compares local and remote file sizes
+- Returns early if sizes don't match
 
-**Level 2: Cached Checksum Lookup (microseconds)**
-- Uses stored checksums from previous verifications
-- Instant verification for recently checked files
+**Step 2: ETag Verification (Primary Method)**
+- Attempts SHA256 ETag comparison first (most servers)
+- Falls back to MD5 ETag comparison (Apache default)
+- ETag mismatch indicates file integrity problem and triggers conflict resolution
 
-**Level 3: ETag Comparison (network request)**
-- Compares server ETag with expected SHA256 checksum
-- Available for ALL file sizes including large files
-- No download required
-
-**Level 4: Large File Size Optimization (>100MB)**
-- For files over 100MB without ETag matches
-- Assumes integrity based on size match to avoid expensive downloads
-- Only used when other methods are unavailable
-
-**Level 5: Full Download Verification (<10MB files)**
-- Downloads small files completely for checksum verification
-- Most accurate but resource-intensive method
-
-**Level 6: Accessibility Verification (fallback)**
-- **Purpose**: Verifies the remote file exists and can be read when other methods fail
-- **Method**: Downloads first 8KB of file content (not just metadata)
-- **Confirms**: File exists, is readable, user has permissions, server is functional
-- **Cannot Confirm**: Complete file integrity or content correctness
-- **Used When**: ETag unavailable, unknown ETag formats, or other verification methods fail
-- **Performance**: Minimal bandwidth usage (8KB vs full file download)
+**Step 3: Accessibility Check (Fallback)**  
+- Used only when ETag is unavailable or unknown format
+- Downloads first 8KB to verify file can be read
+- Confirms file exists, is readable, and user has permissions
+- **Note**: This is limited verification - cannot confirm complete file integrity
 
 **Implementation:**
 ```python
-def verify_remote_file_integrity(self, local_filepath: str, remote_path: str, expected_checksum: str):
-    # Level 1: Size comparison
+def verify_remote_file_integrity(self, local_filepath: str, remote_path: str, expected_checksum: str) -> tuple[bool, str]:
+    """Verify remote file exists and matches expected local file using 3-step verification"""
+    
+    # Step 1: File existence and size comparison
     if local_size != remote_size:
-        return False, "size mismatch"
+        return False, f"size mismatch (local: {local_size}, remote: {remote_size})"
     
-    # Level 2: Cached checksum lookup
-    if stored_checksum == expected_checksum:
-        return True, "checksum match (cached)"
+    # Step 2: ETag verification (primary method)
+    if remote_etag and expected_checksum:
+        clean_etag = remote_etag.strip('"').replace("W/", "")
+        
+        # Try SHA256 match first
+        if clean_etag.lower() == expected_checksum.lower():
+            return True, "ETag (SHA256 format)"
+        
+        # Try MD5 match for Apache servers
+        elif len(clean_etag) == 32:
+            local_md5 = hashlib.md5(open(local_filepath, 'rb').read()).hexdigest()
+            if clean_etag.lower() == local_md5.lower():
+                return True, "ETag (MD5 format)"
+            else:
+                return False, "ETag mismatch - file integrity problem"
+        
+        # ETag mismatch with same length = corruption
+        elif len(clean_etag) == len(expected_checksum):
+            return False, "ETag mismatch - file integrity problem"
     
-    # Level 3: ETag comparison (works for all file sizes)
-    if remote_etag == expected_checksum:
-        return True, "etag match"
+    # Step 3: Accessibility check (fallback when ETag unavailable/unknown)
+    head_data = self.webdav_client.download_file_head(remote_path, 8192)
+    if head_data is None:
+        return False, "cannot read remote file"
     
-    # Level 4: Large file optimization (>100MB)
-    if file_size > 100_000_000:
-        return True, "large file size match"
-    
-    # Level 5: Full download verification (<10MB)
-    if file_size < 10_000_000:
-        return self._download_and_verify_checksum()
-    
-    # Level 6: Accessibility check (fallback)
-    return self._verify_file_accessibility()
+    if remote_etag is None:
+        return True, "Size + accessibility (ETag unavailable)"
+    else:
+        return True, "Size + accessibility (unknown ETag format)"
 ```
 
 ### 7. Upload History and Remote Integrity Verification
@@ -354,7 +353,7 @@ def verify_remote_file_integrity(self, local_filepath: str, remote_path: str, ex
 - Enables intelligent skip-already-uploaded file detection across application restarts
 
 **On-Demand Remote Integrity Verification:**
-PanoramaBridge uses the same six-level verification system for remote integrity checks:
+PanoramaBridge uses the same 3-step verification system for remote integrity checks:
 
 1. **Startup Verification**: Automatically checks previously uploaded files when monitoring starts
 2. **Manual Verification**: "Remote Integrity Check" button for on-demand verification
@@ -362,7 +361,7 @@ PanoramaBridge uses the same six-level verification system for remote integrity 
 4. **Conflict Resolution**: Handles locally changed files with user choice
 
 **Verification Results:**
-- ✅ **Verified**: File exists and matches checksum  
+- ✅ **Verified**: File exists and integrity confirmed (ETag or accessibility check)
 - 🔄 **Missing**: File not found on remote - queued for re-upload
 - 🔧 **Corrupted**: File exists but corrupted - queued for re-upload  
 - ⚠️ **Changed**: Local file modified since upload - user chooses action
@@ -489,13 +488,13 @@ Application logs are saved to: `panoramabridge.log`
 
 5. **Upload Verification Issues**
    - **"Verification failed" after successful upload**:
-     - Check network stability during verification download
-     - For files > 50MB, verification uses size/ETag comparison only
+     - Check network stability during verification
+     - Verification uses ETag comparison when available, size + accessibility check as fallback
      - Disable verification in Transfer Settings if experiencing frequent issues
-     - Manual verification: Compare file sizes and download checksums separately
+     - Manual verification: Use "Remote Integrity Check" button for on-demand verification
    - **Slow upload verification**:
-     - Verification downloads small files (< 50MB) to verify checksums
-     - Large files use faster ETag/size comparison
+     - ETag verification is very fast (no download required)
+     - Accessibility check downloads only 8KB for file readability test
      - Disable verification for maximum upload speed (less secure)
 
 5. **Folder Creation Failures (HTTP 403)**
