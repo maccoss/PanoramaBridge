@@ -1,11 +1,12 @@
 /.venv
 /.venv-win
 /.venv-arm64
+/.venv-backup
 panoramabridge.log
-build/*
 /.pytest_cache
 /tests/__pycache__
 /htmlcov
 .coverage
 /__pycache__
 *.pyc
+/build
