@@ -1,8 +1,8 @@
 name: Release Builder
 
-# This workflow builds executables for releases and provides download artifacts
+# Manual release workflow - creates official releases
 on:
-  # Manual trigger with options
+  # Manual trigger with options only
   workflow_dispatch:
     inputs:
       create_release:
@@ -20,11 +20,6 @@ on:
         required: false
         default: ''
         type: string
-        
-  # Automatic trigger on tags
-  push:
-    tags:
-      - 'v*'  # Trigger on version tags like v1.0.0
 
 # Required permissions for the GITHUB_TOKEN
 permissions:
@@ -58,17 +53,12 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller
+        pip install pytest
         
     - name: Verify PyQt6 Installation
       run: |
         python -c "import PyQt6.QtCore; print(f'PyQt6 Version: {PyQt6.QtCore.PYQT_VERSION_STR}')"
       shell: powershell
-    - name: Run tests
-      run: |
-        python -m pytest tests/ -v --tb=short
-      continue-on-error: true  # Don't fail build if tests fail
-        pip install pyinstaller
-        pip install pytest
         
     - name: Run tests
       run: |
@@ -163,7 +153,7 @@ jobs:
   create-release:
     needs: build-and-release
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+    if: github.event.inputs.create_release == 'true'
     
     steps:
     - name: Checkout Repository
@@ -208,15 +198,15 @@ jobs:
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
-        name: ${{ github.event.inputs.release_name || github.ref_name }}
+        tag_name: ${{ github.event.inputs.release_tag }}
+        name: ${{ github.event.inputs.release_name }}
         draft: false
         prerelease: false
         generate_release_notes: true
         files: |
           ./release-assets/*
         body: |
-          ## PanoramaBridge ${{ github.ref_name }}
+          ## PanoramaBridge ${{ github.event.inputs.release_tag }}
           
           **Windows Desktop Application**
           

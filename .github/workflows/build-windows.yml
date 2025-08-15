@@ -1,6 +1,6 @@
 name: Build Windows Executable
 
-# When to trigger the build
+# When to trigger the build - CI/CD only
 on:
   # Trigger on pushes to main branch
   push:
@@ -12,10 +12,6 @@ on:
     
   # Allow manual triggering from GitHub UI
   workflow_dispatch:
-  
-  # Trigger on new releases/tags
-  release:
-    types: [published]
 
 jobs:
   build-windows:
@@ -85,15 +81,3 @@ jobs:
         name: PanoramaBridge-Windows-x64-${{ github.sha }}
         path: dist/PanoramaBridge.exe
         retention-days: 30
-        
-    # Only create release assets if this is a tagged release
-    - name: Upload to Release
-      if: github.event_name == 'release'
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./dist/PanoramaBridge.exe
-        asset_name: PanoramaBridge-Windows-x64.exe
-        asset_content_type: application/octet-stream
