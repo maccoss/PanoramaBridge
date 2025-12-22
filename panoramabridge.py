@@ -89,7 +89,7 @@ from watchdog.observers import Observer
 
 # Configure comprehensive logging to both console and file
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(),  # Console output for real-time monitoring
@@ -1306,123 +1306,6 @@ class FileProcessor(QThread):
         sha256_hash.update(data)
         return sha256_hash.hexdigest()
 
-    def compare_files(
-        self, local_path: str, remote_info: dict, local_checksum: str
-    ) -> tuple[str, dict]:
-        """Compare local and remote files to detect conflicts with smart checksum optimization
-        Returns: (status, details) where status is 'identical', 'different', 'newer_local', 'newer_remote', 'new'
-        """
-        if not remote_info.get("exists", False):
-            return "new", {}  # File doesn't exist remotely
-
-        comparison_details = {
-            "local_size": 0,
-            "remote_size": remote_info.get("size", 0),
-            "local_mtime": 0,
-            "remote_mtime": remote_info.get("modified", 0),
-            "size_match": False,
-            "etag_match": False,
-            "optimization_used": None,
-        }
-
-        # Compare sizes first (quick check)
-        try:
-            local_size = os.path.getsize(local_path)
-            local_mtime = os.path.getmtime(local_path)
-            remote_size = remote_info.get("size", 0)
-
-            comparison_details.update(
-                {
-                    "local_size": local_size,
-                    "local_mtime": local_mtime,
-                    "size_match": local_size == remote_size,
-                }
-            )
-
-            if local_size != remote_size:
-                logger.info(f"File size mismatch: local={local_size}, remote={remote_size}")
-                comparison_details["optimization_used"] = "size_mismatch_skip"
-                # Even with size mismatch, check dates for user decision
-                return self._check_file_dates(comparison_details)
-        except Exception as e:
-            logger.warning(f"Could not compare file sizes: {e}")
-
-        # If sizes match, try to optimize by checking stored checksum first
-        stored_checksum = None
-
-        # Try to get stored checksum first (fastest check)
-        try:
-            stored_checksum = self.webdav_client.get_stored_checksum(remote_info.get("path", ""))
-            if stored_checksum:
-                logger.debug(f"Found stored checksum: {stored_checksum[:8]}...")
-                if stored_checksum.lower() == local_checksum.lower():
-                    logger.info("Files match via stored checksum (optimization: skipped download)")
-                    comparison_details["stored_checksum_match"] = True
-                    comparison_details["optimization_used"] = "stored_checksum_match"
-                    return "identical", comparison_details
-                else:
-                    logger.info("Files differ via stored checksum")
-                    comparison_details["stored_checksum_match"] = False
-                    comparison_details["remote_checksum"] = stored_checksum
-                    comparison_details["local_checksum"] = local_checksum
-                    comparison_details["optimization_used"] = "stored_checksum_differ"
-                    return self._check_file_dates(comparison_details)
-        except Exception as e:
-            logger.debug(f"Could not retrieve stored checksum: {e}")
-
-        # Check ETags (second fastest check)
-        remote_etag = remote_info.get("etag")
-        if remote_etag:
-            # Some servers include MD5 or SHA256 in ETags
-            # Clean ETag (remove quotes and weak indicators)
-            clean_etag = remote_etag.strip('"').replace("W/", "")
-
-            # Check if ETag matches our checksum
-            if clean_etag.lower() == local_checksum.lower():
-                logger.info("Files match via ETag comparison (optimization: skipped download)")
-                comparison_details["etag_match"] = True
-                comparison_details["optimization_used"] = "etag_match"
-                return "identical", comparison_details
-            elif len(clean_etag) == len(local_checksum):
-                # Same length suggests same hash algorithm but different content
-                logger.info("Files differ via ETag comparison")
-                comparison_details["etag_match"] = False
-                comparison_details["remote_etag"] = clean_etag
-                comparison_details["local_checksum"] = local_checksum
-                comparison_details["optimization_used"] = "etag_differ"
-                return self._check_file_dates(comparison_details)
-            else:
-                logger.debug(
-                    "ETag format doesn't match checksum format, continuing with download verification"
-                )
-
-        # If we get here, we need to download and verify (slowest but most accurate)
-        logger.debug("No optimization available, downloading for checksum comparison")
-        comparison_details["optimization_used"] = "download_required"
-
-        # For very large files with matching size, consider them likely identical
-        # This helps avoid unnecessary downloads of huge files that are probably the same
-        local_size = comparison_details.get("local_size", 0)
-        if local_size > 100 * 1024 * 1024:  # > 100MB
-            logger.info(
-                f"Large file ({local_size:,} bytes) with matching size - considering identical to avoid large download"
-            )
-            comparison_details["optimization_used"] = "large_file_size_match"
-            return "identical", comparison_details
-
-        # Download and compare checksums (most accurate but slowest)
-        try:
-            # For download comparison, we need a method to get remote content
-            # Since download_file expects local_path parameter, we'll fall back to date comparison
-            logger.info(
-                "Cannot download remote file for comparison, falling back to date comparison"
-            )
-            return self._check_file_dates(comparison_details)
-        except Exception as e:
-            logger.warning(f"Could not download remote file for comparison: {e}")
-            # Fall back to date comparison
-            return self._check_file_dates(comparison_details)
-
     def _check_file_dates(self, details: dict) -> tuple[str, dict]:
         """Check file modification dates to determine upload preference"""
         local_mtime = details.get("local_mtime", 0)
@@ -2011,62 +1894,56 @@ class FileProcessor(QThread):
                 )
                 remote_info = {"exists": False}
 
-            # Compare files if remote exists
-            comparison_result, conflict_details = self.compare_files(
-                filepath, remote_info, local_checksum
-            )
+            if remote_info.get("exists", True):
+                # Remote file exists, perform comparison
+                logger.debug(f"Remote file exists, comparing: {remote_path}")
+                comparison_result, reason = self.verify_remote_file_integrity(filepath, remote_path, local_checksum)
 
-            # Initialize resolution variables
-            resolution = None
-            new_name = None
-
-            if comparison_result == "identical":
-                # Files are identical, skip upload
-                self.transfer_complete.emit(
-                    filename,
-                    filepath,
-                    True,
-                    f"File already exists with same content (checksum: {local_checksum[:8]}...)",
-                )
-                return
-            elif comparison_result == "new":
-                # New file, proceed with upload
-                logger.info(f"New file detected: {filename}")
-            elif comparison_result == "different":
-                # Conflict detected, need user resolution
-                logger.info(f"File conflict detected for: {filename}")
-
-                if self.apply_to_all and self.conflict_resolution:
-                    # Use previous resolution
-                    resolution = self.conflict_resolution
-                    if resolution == "rename":
-                        # Generate a new conflict name
-                        new_name = f"conflict_{int(time.time())}_{filename}"
+                if comparison_result:
+                    # Files are identical, skip upload
+                    self.transfer_complete.emit(
+                        filename,
+                        filepath,
+                        True,
+                        f"File already exists with same content (checksum: {local_checksum[:8]}...)",
+                    )
+                    return
                 else:
-                    # Emit signal for main thread to handle conflict resolution
-                    self.status_update.emit(
-                        filename, "Conflict detected - waiting for user input...", filepath
-                    )
+                    # Conflict detected, need user resolution
+                    logger.info(f"File conflict detected for: {filename}")
+                    if self.apply_to_all and self.conflict_resolution:
+                        # Use previous resolution
+                        resolution = self.conflict_resolution
+                        if resolution == "rename":
+                            # Generate a new conflict name
+                            new_name = f"conflict_{int(time.time())}_{filename}"
+                    else:
+                        # Emit signal for main thread to handle conflict resolution
+                        self.status_update.emit(
+                            filename, "Conflict detected - waiting for user input...", filepath
+                        )
 
-                    # Request conflict resolution from main thread
-                    self.conflict_resolution_needed.emit(
-                        filename, filepath, remote_path, conflict_details
-                    )
+                        # Request conflict resolution from main thread
+                        self.conflict_resolution_needed.emit(
+                            filename, filepath, remote_path, reason
+                        )
 
-                    # Wait for resolution (this would be handled by a proper signal/slot mechanism)
-                    # For now, we'll return early and let the main thread handle the resolution
-                    logger.info(f"Conflict resolution requested for: {filename}")
-                    return
+                        # Wait for resolution (this would be handled by a proper signal/slot mechanism)
+                        # For now, we'll return early and let the main thread handle the resolution
+                        logger.info(f"Conflict resolution requested for: {filename}")
+                        return
 
-                if resolution == "skip":
-                    self.transfer_complete.emit(filename, filepath, True, "Skipped due to conflict")
-                    return
-                elif resolution == "rename" and new_name:
-                    # Update remote path with new name
-                    remote_dir = os.path.dirname(remote_path)
-                    remote_path = f"{remote_dir}/{new_name}".replace("//", "/")
-                    filename = new_name  # Update filename for status updates
-                # For 'overwrite', continue with original remote_path
+                    if resolution == "skip":
+                        self.transfer_complete.emit(filename, filepath, True, "Skipped due to conflict")
+                        return
+                    elif resolution == "rename" and new_name:
+                        # Update remote path with new name
+                        remote_dir = os.path.dirname(remote_path)
+                        remote_path = f"{remote_dir}/{new_name}".replace("//", "/")
+                        filename = new_name  # Update filename for status updates
+                    # For 'overwrite', continue with original remote_path
+            else:
+                logger.debug(f"No remote file exists at {remote_path}, proceeding with upload")
 
             # Use the upload_file method for consistent handling
             self.upload_file(filepath, remote_path, filename)
@@ -4512,9 +4389,12 @@ class MainWindow(QMainWindow):
         logger.info(f"Recorded successful upload: {os.path.basename(filepath)} -> {remote_path}")
 
     def verify_remote_file_integrity(self, local_filepath: str, remote_path: str, expected_checksum: str) -> tuple[bool, str]:
-        """Verify that a remote file exists and matches the expected local file using multi-level optimization
+        """Verify that a remote file exists and matches the expected local file.
+        First checks if a remote checksum file exists (.checksum). If found, downloads and compares checksums.
+        Otherwise falls back to file size and accessibility checks.
         Returns: (is_intact, reason)
         """
+        logger.debug(f"Verifying remote file integrity for {remote_path}")
         try:
             # Get remote file info
             remote_info = self.webdav_client.get_file_info(remote_path)
@@ -4526,71 +4406,47 @@ class MainWindow(QMainWindow):
             remote_size = remote_info.get("size", 0)
 
             if local_size != remote_size:
+                logger.debug(f"Size mismatch for {remote_path}: local {local_size}, remote {remote_size}")
                 return False, f"size mismatch (local: {local_size}, remote: {remote_size})"
 
-            # Level 2: ETag verification (PRIORITY - network request)
-            remote_etag = remote_info.get("etag")
-            if remote_etag and expected_checksum:
-                # Clean ETag (remove quotes and weak indicators)
-                clean_etag = remote_etag.strip('"').replace("W/", "")
+            # Level 2: Checksum verification (if checksum file exists)
+            checksum_path = remote_path + ".checksum"
+            checksum_info = self.webdav_client.get_file_info(checksum_path)
 
-                # Check if ETag matches our SHA256 checksum directly
-                if clean_etag.lower() == expected_checksum.lower():
-                    return True, "ETag (SHA256 format)"
-                elif len(clean_etag) == len(expected_checksum):
-                    # Same length suggests same hash algorithm but different content - INTEGRITY PROBLEM
-                    return False, f"ETag mismatch - file integrity problem (expected: {expected_checksum[:8]}..., etag: {clean_etag[:8]}...)"
-                elif len(clean_etag) == 32:  # Likely MD5 hash (Apache default)
-                    # Convert our file to MD5 for comparison with Apache-style ETags
-                    try:
-                        import hashlib
-                        with open(local_filepath, 'rb') as f:
-                            md5_hash = hashlib.md5(f.read()).hexdigest()
-                        if clean_etag.lower() == md5_hash.lower():
-                            return True, "ETag (MD5 format)"
-                        else:
-                            return False, f"ETag mismatch - file integrity problem (expected MD5: {md5_hash[:8]}..., etag: {clean_etag[:8]}...)"
-                    except Exception as e:
-                        logger.debug(f"Failed to calculate MD5 for ETag comparison: {e}")
-                        # Fall through to size + accessibility verification
-                else:
-                    # Different length - unknown ETag format from server
-                    logger.debug(f"Server ETag format not recognized: {clean_etag[:16]}... (length: {len(clean_etag)})")
-                    # For large files, we can't afford to download to verify, so trust size + accessibility
-                    if local_size > 100 * 1024 * 1024:  # > 100MB
-                        try:
-                            head_data = self.webdav_client.download_file_head(remote_path, 8192)
-                            if head_data is None:
-                                return False, "cannot read remote file"
-                            return True, "Size + accessibility (server uses unknown ETag format)"
-                        except Exception as e:
-                            return False, f"accessibility check failed: {str(e)}"
-
-            # Level 3: No ETag available - fallback verification
-            if remote_etag is None and local_size > 100 * 1024 * 1024:  # Large file with no ETag
-                logger.warning(f"Large file ({local_size:,} bytes) - ETag unavailable from server, using size + accessibility verification")
+            if checksum_info and checksum_info.get("exists", False):
                 try:
-                    if self.webdav_client is not None:
-                        head_data = self.webdav_client.download_file_head(remote_path, 8192)
-                        if head_data is None:
-                            return False, "cannot read remote file"
-                    return True, "Size + accessibility (ETag unavailable)"
+                    # Download the checksum file (should be very small, < 100 bytes)
+                    checksum_data = self.webdav_client.download_file_head(checksum_path, 1024)
+                    logger.debug(f'Downloaded checksum data: {checksum_data} from checksum file {checksum_path}')
+                    if checksum_data:
+                        remote_checksum = checksum_data.decode('utf-8').strip()
+
+                        # Compare checksums
+                        if expected_checksum == remote_checksum:
+                            logger.debug(f"Checksums match")
+                            return True, "Size + checksum verified"
+                        else:
+                            logger.debug(f"Checksum mismatch: local {expected_checksum}, remote {remote_checksum}")
+                            return False, f"checksum mismatch (local: {expected_checksum[:16]}..., remote: {remote_checksum[:16]}...)"
+                    else:
+                        logger.warning(f"Failed to download checksum file {checksum_path}, falling back to accessibility check")
                 except Exception as e:
-                    return False, f"accessibility check failed: {str(e)}"            # Level 3: All files - fallback to size + accessibility verification
-            # Note: We generate checksums for upload but don't use them for verification due to performance cost
+                    logger.warning(f"Error during checksum verification for {remote_path}: {e}, falling back to accessibility check")
+
+            # Level 3: Accessibility check (download first 8KB)
             try:
+                logger.debug(f"Performing accessibility check for {remote_path}")
                 if self.webdav_client is not None:
                     # Download just the first 8KB to check if file is accessible
                     head_data = self.webdav_client.download_file_head(remote_path, 8192)
                     if head_data is None:
+                        logger.debug(f"Failed to read remote file {remote_path} during accessibility check")
                         return False, "cannot read remote file"
 
-                # For files without ETag, make it clear this is limited verification
-                if remote_etag is None:
-                    return True, "Size + accessibility (ETag unavailable)"
-                else:
+                    logger.debug(f"Accessibility check passed for {remote_path}")
                     return True, "Size + accessibility"
             except Exception as e:
+                logger.debug(f"Accessibility check failed for {remote_path}: {e}")
                 return False, f"accessibility check failed: {str(e)}"
 
         except Exception as e:
