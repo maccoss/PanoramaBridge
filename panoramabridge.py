@@ -1300,12 +1300,6 @@ class FileProcessor(QThread):
             logger.error(f"Error calculating checksum for {filepath}: {e}")
             raise
 
-    def calculate_checksum_from_data(self, data: bytes) -> str:
-        """Calculate SHA256 checksum from raw data"""
-        sha256_hash = hashlib.sha256()
-        sha256_hash.update(data)
-        return sha256_hash.hexdigest()
-
     def run(self):
         """Main processing loop"""
         logger.info("FileProcessor thread started - beginning queue processing")
