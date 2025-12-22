@@ -1306,24 +1306,6 @@ class FileProcessor(QThread):
         sha256_hash.update(data)
         return sha256_hash.hexdigest()
 
-    def _check_file_dates(self, details: dict) -> tuple[str, dict]:
-        """Check file modification dates to determine upload preference"""
-        local_mtime = details.get("local_mtime", 0)
-        remote_mtime = details.get("remote_mtime", 0)
-
-        if remote_mtime == 0:
-            # No remote date available
-            return "different", details
-
-        # Allow 2 second tolerance for timestamp differences
-        time_diff = abs(local_mtime - remote_mtime)
-        if time_diff < 2:
-            return "identical", details
-        elif local_mtime > remote_mtime:
-            return "newer_local", details
-        else:
-            return "newer_remote", details
-
     def run(self):
         """Main processing loop"""
         logger.info("FileProcessor thread started - beginning queue processing")
