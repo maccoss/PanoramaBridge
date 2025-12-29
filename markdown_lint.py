@@ -54,29 +54,29 @@ def main():
     for filepath_str in sys.argv[1:]:
         filepath = Path(filepath_str)
         if not filepath.exists():
-            print(f"❌ File not found: {filepath}")
+            print(f"Error: File not found: {filepath}")
             continue
 
         if filepath.suffix.lower() != ".md":
-            print(f"⚠️  Skipping non-markdown file: {filepath}")
+            print(f"Warning: Skipping non-markdown file: {filepath}")
             continue
 
         issues = check_markdown_file(filepath)
 
         if issues:
-            print(f"\n📄 {filepath}:")
+            print(f"\n{filepath}:")
             for line_num, issue_type, message in issues:
                 print(f"  {line_num:4d}: {issue_type:15s} {message}")
             total_issues += len(issues)
         else:
-            print(f"✅ {filepath}: No issues found")
+            print(f"OK: {filepath}: No issues found")
 
     if total_issues == 0:
-        print("\n🎉 All markdown files are clean!")
+        print("\nAll markdown files are clean!")
         sys.exit(0)
     else:
-        print(f"\n📊 Found {total_issues} issues in total.")
-        print("💡 For comprehensive markdown linting, use:")
+        print(f"\nFound {total_issues} issues in total.")
+        print("For comprehensive markdown linting, use:")
         print("   pymarkdown scan *.md")
         sys.exit(1)
 

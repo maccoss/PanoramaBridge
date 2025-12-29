@@ -12,18 +12,18 @@ def demo_accessibility_assessment():
     """
     print("=== ACCESSIBILITY ASSESSMENT DEMO ===\n")
 
-    print("🔍 WHAT IS ACCESSIBILITY ASSESSMENT?")
+    print("WHAT IS ACCESSIBILITY ASSESSMENT?")
     print("When ETag verification fails or is unavailable, PanoramaBridge performs")
     print("an accessibility check to verify the remote file exists and is readable.")
     print()
 
-    print("📋 HOW IT WORKS:")
+    print("HOW IT WORKS:")
     print("1. Sends HTTP partial content request for first 8KB of file")
     print("2. Verifies server can successfully return file content (not just metadata)")
     print("3. Confirms the response contains actual file data, not error pages")
     print()
 
-    print("✅ WHAT ACCESSIBILITY CONFIRMS:")
+    print("WHAT ACCESSIBILITY CONFIRMS:")
     accessibility_confirms = [
         "File exists on the remote server",
         "File is readable (not corrupted metadata)",
@@ -37,7 +37,7 @@ def demo_accessibility_assessment():
         print(f"   {i}. {item}")
     print()
 
-    print("❌ WHAT ACCESSIBILITY CANNOT CONFIRM:")
+    print("WHAT ACCESSIBILITY CANNOT CONFIRM:")
     accessibility_cannot = [
         "Complete file content integrity",
         "Cryptographic checksum verification",
@@ -51,7 +51,7 @@ def demo_accessibility_assessment():
         print(f"   {i}. {item}")
     print()
 
-    print("🎯 WHEN ACCESSIBILITY IS USED:")
+    print("WHEN ACCESSIBILITY IS USED:")
     when_used = [
         "Server doesn't provide ETags",
         "Server uses unknown ETag formats",
@@ -64,14 +64,14 @@ def demo_accessibility_assessment():
         print(f"   {i}. {item}")
     print()
 
-    print("⚡ PERFORMANCE CHARACTERISTICS:")
-    print("• Bandwidth Usage: Only 8KB downloaded (vs full file)")
-    print("• Speed: Very fast - just a partial HTTP request")
-    print("• Network Efficient: Minimal data transfer required")
-    print("• Resource Light: Low memory and CPU usage")
+    print("PERFORMANCE CHARACTERISTICS:")
+    print("- Bandwidth Usage: Only 8KB downloaded (vs full file)")
+    print("- Speed: Very fast - just a partial HTTP request")
+    print("- Network Efficient: Minimal data transfer required")
+    print("- Resource Light: Low memory and CPU usage")
     print()
 
-    print("🔧 TECHNICAL IMPLEMENTATION:")
+    print("TECHNICAL IMPLEMENTATION:")
     print("```python")
     print("# Send partial content request for first 8KB")
     print("head_data = self.webdav_client.download_file_head(remote_path, 8192)")
@@ -81,42 +81,42 @@ def demo_accessibility_assessment():
     print("```")
     print()
 
-    print("💡 REAL-WORLD SCENARIOS:")
+    print("REAL-WORLD SCENARIOS:")
     print()
     print("Scenario 1: Apache Server (MD5 ETags)")
-    print("   • Server provides MD5 ETag, not SHA256")
-    print("   • PanoramaBridge calculates MD5 for comparison")
-    print("   • If MD5 matches: 'ETag (MD5 format)' ✅")
-    print("   • If MD5 differs: Falls back to accessibility check")
+    print("   - Server provides MD5 ETag, not SHA256")
+    print("   - PanoramaBridge calculates MD5 for comparison")
+    print("   - If MD5 matches: 'ETag (MD5 format)' [OK]")
+    print("   - If MD5 differs: Falls back to accessibility check")
     print()
 
     print("Scenario 2: Server with No ETags")
-    print("   • Server doesn't provide ETag headers")
-    print("   • Size comparison passes")
-    print("   • Accessibility check confirms file is readable")
-    print("   • Result: 'Size + accessibility (ETag unavailable)' ⚠️")
+    print("   - Server doesn't provide ETag headers")
+    print("   - Size comparison passes")
+    print("   - Accessibility check confirms file is readable")
+    print("   - Result: 'Size + accessibility (ETag unavailable)'")
     print()
 
     print("Scenario 3: Unknown ETag Format")
-    print("   • Server provides ETag in unrecognized format")
-    print("   • Cannot compare with SHA256 or MD5")
-    print("   • Falls back to accessibility verification")
-    print("   • Result: 'Size + accessibility (server uses unknown ETag format)' ⚠️")
+    print("   - Server provides ETag in unrecognized format")
+    print("   - Cannot compare with SHA256 or MD5")
+    print("   - Falls back to accessibility verification")
+    print("   - Result: 'Size + accessibility (server uses unknown ETag format)'")
     print()
 
-    print("🎉 BENEFITS:")
-    print("• Provides reasonable confidence file exists and is accessible")
-    print("• Much faster than downloading entire file for verification")
-    print("• Works with any WebDAV server regardless of ETag support")
-    print("• Catches common issues: missing files, permission errors, broken links")
-    print("• Balances performance with verification confidence")
+    print("BENEFITS:")
+    print("- Provides reasonable confidence file exists and is accessible")
+    print("- Much faster than downloading entire file for verification")
+    print("- Works with any WebDAV server regardless of ETag support")
+    print("- Catches common issues: missing files, permission errors, broken links")
+    print("- Balances performance with verification confidence")
     print()
 
-    print("⚖️ TRADE-OFFS:")
-    print("• Lower confidence than full checksum verification")
-    print("• Cannot detect content corruption beyond first 8KB")
-    print("• Relies on server correctly implementing partial requests")
-    print("• Best effort verification when stronger methods unavailable")
+    print("TRADE-OFFS:")
+    print("- Lower confidence than full checksum verification")
+    print("- Cannot detect content corruption beyond first 8KB")
+    print("- Relies on server correctly implementing partial requests")
+    print("- Best effort verification when stronger methods unavailable")
 
 if __name__ == "__main__":
     demo_accessibility_assessment()

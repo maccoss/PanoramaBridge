@@ -1,14 +1,20 @@
 # PanoramaBridge
 
+[![PyPI version](https://badge.fury.io/py/panoramabridge.svg)](https://badge.fury.io/py/panoramabridge)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 A Python Qt6 application for monitoring local directories and automatically transferring files to Panorama WebDAV servers. This tool provides intelligent file monitoring with secure credential storage, robust upload capabilities, and advanced features specifically designed for mass spectrometer workflows.
 
 ## Quick Links
-- **[Installation](#installation-steps)** - Get started with setup
+
+- **[Installation](#installation)** - Get started with pip or from source
 - **[User Guide](#user-interface)** - How to use the application
-- **[Windows Build](build_scripts/BUILD_WINDOWS.md)** - Create executable
+- **[Windows Build](build_scripts/BUILD_WINDOWS.md)** - Create standalone executable
 - **[GitHub Actions](build_scripts/GITHUB_ACTIONS.md)** - Automated builds and releases
-- **[Technical Docs](docs/README.md)** - Performance and optimization details
-- **[Demo Scripts](demo_scripts/README.md)** - Example scripts and diagnostic tools
+- **[Technical Docs](docs/README.md)** - Architecture and implementation details
+- **[AI Agents Guide](AGENTS.md)** - Guide for AI-assisted development
+
 
 ## Features
 
@@ -39,11 +45,12 @@ A Python Qt6 application for monitoring local directories and automatically tran
 
 ## Requirements
 
+- **Python 3.9 or later**
+- **Operating System**: Windows (recommended), Linux, or macOS
+
 ### Python Dependencies
 
-The `requirements.txt` file includes all necessary dependencies:
-
-```
+```text
 PyQt6>=6.4.0
 watchdog>=3.0.0
 requests>=2.31.0
@@ -51,47 +58,67 @@ keyring>=24.0.0
 keyrings.alt>=5.0.0
 ```
 
-## Installation Steps
+## Installation
 
-### 1. Install Python
+### Option 1: Install from PyPI (Recommended)
 
-- Download Python 3.9 or later from [python.org](https://www.python.org/)
-- During installation, check "Add Python to PATH"
+The easiest way to install PanoramaBridge:
 
-### 2. Create Virtual Environment (Recommended)
-
-#### For Windows (Native Performance):
 ```bash
-# Create Windows-optimized virtual environment
-python -m venv .venv-win
+pip install panoramabridge
+```
 
-# Activate it
+Then run the application:
+
+```bash
+panoramabridge
+```
+
+### Option 2: Install from Source
+
+1. **Clone the repository:**
+
+```bash
+git clone https://github.com/maccoss/PanoramaBridge.git
+cd PanoramaBridge
+```
+
+2. **Create virtual environment (recommended):**
+
+**Windows (Native Performance):**
+
+```bash
+python -m venv .venv-win
 .venv-win\Scripts\activate
 ```
 
-#### For General Use:
-```bash
-# Create virtual environment
-python -m venv .venv
+**Linux/macOS:**
 
-# Activate it
-# On Windows:
-.venv\Scripts\activate
-# On Linux/Mac:
+```bash
+python -m venv .venv
 source .venv/bin/activate
 ```
 
-### 3. Install Dependencies
+3. **Install dependencies:**
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Run the Application
+4. **Run the application:**
 
 ```bash
 python panoramabridge.py
 ```
+
+### Option 3: Download Windows Executable
+
+Download a pre-built executable from the [Releases page](https://github.com/maccoss/PanoramaBridge/releases):
+
+1. Download `PanoramaBridge.exe`
+2. Run the executable (Windows may show a security warning - click "More info" → "Run anyway")
+3. No Python installation required
+
 
 ## Quick Start
 
@@ -111,7 +138,7 @@ python panoramabridge.py
 
 ## Creating a Windows Executable (Optional)
 
-> **📋 For detailed Windows build instructions, see [BUILD_WINDOWS.md](build_scripts/BUILD_WINDOWS.md)**
+> **For detailed Windows build instructions, see [BUILD_WINDOWS.md](build_scripts/BUILD_WINDOWS.md)**
 
 To create a standalone .exe file:
 
@@ -361,10 +388,10 @@ PanoramaBridge uses a comprehensive 3-step verification system for remote integr
 4. **Automatic Recovery**: Missing files are automatically queued for re-upload
 
 **Verification Results:**
-- ✅ **Verified**: File exists and integrity confirmed (ETag or accessibility check)
-- 🔄 **Missing**: File not found on remote - automatically queued for re-upload
-- ⚠️ **Changed/Conflict**: File differs between local and remote - uses conflict resolution settings to determine action
-- ❌ **Errors**: Network/verification errors - logged for troubleshooting
+- **Verified**: File exists and integrity confirmed
+- **Missing**: File not found on remote - automatically queued for re-upload
+- **Changed/Conflict**: File differs between local and remote - uses conflict resolution settings to determine action
+- **Errors**: Network/verification errors - logged for troubleshooting
 
 **Conflict Resolution Approach:**
 When files differ between local and remote, PanoramaBridge no longer assumes corruption. Instead, it treats all differences as potential conflicts and applies your configured conflict resolution settings:

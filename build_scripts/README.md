@@ -1,52 +1,86 @@
 # Build Scripts
 
-This directory contains files for building PanoramaBridge executables and distributions.
+Scripts and configuration files for building PanoramaBridge executables.
 
-## Windows Build
+## Quick Build
 
-### Files
-- `PanoramaBridge.spec` - PyInstaller specification file for x86_64 Windows executable
-- `PanoramaBridge-arm64.spec` - PyInstaller specification file for ARM64 Windows executable
-- `build_windows.ps1` - PowerShell script for building x86_64 Windows executable
-- `build_windows_arm64.ps1` - PowerShell script for building ARM64 Windows executable
-- `build_windows.bat` - Batch script for building x86_64 Windows executable
-- [`BUILD_WINDOWS.md`](BUILD_WINDOWS.md) - Detailed instructions for Windows build process
-- [`MULTI_ARCHITECTURE_BUILD.md`](../docs/MULTI_ARCHITECTURE_BUILD.md) - Multi-architecture build guide
+### Windows x64 (Intel/AMD)
 
-### Quick Build
-
-#### x86_64 (Intel/AMD)
-```bash
-# Using PowerShell
+```powershell
+# PowerShell
 ./build_windows.ps1
 
-# Using Command Prompt
+# Command Prompt
 build_windows.bat
 ```
 
-#### ARM64 (Snapdragon)
-```bash
+### Windows ARM64 (Snapdragon)
+
+```powershell
 # Must run on ARM64 hardware
 ./build_windows_arm64.ps1
 ```
 
-### Requirements
+### Linux
+
+```bash
+# Make executable (first time only)
+chmod +x build_scripts/build_linux.sh
+
+# Run build
+./build_scripts/build_linux.sh
+```
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `PanoramaBridge.spec` | PyInstaller spec for Windows x64 builds |
+| `PanoramaBridge-arm64.spec` | PyInstaller spec for Windows ARM64 builds |
+| `PanoramaBridge-linux.spec` | PyInstaller spec for Linux builds |
+| `build_windows.ps1` | PowerShell build script (x64) |
+| `build_windows_arm64.ps1` | PowerShell build script (ARM64) |
+| `build_windows.bat` | Batch build script (x64) |
+| `build_linux.sh` | Bash build script (Linux) |
+| `BUILD_WINDOWS.md` | Detailed build instructions |
+| `GITHUB_ACTIONS.md` | CI/CD workflow documentation |
+
+## Requirements
+
+### Windows
 - Python 3.12+ (matching target architecture)
-- PyInstaller (`pip install pyinstaller`)
+- PyInstaller: `pip install pyinstaller`
 - All dependencies from `requirements.txt`
 
-### Architecture Support
-- **x86_64**: Standard Intel/AMD processors - `PanoramaBridge.exe`
-- **ARM64**: Snapdragon and other ARM64 processors - `PanoramaBridge-arm64.exe`
+### Linux
+- Python 3.12+
+- PyInstaller: `pip install pyinstaller`
+- Qt6 libraries: `sudo apt install python3-pyqt6` (Ubuntu/Debian)
+- All dependencies from `requirements.txt`
 
 ## Build Output
-- **x86_64**: Executable will be created in `../dist/PanoramaBridge.exe`
-- **ARM64**: Executable will be created in `../dist/PanoramaBridge-arm64.exe`
-- Build artifacts will be in `../build/` directory
 
-## CI/CD Support
-GitHub Actions automatically builds both architectures:
-- x86_64 build on `windows-latest` runner
-- ARM64 build on `windows-latest-arm64` runner
+| Platform | Output |
+|----------|--------|
+| Windows x64 | `../dist/PanoramaBridge.exe` |
+| Windows ARM64 | `../dist/PanoramaBridge-arm64.exe` |
+| Linux | `../dist/PanoramaBridge` |
 
-For detailed build instructions, see [BUILD_WINDOWS.md](BUILD_WINDOWS.md) and [MULTI_ARCHITECTURE_BUILD.md](../docs/MULTI_ARCHITECTURE_BUILD.md).
+Build artifacts are in `../build/` directory.
+
+## Detailed Documentation
+
+- [BUILD_WINDOWS.md](BUILD_WINDOWS.md) - Complete Windows build guide
+- [GITHUB_ACTIONS.md](GITHUB_ACTIONS.md) - CI/CD and automated releases
+- [Multi-Architecture Build](../docs/MULTI_ARCHITECTURE_BUILD.md) - Cross-architecture builds
+
+## CI/CD
+
+GitHub Actions automatically builds executables:
+
+- **On push to main**: Creates development builds (artifacts)
+- **On release tags**: Creates production releases with downloads
+
+See [GITHUB_ACTIONS.md](GITHUB_ACTIONS.md) for details.
+
+

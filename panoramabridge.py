@@ -17,6 +17,8 @@ Author: Michael MacCoss - MacCoss Lab, University of Washington
 License: Apache License 2.0
 """
 
+__version__ = "1.0.0"
+
 import hashlib  # For calculating SHA256 checksums
 import json  # For configuration file storage
 import logging
@@ -2450,17 +2452,17 @@ class RemoteBrowserDialog(QDialog):
                         if recent_errors:
                             latest_error = recent_errors[-1]
                             if "Permission denied" in latest_error:
-                                error_msg += "❌ Permission Denied (HTTP 403)\n\n"
+                                error_msg += "Permission Denied (HTTP 403)\n\n"
                                 error_msg += "This means you don't have write permissions to create folders in this directory.\n\n"
                                 error_msg += "Possible solutions:\n"
                                 error_msg += "• Contact your Panorama administrator to request write access\n"
                                 error_msg += "• Try creating the folder in a different directory where you have permissions\n"
                                 error_msg += "• Check if you're in the correct user folder\n\n"
                             elif "Conflict" in latest_error:
-                                error_msg += "❌ Path Conflict (HTTP 409)\n\n"
+                                error_msg += "Path Conflict (HTTP 409)\n\n"
                                 error_msg += "The parent directory may not exist.\n\n"
                             else:
-                                error_msg += "❌ Server Error\n\n"
+                                error_msg += "Server Error\n\n"
                         else:
                             error_msg += "Possible reasons:\n"
                             error_msg += "• You may not have write permissions\n"
@@ -2939,9 +2941,9 @@ class MainWindow(QMainWindow):
         self.verify_uploads_check.setChecked(True)  # Default to enabled
         self.verify_uploads_check.setToolTip(
             "Multi-level verification approach:\n"
-            "1. ETag verification: Compares server ETag with local file (SHA256 or MD5)\n"
-            "2. Size + accessibility check: Verifies file size and can be read\n"
-            "Note: Checksums are generated for upload metadata but not used for verification due to performance cost"
+            "1. Size comparison: Verifies local and remote file sizes match\n"
+            "2. Checksum verification: Compares .checksum file on server with local SHA256\n"
+            "3. Accessibility check: Fallback - verifies file can be read (first 8KB)"
         )
         transfer_layout.addWidget(self.verify_uploads_check, 0, 0, 1, 2)
 
@@ -4017,9 +4019,9 @@ class MainWindow(QMainWindow):
         # Log the event
         timestamp = datetime.now().strftime("%H:%M:%S")
         if success:
-            self.log_text.append(f"{timestamp} - ✓ {filename}: {message}")
+            self.log_text.append(f"{timestamp} - [OK] {filename}: {message}")
         else:
-            self.log_text.append(f"{timestamp} - ✗ {filename}: {message}")
+            self.log_text.append(f"{timestamp} - [FAIL] {filename}: {message}")
 
     @pyqtSlot(str, str, str, dict)
     def on_conflict_resolution_needed(

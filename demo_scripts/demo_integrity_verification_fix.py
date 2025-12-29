@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 def demo_verification_logic():
     """Test the corrected verification logic"""
 
-    print("🔍 Testing Corrected File Integrity Verification")
+    print("Testing Corrected File Integrity Verification")
     print("=" * 60)
 
     # Test scenarios
@@ -62,11 +62,11 @@ def demo_verification_logic():
         print()
 
     print("Key Improvements:")
-    print("✅ Removed incorrect cached checksum lookup for large files")
-    print("✅ ETag verification now prioritized for all file sizes")
-    print("✅ Clear messaging when ETag unavailable (server limitation)")
-    print("✅ Transparent about verification method limitations")
-    print("✅ Only downloads small files for full checksum verification")
+    print("- Removed incorrect cached checksum lookup for large files")
+    print("- ETag verification now prioritized for all file sizes")
+    print("- Clear messaging when ETag unavailable (server limitation)")
+    print("- Transparent about verification method limitations")
+    print("- Only downloads small files for full checksum verification")
     print()
 
     print("User Benefits:")

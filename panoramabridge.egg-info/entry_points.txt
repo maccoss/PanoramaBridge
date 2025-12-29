@@ -1,0 +1,5 @@
+[console_scripts]
+panoramabridge-cli = panoramabridge:main
+
+[gui_scripts]
+panoramabridge = panoramabridge:main

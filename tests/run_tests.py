@@ -62,14 +62,14 @@ def run_tests():
     try:
         subprocess.run(cmd, check=True, capture_output=False)
         print("\n" + "=" * 80)
-        print("✅ All tests passed successfully!")
+        print("All tests passed successfully!")
         print("Core functionality and new features are working correctly.")
         print("=" * 80)
         return 0
 
     except subprocess.CalledProcessError as e:
         print("\n" + "=" * 80)
-        print("❌ Some tests failed!")
+        print("Some tests failed!")
         print("=" * 80)
         return e.returncode
 

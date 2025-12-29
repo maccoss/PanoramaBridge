@@ -1,34 +1,46 @@
-# Demo Scripts and Examples
+# Demo Scripts and Diagnostics
 
-This directory contains demonstration scripts, examples, and diagnostic tools for PanoramaBridge development and testing.
+This directory contains demonstration scripts, examples, and diagnostic tools for PanoramaBridge development, testing, and troubleshooting.
 
-## Demo Scripts
+## Scripts Overview
 
-### Accessibility and Verification
-- **`demo_accessibility_assessment.py`** - Accessibility assessment and UI testing demonstrations
-- **`demo_integrity_verification_fix.py`** - Integrity verification system demonstration
-- **`demo_verification_messages.py`** - Upload verification message examples
+### Verification and Integrity
 
-### ETag Support Examples
-- **`demo_multi_etag_support.py`** - Multiple ETag support demonstration
-- **`demo_multiple_etag_support.py`** - Enhanced ETag handling examples
-- **`etag_conflict_resolution_examples.py`** - ETag-based conflict resolution examples
-- **`etag_scenario_examples.py`** - Various ETag scenario demonstrations
+| Script | Purpose |
+|--------|---------|
+| `demo_accessibility_assessment.py` | Demonstrates accessibility verification checks |
+| `demo_integrity_verification_fix.py` | Shows integrity verification system in action |
+| `demo_verification_messages.py` | Examples of upload verification messages |
 
-### Testing and Diagnostics
-- **`diagnostic_infinite_loop_test.py`** - Diagnostic tool for testing infinite loop prevention
-- **`verify_test_setup.py`** - Test environment setup verification
+### Diagnostics and Testing
+
+| Script | Purpose |
+|--------|---------|
+| `diagnostic_infinite_loop_test.py` | Tests infinite loop prevention logic |
+| `verify_test_setup.py` | Verifies test environment is configured correctly |
 
 ## Usage
 
-These scripts are primarily for development and testing purposes. They demonstrate various features and can be used to test specific functionality during development.
-
-Most scripts can be run directly with Python:
+These scripts are for development and testing purposes. Run directly with Python:
 
 ```bash
-python demo_scripts/script_name.py
+# Activate virtual environment first
+source .venv/bin/activate  # Linux/macOS
+.venv\Scripts\activate     # Windows
+
+# Run a demo script
+python demo_scripts/demo_verification_messages.py
 ```
 
-## Navigation
+## When to Use These Scripts
 
-Return to [Main README](../README.md) for installation and usage instructions.
+- **Development**: Testing new features before integration
+- **Debugging**: Diagnosing issues with verification
+- **Learning**: Understanding how specific features work
+- **Testing**: Validating behavior in specific scenarios
+
+## Related Documentation
+
+- [Main README](../README.md) - Installation and usage
+- [Testing Guide](../docs/TESTING.md) - Running the test suite
+- [Verification System](../docs/VERIFICATION_SYSTEM.md) - How verification works

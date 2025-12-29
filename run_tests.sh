@@ -4,12 +4,12 @@
 
 set -e  # Exit on any error
 
-echo "🧪 PanoramaBridge Test Runner"
-echo "=============================="
+echo "PanoramaBridge Test Runner"
+echo "=========================="
 
 # Check if we're in a virtual environment
 if [[ -z "${VIRTUAL_ENV}" ]]; then
-    echo "⚠️  Warning: Not in a virtual environment"
+    echo "Warning: Not in a virtual environment"
     echo "   Consider running: source .venv/bin/activate"
     echo ""
 fi
@@ -63,14 +63,14 @@ fi
 
 # Run tests based on selection
 if [[ "$RUN_STABLE_ONLY" == true ]]; then
-    echo "🔧 Running stable tests only..."
+    echo "Running stable tests only..."
     echo "   Tests: test_qt_ui.py, test_upload_history.py, test_app_integration.py"
     echo "   These are the most reliable tests (26 total)"
     echo ""
     $PYTEST_CMD tests/test_qt_ui.py tests/test_upload_history.py tests/test_app_integration.py --tb=short
     
 elif [[ "$RUN_ALL" == true ]]; then
-    echo "🚀 Running all tests (may include experimental/unstable ones)..."
+    echo "Running all tests (may include experimental/unstable ones)..."
     echo "   Note: Some tests may be skipped or fail due to Qt initialization issues"
     echo "   Demo scripts in demo_scripts/ are excluded from test runs"
     echo ""
@@ -78,11 +78,11 @@ elif [[ "$RUN_ALL" == true ]]; then
 fi
 
 echo ""
-echo "✅ Test run completed!"
+echo "Test run completed!"
 
 if [[ "$COVERAGE" == true ]]; then
-    echo "📊 Coverage report generated in htmlcov/index.html"
+    echo "Coverage report generated in htmlcov/index.html"
 fi
 
 echo ""
-echo "💡 Tip: Use './run_tests.sh --help' to see all options"
+echo "Tip: Use './run_tests.sh --help' to see all options"

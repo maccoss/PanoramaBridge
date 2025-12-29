@@ -19,10 +19,10 @@ git push origin v1.2.0
 ```
 
 #### Manual Release Creation
-1. Go to GitHub Actions → Release Builder
+1. Go to GitHub Actions -> Release Builder
 2. Click "Run workflow"
 3. Fill in:
-   - ✅ Create a new release: `true`
+   - Create a new release: `true`
    - Release tag: `v1.2.0`
    - Release name: `PanoramaBridge v1.2.0`
 
@@ -58,11 +58,11 @@ The workflows automatically generate comprehensive release notes including:
 ## Quality Assurance
 
 ### Automated Checks
-- ✅ Python architecture verification
-- ✅ PyQt6 installation verification
-- ✅ Executable architecture verification (when possible)
-- ✅ SHA256 checksum generation
-- ✅ File size reporting
+- Python architecture verification
+- PyQt6 installation verification
+- Executable architecture verification (when possible)
+- SHA256 checksum generation
+- File size reporting
 
 ### Manual Testing Checklist
 Before publishing a release:

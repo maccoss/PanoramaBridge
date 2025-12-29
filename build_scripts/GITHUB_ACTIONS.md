@@ -52,7 +52,7 @@ This automatically creates a GitHub release with the executable.
 3. Select "Release Builder" workflow
 4. Click "Run workflow"
 5. Fill in release details:
-   - ✅ Create a new release: `true`
+   - Create a new release: `true`
    - Release tag: `v1.0.0`
    - Release name: `PanoramaBridge v1.0.0`
 6. Click "Run workflow"

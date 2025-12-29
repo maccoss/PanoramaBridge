@@ -13,31 +13,31 @@ from pathlib import Path
 
 def check_vscode_configuration():
     """Check VS Code configuration files."""
-    print("🔍 Checking VS Code Configuration...")
+    print("Checking VS Code Configuration...")
 
     vscode_dir = Path(".vscode")
     if not vscode_dir.exists():
-        print("❌ .vscode directory not found")
+        print("[FAIL] .vscode directory not found")
         return False
 
     required_files = ["settings.json", "launch.json", "tasks.json", "extensions.json"]
     for file_name in required_files:
         file_path = vscode_dir / file_name
         if file_path.exists():
-            print(f"✅ {file_name} found")
+            print(f"[OK] {file_name} found")
         else:
-            print(f"❌ {file_name} missing")
+            print(f"[FAIL] {file_name} missing")
 
     return True
 
 
 def check_pytest_installation():
     """Check if pytest is properly installed."""
-    print("\n🔍 Checking pytest installation...")
+    print("\nChecking pytest installation...")
 
     venv_python = Path(".venv/bin/python")
     if not venv_python.exists():
-        print("❌ Virtual environment not found at .venv/bin/python")
+        print("[FAIL] Virtual environment not found at .venv/bin/python")
         return False
 
     try:
@@ -45,19 +45,19 @@ def check_pytest_installation():
             [str(venv_python), "-m", "pytest", "--version"], capture_output=True, text=True, cwd="."
         )
         if result.returncode == 0:
-            print(f"✅ pytest installed: {result.stdout.strip()}")
+            print(f"[OK] pytest installed: {result.stdout.strip()}")
             return True
         else:
-            print(f"❌ pytest not working: {result.stderr}")
+            print(f"[FAIL] pytest not working: {result.stderr}")
             return False
     except Exception as e:
-        print(f"❌ Error checking pytest: {e}")
+        print(f"[FAIL] Error checking pytest: {e}")
         return False
 
 
 def check_test_discovery():
     """Check if pytest can discover tests."""
-    print("\n🔍 Checking test discovery...")
+    print("\nChecking test discovery...")
 
     try:
         result = subprocess.run(
@@ -74,19 +74,19 @@ def check_test_discovery():
                 if "::test_" in line:
                     test_count += 1
 
-            print(f"✅ Test discovery successful: {test_count} tests found")
+            print(f"[OK] Test discovery successful: {test_count} tests found")
             return True
         else:
-            print(f"❌ Test discovery failed: {result.stderr}")
+            print(f"[FAIL] Test discovery failed: {result.stderr}")
             return False
     except Exception as e:
-        print(f"❌ Error during test discovery: {e}")
+        print(f"[FAIL] Error during test discovery: {e}")
         return False
 
 
 def run_sample_test():
     """Run a sample test to verify everything works."""
-    print("\n🔍 Running sample WebDAV tests...")
+    print("\nRunning sample WebDAV tests...")
 
     try:
         result = subprocess.run(
@@ -98,15 +98,15 @@ def run_sample_test():
 
         if "PASSED" in result.stdout and result.returncode == 0:
             passed_count = result.stdout.count("PASSED")
-            print(f"✅ Sample tests successful: {passed_count} tests passed")
+            print(f"[OK] Sample tests successful: {passed_count} tests passed")
             return True
         else:
-            print("❌ Sample tests failed")
+            print("[FAIL] Sample tests failed")
             print("STDOUT:", result.stdout)
             print("STDERR:", result.stderr)
             return False
     except Exception as e:
-        print(f"❌ Error running sample tests: {e}")
+        print(f"[FAIL] Error running sample tests: {e}")
         return False
 
 
@@ -122,17 +122,17 @@ def main():
 
     print("\n" + "=" * 60)
     if all_good:
-        print("🎉 SUCCESS: VS Code Test Explorer is ready!")
+        print("SUCCESS: VS Code Test Explorer is ready!")
         print("\nNext steps:")
         print("1. Open this project in VS Code")
         print("2. Install recommended extensions when prompted")
         print(
-            "3. Open the Test Explorer panel (Ctrl+Shift+P → 'Test: Focus on Test Explorer View')"
+            "3. Open the Test Explorer panel (Ctrl+Shift+P -> 'Test: Focus on Test Explorer View')"
         )
         print("4. Your tests should appear automatically!")
         print("5. Right-click on tests to run, debug, or view them")
     else:
-        print("❌ ISSUES FOUND: Please fix the above problems before using Test Explorer")
+        print("ISSUES FOUND: Please fix the above problems before using Test Explorer")
 
     print("=" * 60)
     return all_good

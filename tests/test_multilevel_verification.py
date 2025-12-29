@@ -50,4 +50,4 @@ def test_no_expensive_checksum_verification():
 if __name__ == "__main__":
     test_verify_remote_file_integrity_function_exists()
     test_no_expensive_checksum_verification()
-    print("✅ All enhanced ETag verification tests passed!")
+    print("All enhanced verification tests passed!")

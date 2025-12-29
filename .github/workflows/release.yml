@@ -210,28 +210,28 @@ jobs:
           
           **Windows Desktop Application**
           
-          ### � Download
+          ### Download
           - **PanoramaBridge.exe** - For Intel/AMD Windows computers
           - Compatible with Windows 10/11 systems
           
-          ### � Installation
+          ### Installation
           1. Download `PanoramaBridge.exe`
           2. Run the executable (Windows may show a security warning for unsigned applications - click "More info" then "Run anyway")
           3. Configure your WebDAV server settings
           4. Start monitoring your files!
           
-          ### ✨ What's New
+          ### What's New
           - Nearly ready for people to start trying this
           - Improved error handling and reporting for file uploads
           - Better conflict resolution for file uploads and when files are modified
           - Enhanced WebDAV functionality including ETags and file chunking
           
-          ### 🖥️ System Requirements
+          ### System Requirements
           - **Windows 11** (recommended) or **Windows 10**
           - **Intel/AMD 64-bit processor**
           - No additional installations required - this is a standalone executable
           
-          ### 📋 Build Details
+          ### Build Details
           See the `BUILD_INFO_x64.txt` file for detailed build information including checksums.
           
       env:

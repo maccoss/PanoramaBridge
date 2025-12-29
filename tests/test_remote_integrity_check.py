@@ -217,7 +217,7 @@ class TestRemoteIntegrityCheck:
         assert "missing" in issue_types
         assert "changed" in issue_types  # Changed instead of corrupted
 
-        print("✅ IntegrityCheckThread test passed!")
+        print("IntegrityCheckThread test passed!")
 
     def test_changed_file_detection(self):
         """Test detection of locally changed files"""
@@ -267,7 +267,7 @@ class TestRemoteIntegrityCheck:
                 "differs from expected" in details.lower() or 
                 "mismatch" in details.lower())
 
-        print("✅ Changed file detection test passed!")
+        print("Changed file detection test passed!")
 
     def test_startup_integrity_verification_logic(self):
         """Test the startup integrity verification logic"""
@@ -292,7 +292,7 @@ class TestRemoteIntegrityCheck:
             in_scope = main_window._is_file_in_monitoring_scope(filepath, directory, extensions, recursive)
             assert in_scope, f"File {filepath} should be in monitoring scope"
 
-        print("✅ Startup integrity verification logic test passed!")
+        print("Startup integrity verification logic test passed!")
 
     def test_missing_file_handling(self):
         """Test handling of files missing from remote"""
@@ -339,7 +339,7 @@ class TestRemoteIntegrityCheck:
         assert results['missing'] == 2
         assert results['verified'] == 0
 
-        print("✅ Missing file handling test passed!")
+        print("Missing file handling test passed!")
 
     def test_verification_error_handling(self):
         """Test handling of verification errors"""
@@ -366,7 +366,7 @@ class TestRemoteIntegrityCheck:
         assert results['errors'] == 1
         assert results['verified'] == 0
 
-        print("✅ Error handling test passed!")
+        print("Error handling test passed!")
 
 def run_all_tests():
     """Run all tests"""
@@ -382,19 +382,19 @@ def run_all_tests():
         test_instance.test_missing_file_handling()
         test_instance.test_verification_error_handling()
 
-        print("\n🎉 ALL TESTS PASSED! 🎉")
+        print("\nALL TESTS PASSED!")
         print("\nRemote Integrity Check implementation is working correctly:")
-        print("✅ IntegrityCheckThread handles all file scenarios")
-        print("✅ Changed files are properly detected")
-        print("✅ Missing files trigger re-upload")
-        print("✅ Corrupted files are identified")
-        print("✅ Verification errors are handled gracefully")
-        print("✅ Startup integrity logic works correctly")
+        print("- IntegrityCheckThread handles all file scenarios")
+        print("- Changed files are properly detected")
+        print("- Missing files trigger re-upload")
+        print("- Corrupted files are identified")
+        print("- Verification errors are handled gracefully")
+        print("- Startup integrity logic works correctly")
 
         return True
 
     except Exception as e:
-        print(f"\n❌ TEST FAILED: {e}")
+        print(f"\nTEST FAILED: {e}")
         import traceback
         traceback.print_exc()
         return False

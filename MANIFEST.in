@@ -1,0 +1,35 @@
+# Include documentation
+include README.md
+include LICENSE
+include AGENTS.md
+
+# Include requirements files
+include requirements.txt
+include requirements-dev.txt
+
+# Include configuration files
+include pyproject.toml
+include pytest.ini
+
+# Include screenshots for the application
+recursive-include screenshots *.png *.jpg *.gif
+
+# Exclude build artifacts
+exclude *.log
+exclude .python-version
+
+# Exclude development directories
+prune .venv
+prune .venv-win
+prune build
+prune dist
+prune .pytest_cache
+prune .ruff_cache
+prune .git
+prune .github
+prune htmlcov
+
+# Exclude test and demo files from distribution
+prune tests
+prune demo_scripts
+prune build_scripts

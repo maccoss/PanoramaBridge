@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 def demo_comprehensive_infinite_loop_scenarios():
     """Test various scenarios that could cause infinite loops."""
 
-    print("🔍 Testing comprehensive infinite loop scenarios...")
+    print("Testing comprehensive infinite loop scenarios...")
 
     from panoramabridge import FileMonitorHandler, MainWindow
 
@@ -49,11 +49,11 @@ def demo_comprehensive_infinite_loop_scenarios():
             extensions=['.raw']
         )
 
-        print(f"✓ Test file created: {filepath}")
-        print(f"✓ File checksum: {checksum}")
+        print(f"[OK] Test file created: {filepath}")
+        print(f"[OK] File checksum: {checksum}")
 
         # Scenario 1: Multiple rapid file system events (simulating system touches)
-        print("\n📋 Scenario 1: Multiple rapid file system events")
+        print("\nScenario 1: Multiple rapid file system events")
 
         # First event - should queue
         result1 = handler._should_queue_file(filepath)
@@ -67,7 +67,7 @@ def demo_comprehensive_infinite_loop_scenarios():
             'remote_path': '/remote/test_file.raw'
         }
         mock_app.queued_files.clear()
-        print("  ✓ Simulated successful upload")
+        print("  [OK] Simulated successful upload")
 
         # Multiple subsequent events - should all be skipped
         for i in range(10):
@@ -75,10 +75,10 @@ def demo_comprehensive_infinite_loop_scenarios():
             print(f"  Event {i+2}: Queue={result} (expected: False)")
             assert result is False, f"Event {i+2} should not queue file"
 
-        print("  ✅ Scenario 1 passed - no infinite loop!")
+        print("  Scenario 1 passed - no infinite loop!")
 
         # Scenario 2: Polling with unchanged files
-        print("\n📋 Scenario 2: Backup polling with unchanged files")
+        print("\nScenario 2: Backup polling with unchanged files")
 
         # Mock main window for polling test
         with patch('panoramabridge.QApplication'):
@@ -94,10 +94,10 @@ def demo_comprehensive_infinite_loop_scenarios():
                 print(f"  Poll {i+1}: Queue={result} (expected: False)")
                 assert result is False, f"Poll {i+1} should not queue file"
 
-        print("  ✅ Scenario 2 passed - polling doesn't cause infinite loop!")
+        print("  Scenario 2 passed - polling doesn't cause infinite loop!")
 
         # Scenario 3: Mixed file events and polling
-        print("\n📋 Scenario 3: Mixed file events and polling")
+        print("\nScenario 3: Mixed file events and polling")
 
         mock_app.queued_files.clear()
 
@@ -111,10 +111,10 @@ def demo_comprehensive_infinite_loop_scenarios():
         print(f"  Polling: Queue={result_poll} (expected: False)")
         assert result_poll is False
 
-        print("  ✅ Scenario 3 passed - mixed events handled correctly!")
+        print("  Scenario 3 passed - mixed events handled correctly!")
 
         # Scenario 4: File modification detection
-        print("\n📋 Scenario 4: Actual file modification detection")
+        print("\nScenario 4: Actual file modification detection")
 
         # Modify file content
         modified_content = content + b" - ACTUALLY MODIFIED"
@@ -131,10 +131,10 @@ def demo_comprehensive_infinite_loop_scenarios():
         print(f"  Modified file: Queue={result_modified} (expected: True)")
         assert result_modified is True, "Modified file should be queued"
 
-        print("  ✅ Scenario 4 passed - modified files are correctly detected!")
+        print("  Scenario 4 passed - modified files are correctly detected!")
 
         # Scenario 5: Concurrent access simulation
-        print("\n📋 Scenario 5: Concurrent access simulation")
+        print("\nScenario 5: Concurrent access simulation")
 
         # Reset for concurrent test
         mock_app.upload_history[filepath] = {'checksum': new_checksum, 'timestamp': time.time(), 'remote_path': '/remote/test_file.raw'}
@@ -162,12 +162,12 @@ def demo_comprehensive_infinite_loop_scenarios():
         print(f"  False results: {false_count}/5 (expected: most should be False)")
         assert false_count >= 3, "Most concurrent calls should return False"
 
-        print("  ✅ Scenario 5 passed - concurrent access handled!")
+        print("  Scenario 5 passed - concurrent access handled!")
 
-        print("\n🎉 ALL SCENARIOS PASSED! The infinite loop fix is working correctly!")
+        print("\nALL SCENARIOS PASSED! The infinite loop fix is working correctly!")
 
     except Exception as e:
-        print(f"\n❌ Test failed with error: {e}")
+        print(f"\nTest failed with error: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -185,7 +185,7 @@ def demo_comprehensive_infinite_loop_scenarios():
 def demo_edge_cases():
     """Test edge cases that might cause issues."""
 
-    print("\n🔍 Testing edge cases...")
+    print("\nTesting edge cases...")
 
     from panoramabridge import FileMonitorHandler
 
@@ -222,7 +222,7 @@ def demo_edge_cases():
         print(f"  Malformed history entry: Queue={result} (expected: True - fail safe)")
         assert result is True, "Should queue when checksum is missing (fail-safe behavior)"
 
-        print("  ✅ Edge case test passed - malformed entries handled safely!")
+        print("  Edge case test passed - malformed entries handled safely!")
 
     finally:
         os.unlink(filepath)
@@ -234,6 +234,6 @@ if __name__ == "__main__":
     success = demo_comprehensive_infinite_loop_scenarios()
     if success:
         demo_edge_cases()
-        print("\n🏆 ALL TESTS PASSED! The infinite loop fix is comprehensive and working.")
+        print("\nALL TESTS PASSED! The infinite loop fix is comprehensive and working.")
     else:
-        print("\n💥 Some tests failed - there may still be infinite loop issues.")
+        print("\nSome tests failed - there may still be infinite loop issues.")

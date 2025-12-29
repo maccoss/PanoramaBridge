@@ -1,30 +1,76 @@
 # PanoramaBridge Documentation
 
-This directory contains technical documentation and implementation guides for PanoramaBridge.
+Technical documentation and implementation guides for PanoramaBridge.
 
-## Technical Documentation
+## Core Documentation
 
-### Performance & Optimization
-- **[Checksum Caching Implementation](CHECKSUM_CACHING_SUMMARY.md)** - Local checksum caching system for dramatic performance improvements
-- **[File Monitoring Optimization](FILE_MONITORING_OPTIMIZATION.md)** - Optimized file monitoring system and performance benchmarks
-- **[File Monitoring Robustness](FILE_MONITORING_ROBUSTNESS_IMPROVEMENTS.md)** - Thread safety and robustness improvements
-- **[Queue and Cache Implementation](QUEUE_CACHE_IMPLEMENTATION_SUMMARY.md)** - Transfer queue management and persistent caching
+### System Architecture
 
-### Upload & Verification
-- **[Enhanced ETag Verification](ENHANCED_ETAG_VERIFICATION_SUMMARY.md)** - Advanced file verification using ETag headers
-- **[Remote Integrity Check Implementation](REMOTE_INTEGRITY_CHECK_IMPLEMENTATION.md)** - Remote file integrity verification system
-- **[Integrity Check System Improvements (2025)](INTEGRITY_CHECK_IMPROVEMENTS_2025.md)** - Recent enhancements to conflict resolution and verification
-- **[Upload Verification Improvements](UPLOAD_VERIFICATION_IMPROVEMENTS.md)** - Enhanced upload verification and error handling
+- **[File Monitoring](FILE_MONITORING.md)** - File detection, OS events, locked file handling, and Windows optimization
+- **[Verification System](VERIFICATION_SYSTEM.md)** - Upload verification, ETag support, integrity checks, and conflict resolution
+- **[Caching System](CACHING_SYSTEM.md)** - Checksum caching, queue management, and performance optimization
 
-### Development & Testing
-- **[Test Suite Documentation](TEST_SUITE_SUMMARY.md)** - Comprehensive test coverage and testing methodology
-- **[Test Setup Guide](TEST_SETUP.md)** - Instructions for setting up and running tests
-- **[QT Testing Guide](QT_TESTING_GUIDE.md)** - Qt-specific testing approaches and solutions
-- **[Upload History Tests Fixed](UPLOAD_HISTORY_TESTS_FIXED.md)** - Upload history testing improvements
+### Development
 
-### Code Quality & Maintenance
-- **[Linting Fixes Summary](LINTING_FIXES_SUMMARY.md)** - Code quality improvements and linting fixes
+- **[Testing Guide](TESTING.md)** - Comprehensive test suite documentation, running tests, and Qt testing approaches
+- **[Release Process](RELEASE_PROCESS.md)** - Version management and release procedures
+
+### Build & Deployment
+
+- **[Multi-Architecture Build](MULTI_ARCHITECTURE_BUILD.md)** - Building for x64 and ARM64 architectures
+
+## Quick Links
+
+| Topic | Document |
+|-------|----------|
+| Running tests | [TESTING.md](TESTING.md#quick-start) |
+| File monitoring setup | [FILE_MONITORING.md](FILE_MONITORING.md#configuration) |
+| Upload verification | [VERIFICATION_SYSTEM.md](VERIFICATION_SYSTEM.md#verification-hierarchy) |
+| Performance tuning | [CACHING_SYSTEM.md](CACHING_SYSTEM.md#performance-improvements) |
+| Windows builds | [../build_scripts/BUILD_WINDOWS.md](../build_scripts/BUILD_WINDOWS.md) |
+| GitHub Actions | [../build_scripts/GITHUB_ACTIONS.md](../build_scripts/GITHUB_ACTIONS.md) |
+
+## Archived Documentation
+
+The following files contain historical implementation details and have been consolidated into the core documentation above:
+
+<details>
+<summary>Click to expand archived files</summary>
+
+### Verification & Integrity (consolidated into VERIFICATION_SYSTEM.md)
+
+- `ENHANCED_ETAG_VERIFICATION_SUMMARY.md` - ETag verification implementation history
+- `REMOTE_INTEGRITY_CHECK_IMPLEMENTATION.md` - Remote integrity check implementation details
+- `INTEGRITY_CHECK_IMPROVEMENTS_2025.md` - 2025 integrity improvements
+- `UPLOAD_VERIFICATION_IMPROVEMENTS.md` - Upload verification enhancements
+
+### File Monitoring (consolidated into FILE_MONITORING.md)
+
+- `FILE_MONITORING_OPTIMIZATION.md` - Monitoring optimization details
+- `FILE_MONITORING_ROBUSTNESS_IMPROVEMENTS.md` - Robustness improvements
+
+### Caching (consolidated into CACHING_SYSTEM.md)
+
+- `CHECKSUM_CACHING_SUMMARY.md` - Checksum caching implementation
+- `QUEUE_CACHE_IMPLEMENTATION_SUMMARY.md` - Queue and cache features
+
+### Testing (consolidated into TESTING.md)
+
+- `TEST_SETUP.md` - Original test setup guide
+- `TEST_SUITE_SUMMARY.md` - Test suite overview
+- `QT_TESTING_GUIDE.md` - Qt-specific testing
+- `UPLOAD_HISTORY_TESTS_FIXED.md` - Upload history test fixes
+
+### Maintenance
+
+- `LINTING_FIXES_SUMMARY.md` - Code quality improvements (August 2025)
+
+</details>
 
 ## Navigation
 
-Return to [Main README](../README.md) for installation and usage instructions.
+- **[Main README](../README.md)** - Installation and usage instructions
+- **[Build Scripts](../build_scripts/README.md)** - Windows executable builds
+- **[Demo Scripts](../demo_scripts/README.md)** - Example scripts and diagnostics
+- **[AI Agents Guide](../AGENTS.md)** - Guide for AI-assisted development
+

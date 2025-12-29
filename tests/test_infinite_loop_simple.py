@@ -72,7 +72,7 @@ def test_infinite_loop_fix_simple():
             result = handler._should_queue_file(filepath)
             assert result is False, f"Call {i+1}: Unchanged file should NOT be re-queued"
 
-        print("✅ Infinite loop fix test passed!")
+        print("Infinite loop fix test passed!")
 
     finally:
         # Clean up
@@ -136,7 +136,7 @@ def test_file_modification_detection():
         assert result is True, "Modified file should be re-queued"
         assert filepath in mock_app.queued_files, "Modified file should be in queued_files"
 
-        print("✅ File modification detection test passed!")
+        print("File modification detection test passed!")
 
     finally:
         os.unlink(filepath)
@@ -146,4 +146,4 @@ if __name__ == "__main__":
     print("Running infinite loop fix tests...")
     test_infinite_loop_fix_simple()
     test_file_modification_detection()
-    print("All tests passed! ✅")
+    print("All tests passed!")
