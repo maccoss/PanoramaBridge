@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from panoramabridge import FileMonitorHandler, FileProcessor
+from panoramabridge import FileMonitorHandler, FileProcessor, MainWindow
 
 
 class TestChecksumCaching:
@@ -91,86 +91,124 @@ class TestFileMonitoringPerformance:
 class TestFileConflictResolution:
     """Test file conflict detection and resolution mechanisms."""
 
-    def test_file_comparison_identical_files(self, temp_dir, mock_app_instance, file_queue):
-        """Test that identical files are detected correctly."""
-        processor = FileProcessor(file_queue, mock_app_instance)
-
+    def test_file_comparison_identical_files(self, temp_dir, file_queue, mock_app_instance):
+        """Test that identical files are detected correctly using verify_remote_file_integrity."""
         # Create test file
         test_file = os.path.join(temp_dir, "identical_test.raw")
         with open(test_file, "w", encoding="utf-8") as f:
             f.write("identical content for testing")
 
-        # Calculate checksum
-        local_checksum = processor.calculate_checksum(test_file)
-
-        # Mock remote file info with same size and checksum via ETag
-        remote_info = {
-            "exists": True,
-            "size": os.path.getsize(test_file),
-            "modified": os.path.getmtime(test_file),
-            "etag": f'"{local_checksum}"',  # ETag matches checksum
-            "path": "/remote/path/identical_test.raw",
-        }
-
-        # Test comparison
-        status, details = processor.compare_files(test_file, remote_info, local_checksum)
-
-        # Should detect as identical
-        assert status == "identical"
-        assert details["etag_match"] is True
-        assert details["optimization_used"] == "etag_match"
-
-    def test_file_comparison_different_files(self, temp_dir, mock_app_instance, file_queue):
-        """Test that different files are detected correctly."""
+        # Calculate checksum using FileProcessor
         processor = FileProcessor(file_queue, mock_app_instance)
+        local_checksum = processor.calculate_checksum(test_file)
+        remote_path = "/remote/path/identical_test.raw"
 
+        # Create a mock MainWindow and bind the actual method
+        mock_window = Mock()
+        mock_window.verify_remote_file_integrity = MainWindow.verify_remote_file_integrity.__get__(mock_window, MainWindow)
+
+        # Mock WebDAV client methods
+        mock_webdav = Mock()
+        mock_window.webdav_client = mock_webdav
+
+        # Mock get_file_info to return file exists with matching size
+        mock_webdav.get_file_info.side_effect = lambda path: (
+            {
+                "exists": True,
+                "size": os.path.getsize(test_file),
+                "modified": os.path.getmtime(test_file),
+            } if path == remote_path else
+            {
+                "exists": True,
+                "size": len(local_checksum.encode('utf-8')),
+            }  # checksum file exists
+        )
+
+        # Mock download_file_head to return matching checksum
+        mock_webdav.download_file_head.return_value = local_checksum.encode('utf-8')
+
+        # Test verification
+        is_intact, reason = mock_window.verify_remote_file_integrity(test_file, remote_path, local_checksum)
+
+        # Should detect as identical with checksum verification
+        assert is_intact is True
+        assert reason == "Size + checksum verified"
+
+    def test_file_comparison_different_files(self, temp_dir, file_queue, mock_app_instance):
+        """Test that different files are detected correctly using verify_remote_file_integrity."""
         # Create test file
         test_file = os.path.join(temp_dir, "different_test.raw")
         with open(test_file, "w", encoding="utf-8") as f:
             f.write("local content for testing")
 
-        # Calculate checksum
-        local_checksum = processor.calculate_checksum(test_file)
-
-        # Mock remote file info with different checksum
-        different_checksum = "different" + local_checksum[9:]  # Same length, different content
-        remote_info = {
-            "exists": True,
-            "size": os.path.getsize(test_file),
-            "modified": os.path.getmtime(test_file) - 100,  # Older
-            "etag": f'"{different_checksum}"',
-            "path": "/remote/path/different_test.raw",
-        }
-
-        # Test comparison
-        status, details = processor.compare_files(test_file, remote_info, local_checksum)
-
-        # Should detect as different
-        assert status in ["different", "newer_local"]
-        assert details["etag_match"] is False
-        assert details["optimization_used"] == "etag_differ"
-
-    def test_file_comparison_new_file(self, temp_dir, mock_app_instance, file_queue):
-        """Test that new files (not existing remotely) are handled correctly."""
+        # Calculate checksum using FileProcessor
         processor = FileProcessor(file_queue, mock_app_instance)
+        local_checksum = processor.calculate_checksum(test_file)
+        remote_path = "/remote/path/different_test.raw"
 
+        # Create a mock MainWindow and bind the actual method
+        mock_window = Mock()
+        mock_window.verify_remote_file_integrity = MainWindow.verify_remote_file_integrity.__get__(mock_window, MainWindow)
+
+        # Mock WebDAV client methods
+        mock_webdav = Mock()
+        mock_window.webdav_client = mock_webdav
+
+        # Create different checksum with same length
+        different_checksum = "different" + local_checksum[9:]
+
+        # Mock get_file_info to return file exists with matching size
+        mock_webdav.get_file_info.side_effect = lambda path: (
+            {
+                "exists": True,
+                "size": os.path.getsize(test_file),
+                "modified": os.path.getmtime(test_file) - 100,
+            } if path == remote_path else
+            {
+                "exists": True,
+                "size": len(different_checksum.encode('utf-8')),
+            }  # checksum file exists
+        )
+
+        # Mock download_file_head to return different checksum
+        mock_webdav.download_file_head.return_value = different_checksum.encode('utf-8')
+
+        # Test verification
+        is_intact, reason = mock_window.verify_remote_file_integrity(test_file, remote_path, local_checksum)
+
+        # Should detect as different due to checksum mismatch
+        assert is_intact is False
+        assert "checksum mismatch" in reason
+
+    def test_file_comparison_new_file(self, temp_dir, file_queue, mock_app_instance):
+        """Test that new files (not existing remotely) are handled correctly using verify_remote_file_integrity."""
         # Create test file
         test_file = os.path.join(temp_dir, "new_test.raw")
         with open(test_file, "w", encoding="utf-8") as f:
             f.write("new file content")
 
-        # Calculate checksum
+        # Calculate checksum using FileProcessor
+        processor = FileProcessor(file_queue, mock_app_instance)
         local_checksum = processor.calculate_checksum(test_file)
+        remote_path = "/remote/path/new_test.raw"
 
-        # Mock remote file info indicating file doesn't exist
-        remote_info = {"exists": False}
+        # Create a mock MainWindow and bind the actual method
+        mock_window = Mock()
+        mock_window.verify_remote_file_integrity = MainWindow.verify_remote_file_integrity.__get__(mock_window, MainWindow)
 
-        # Test comparison
-        status, details = processor.compare_files(test_file, remote_info, local_checksum)
+        # Mock WebDAV client methods
+        mock_webdav = Mock()
+        mock_window.webdav_client = mock_webdav
 
-        # Should detect as new file
-        assert status == "new"
-        assert details == {}
+        # Mock get_file_info to return file doesn't exist
+        mock_webdav.get_file_info.return_value = {"exists": False}
+
+        # Test verification
+        is_intact, reason = mock_window.verify_remote_file_integrity(test_file, remote_path, local_checksum)
+
+        # Should detect as not intact because remote file doesn't exist
+        assert is_intact is False
+        assert reason == "remote file not found"
 
 
 class TestErrorHandling:
