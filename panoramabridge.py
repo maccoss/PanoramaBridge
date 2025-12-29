@@ -1251,6 +1251,7 @@ class FileProcessor(QThread):
             stat = os.stat(filepath)
             file_size = stat.st_size
             file_mtime = stat.st_mtime
+            os.path.getmtime
 
             # Create cache key (file path + size + mtime)
             cache_key = f"{filepath}|{file_size}|{file_mtime:.0f}"
@@ -1620,6 +1621,8 @@ class FileProcessor(QThread):
         try:
             # Always check if file is accessible (locked file handling always enabled)
             accessible, access_error = self.is_file_accessible(filepath)
+            local_size = os.path.getsize(filepath)
+            local_date = datetime.fromtimestamp(os.path.getmtime(filepath))
             if not accessible:
                 # File is locked, schedule retry
                 self.schedule_locked_file_retry(filepath, remote_path, filename, access_error)
@@ -1725,19 +1728,27 @@ class FileProcessor(QThread):
                             f"Upload verified successfully: {verify_message} (uploaded with checksum: {local_checksum[:8]}...)",
                         )
                     else:
-                        # Check if this is an ETag mismatch (file exists but differs)
-                        if "ETag mismatch" in verify_message and "file differs on server" in verify_message:
-                            # This is a conflict situation - file exists remotely but is different
-                            logger.info(f"ETag mismatch detected for {filename} - triggering conflict resolution")
-
+                        # File does not exist remotely, remote file cannot be read or there was an
+                        # unknown error during verification (this is considered a verification failure, not a conflict)
+                        if ["verification error", "remote file not found", "cannot read remote file"] in verify_message:
+                            # Regular verification failure (not a conflict)
+                            self.transfer_complete.emit(
+                                filename,
+                                filepath,
+                                False,
+                                f"Upload verification failed: {verify_message}",
+                            )
+                        else:
                             # Get remote file info for conflict resolution
                             try:
                                 remote_info = self.webdav_client.get_file_info(remote_path)
+                                remote_date_str = remote_info.get("last_modified", "")
                                 conflict_details = {
                                     "local_checksum": local_checksum,
-                                    "remote_etag": remote_info.get("etag", "").strip('"').replace("W/", ""),
+                                    "local_size": local_size,
+                                    "remote_size": remote_info.get("size", 0),
                                     "verification_failure": True,
-                                    "reason": "ETag mismatch after upload"
+                                    "reason": verify_message,
                                 }
 
                                 # Emit conflict resolution signal
@@ -1873,7 +1884,7 @@ class FileProcessor(QThread):
             if remote_info.get("exists", True):
                 # Remote file exists, perform comparison
                 logger.debug(f"Remote file exists, comparing: {remote_path}")
-                comparison_result, reason = self.verify_remote_file_integrity(filepath, remote_path, local_checksum)
+                comparison_result, reason = self.app_instance.verify_remote_file_integrity(filepath, remote_path, local_checksum)
 
                 if comparison_result:
                     # Files are identical, skip upload
@@ -1899,9 +1910,17 @@ class FileProcessor(QThread):
                             filename, "Conflict detected - waiting for user input...", filepath
                         )
 
+                        local_size = os.path.getsize(filepath)
                         # Request conflict resolution from main thread
+                        conflict_details = {
+                            "local_checksum": local_checksum,
+                            "local_size": local_size,
+                            "remote_size": remote_info.get("size", 0),
+                        #    "verification_failure": True,
+                            "reason": reason,
+                        }
                         self.conflict_resolution_needed.emit(
-                            filename, filepath, remote_path, reason
+                            filename, filepath, remote_path, conflict_details
                         )
 
                         # Wait for resolution (this would be handled by a proper signal/slot mechanism)
@@ -2221,14 +2240,15 @@ class FileConflictDialog(QDialog):
                 else:
                     remote_dt = remote_date
 
-                if local_dt > remote_dt:
+                time_diff = abs(local_dt - remote_dt)
+                if time_diff.total_seconds() < 60: # Consider as same time if within 1 minute
+                    date_info = " (same modification time)"
+                elif local_dt > remote_dt:
                     date_info = " (local file is newer)"
                     default_choice = "overwrite"
                 elif remote_dt > local_dt:
                     date_info = " (remote file is newer)"
                     default_choice = "skip"
-                else:
-                    date_info = " (same modification time)"
             except Exception:
                 date_info = ""
 
@@ -3288,7 +3308,9 @@ class MainWindow(QMainWindow):
             self.scan_existing_files(directory, extensions, self.subdirs_check.isChecked())
 
             # Verify remote integrity of previously uploaded files
-            self.verify_remote_integrity_on_start(directory, extensions, self.subdirs_check.isChecked())
+            # Disabled on 12/23/2025. This function will verify files that have been previously
+            # uploaded from the monitored directory. This is already done in "self.scan_existing_files"
+            # self.verify_remote_integrity_on_start(directory, extensions, self.subdirs_check.isChecked())
 
             self.start_btn.setText("Stop Monitoring")
             self.status_label.setText("Monitoring active")
@@ -3608,22 +3630,21 @@ class MainWindow(QMainWindow):
             status_msg = f"Completed - {status_reason}"
 
         # Add to table with "Completed" status
-        self.add_file_to_table_with_status(
+        if self.add_file_to_table_with_status(
             filepath=filepath,
             relative_path=relative_path,
             status="Completed",
             message=status_msg
-        )
-
-        logger.debug(f"Added completed file to table: {relative_path}")
+        ):
+            logger.debug(f"Added file to transfer table with completed status: {relative_path}")
 
     def add_file_to_table_with_status(self, filepath: str, relative_path: str, status: str, message: str):
         """Helper method to add a file to the transfer table with specific status"""
         # Avoid duplicates
         file_key = f"{relative_path}|{filepath}"
         if file_key in self.transfer_rows:
-            logger.debug(f"File already in transfer table: {relative_path}")
-            return
+            logger.debug(f"File already in transfer table: {relative_path} with status {self.transfer_table.item(self.transfer_rows[file_key], 1).text()}")
+            return False
 
         row = self.transfer_table.rowCount()
         self.transfer_table.insertRow(row)
@@ -3651,6 +3672,8 @@ class MainWindow(QMainWindow):
 
         # Auto-scroll to bottom to show new files
         self.transfer_table.scrollToBottom()
+
+        return True
 
     def update_queue_size(self):
         """Update queue size display with enhanced debugging"""
@@ -4366,8 +4389,10 @@ class MainWindow(QMainWindow):
 
     def verify_remote_file_integrity(self, local_filepath: str, remote_path: str, expected_checksum: str) -> tuple[bool, str]:
         """Verify that a remote file exists and matches the expected local file.
-        First checks if a remote checksum file exists (.checksum). If found, downloads and compares checksums.
-        Otherwise falls back to file size and accessibility checks.
+        First checks that file sizes match.
+        If a remote checksum file exists (.checksum). If found, downloads and compares checksums.
+        If the remote checksum file is not found or cannot be read, falls back to accessibility check.
+        (ie can read first 8KB of remote file).
         Returns: (is_intact, reason)
         """
         logger.debug(f"Verifying remote file integrity for {remote_path}")
