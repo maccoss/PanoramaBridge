@@ -60,9 +60,44 @@ keyrings.alt>=5.0.0
 
 ## Installation
 
+### Prerequisites: Install Python
+
+PanoramaBridge requires Python 3.9 or later. If you don't have Python installed:
+
+**Windows:**
+
+1. Download Python from [python.org/downloads](https://www.python.org/downloads/)
+2. Run the installer
+3. **Important:** Check the box "Add Python to PATH" during installation
+4. Click "Install Now"
+5. Verify installation by opening Command Prompt or PowerShell and running:
+   ```powershell
+   python --version
+   ```
+
+**macOS:**
+
+```bash
+# Using Homebrew (recommended)
+brew install python
+
+# Verify installation
+python3 --version
+```
+
+**Linux (Ubuntu/Debian):**
+
+```bash
+sudo apt update
+sudo apt install python3 python3-pip python3-venv
+
+# Verify installation
+python3 --version
+```
+
 ### Option 1: Install from PyPI (Recommended)
 
-The easiest way to install PanoramaBridge:
+Once Python is installed, open a terminal (Command Prompt, PowerShell, or Terminal) and run:
 
 ```bash
 pip install panoramabridge
@@ -73,6 +108,8 @@ Then run the application:
 ```bash
 panoramabridge
 ```
+
+**Note:** On some systems you may need to use `pip3` instead of `pip`, and `python3` instead of `python`.
 
 ### Option 2: Install from Source
 

@@ -10,3 +10,6 @@ panoramabridge.log
 /__pycache__
 *.pyc
 /build
+/dist
+/dist
+/dist
