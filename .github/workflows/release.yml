@@ -224,8 +224,7 @@ jobs:
           - Nearly ready for people to start trying this
           - Improved error handling and reporting for file uploads
           - Better conflict resolution for file uploads and when files are modified
-          - Enhanced WebDAV functionality including ETags and file chunking
-          
+                   
           ### System Requirements
           - **Windows 11** (recommended) or **Windows 10**
           - **Intel/AMD 64-bit processor**
@@ -236,5 +235,6 @@ jobs:
           
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
 
