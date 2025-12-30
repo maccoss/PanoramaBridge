@@ -17,7 +17,7 @@ Author: Michael MacCoss - MacCoss Lab, University of Washington
 License: Apache License 2.0
 """
 
-__version__ = "0.1.9rc3"
+__version__ = "0.1.9rc4"
 
 import hashlib  # For calculating SHA256 checksums
 import json  # For configuration file storage
@@ -606,6 +606,7 @@ class WebDAVClient:
             logger.info("Using regular upload with estimated progress")
 
             # Create a file-like object that gives periodic progress updates
+            # This reads from disk in chunks and reports progress as data is SENT over network
             class TimedProgressFile:
                 def __init__(self, filepath, progress_callback, total_size):
                     self.filepath = filepath
@@ -614,8 +615,10 @@ class WebDAVClient:
                     self.bytes_read = 0
                     self._file = None
                     self.last_report_time = time.time()
-                    self.report_interval = 0.5  # Report every 0.5 seconds for smoother progress
+                    self.report_interval = 0.25  # Report every 0.25 seconds for smoother progress
                     self.last_reported_bytes = 0
+                    # Use larger chunk size for better network performance
+                    self.chunk_size = 1 * 1024 * 1024  # 1MB chunks for streaming
 
                 def __enter__(self):
                     self._file = open(self.filepath, "rb")
@@ -626,22 +629,27 @@ class WebDAVClient:
                         self._file.close()
 
                 def read(self, size=-1):
+                    """
+                    Read method called by requests library to get data to send.
+                    This is called repeatedly as data is sent over the network.
+                    """
                     if not self._file:
                         return b""
 
-                    data = self._file.read(size if size > 0 else 8192)
+                    # Use larger chunks for better performance
+                    # requests will call this repeatedly until we return empty bytes
+                    chunk_to_read = self.chunk_size if size == -1 else min(size, self.chunk_size)
+                    data = self._file.read(chunk_to_read)
+
                     if data:
                         self.bytes_read += len(data)
-
-                        # Report progress more frequently but cap at 99% until completely done reading
                         current_time = time.time()
                         bytes_changed = self.bytes_read - self.last_reported_bytes
                         time_elapsed = current_time - self.last_report_time
 
-                        # Report if significant progress made OR enough time passed
-                        if time_elapsed >= self.report_interval or bytes_changed >= (
-                            1024 * 1024
-                        ):  # 1MB threshold
+                        # Report progress frequently for smooth updates
+                        # Report if: enough time passed OR significant data sent
+                        if time_elapsed >= self.report_interval or bytes_changed >= (512 * 1024):  # 512KB threshold
                             if self.progress_callback:
                                 # Don't report 100% until file is completely read
                                 report_bytes = self.bytes_read
@@ -655,19 +663,105 @@ class WebDAVClient:
                             self.last_report_time = current_time
                             self.last_reported_bytes = self.bytes_read
 
+                    # Always report final progress when file is completely read
+                    if not data and self.bytes_read > 0 and self.progress_callback:
+                        # File reading complete - report final progress (still capped at 99%)
+                        report_bytes = min(self.bytes_read, max(0, self.total_size - 1))
+                        self.progress_callback(report_bytes, self.total_size)
+
                     return data
 
                 def __len__(self):
                     return self.total_size
 
-            # Upload with timed progress tracking
-            with TimedProgressFile(local_path, progress_callback, file_size) as progress_file:
-                response = self.session.put(url, data=progress_file)
+                def __iter__(self):
+                    """Make this iterable for streaming support"""
+                    return self
 
-            # Don't force 100% completion here - let the FileProcessor handle it
-            # Only the FileProcessor knows when the upload is truly complete
+                def __next__(self):
+                    """Iterator protocol for streaming"""
+                    data = self.read(self.chunk_size)
+                    if not data:
+                        raise StopIteration
+                    return data
 
-            return response.status_code in [200, 201, 204], ""
+            # Upload with timed progress tracking, streaming, and retry logic for transient errors
+            # The file-like object will be read chunk-by-chunk as data is sent over network
+            retry_count = 0
+            max_retries = 3
+            timeout = 300  # 5 minutes default timeout
+            last_error = None
+
+            while retry_count <= max_retries:
+                try:
+                    with TimedProgressFile(local_path, progress_callback, file_size) as progress_file:
+                        # Important: Set Content-Length header to enable proper streaming
+                        # Without this, requests might buffer the entire file
+                        headers = {"Content-Length": str(file_size)}
+                        response = self.session.put(url, data=progress_file, headers=headers, timeout=timeout)
+
+                    # Check if upload was successful
+                    if response.status_code in [200, 201, 204]:
+                        if retry_count > 0:
+                            logger.info(f"Upload succeeded after {retry_count} retry/retries")
+                        return True, ""
+
+                    # Handle transient server errors that should be retried
+                    elif response.status_code in [502, 503, 504]:
+                        retry_count += 1
+                        last_error = f"HTTP {response.status_code}: {response.reason}"
+
+                        if retry_count <= max_retries:
+                            wait_time = min(2 ** retry_count, 30)  # Exponential backoff, max 30 seconds
+                            logger.warning(
+                                f"Upload failed with HTTP {response.status_code} ({response.reason}). "
+                                f"Retry {retry_count}/{max_retries} after {wait_time} seconds..."
+                            )
+                            time.sleep(wait_time)
+                            continue
+
+                        error_msg = f"HTTP {response.status_code} ({response.reason}): {response.text[:200]}"
+                        logger.error(f"Upload failed after {max_retries} retries: {error_msg}")
+                        return False, error_msg
+
+                    # Handle permission errors and other client errors (4xx)
+                    elif 400 <= response.status_code < 500:
+                        error_msg = f"HTTP {response.status_code} ({response.reason}): {response.text[:200]}"
+                        logger.error(f"Upload failed with client error: {error_msg}")
+                        return False, error_msg
+
+                    # Handle other server errors (5xx) that aren't in retry list
+                    elif response.status_code >= 500:
+                        error_msg = f"HTTP {response.status_code} ({response.reason}): {response.text[:200]}"
+                        logger.error(f"Upload failed with server error: {error_msg}")
+                        return False, error_msg
+
+                    # Unexpected status code
+                    else:
+                        error_msg = f"Unexpected HTTP {response.status_code} ({response.reason}): {response.text[:200]}"
+                        logger.error(f"Upload failed: {error_msg}")
+                        return False, error_msg
+
+                except Exception as e:
+                    retry_count += 1
+                    last_error = str(e)
+
+                    if retry_count <= max_retries:
+                        wait_time = min(2 ** retry_count, 30)
+                        logger.warning(
+                            f"Upload exception: {last_error}. "
+                            f"Retry {retry_count}/{max_retries} after {wait_time} seconds..."
+                        )
+                        time.sleep(wait_time)
+                        continue
+
+                    error_msg = f"Upload failed after {max_retries} retries: {last_error}"
+                    logger.error(error_msg)
+                    return False, error_msg
+
+            # Should never reach here, but just in case
+            error_msg = last_error or "Upload failed for unknown reason"
+            return False, error_msg
 
         except Exception as e:
             error_msg = str(e)
@@ -1253,7 +1347,6 @@ class FileProcessor(QThread):
             stat = os.stat(filepath)
             file_size = stat.st_size
             file_mtime = stat.st_mtime
-            os.path.getmtime
 
             # Create cache key (file path + size + mtime)
             cache_key = f"{filepath}|{file_size}|{file_mtime:.0f}"
@@ -2021,7 +2114,7 @@ class IntegrityCheckThread(QThread):
 
                 # Calculate current checksum for this local file
                 current_checksum = self.main_window.file_processor.calculate_checksum(filepath)
-                
+
                 # Determine remote path for this file
                 if filepath in self.main_window.upload_history:
                     # File has been uploaded before - use tracked remote path
@@ -2071,12 +2164,12 @@ class IntegrityCheckThread(QThread):
                         # File is missing from remote server
                         if self.main_window.is_file_in_upload_queue(filepath):
                             # File is already queued for upload - that's good!
-                            self.progress_signal.emit(filepath, i, self.results['total'], 
+                            self.progress_signal.emit(filepath, i, self.results['total'],
                                                     "Missing from remote - already queued for upload")
                             # This isn't an error - it's expected behavior
                         else:
                             # File is missing but not queued - this needs attention
-                            self.progress_signal.emit(filepath, i, self.results['total'], 
+                            self.progress_signal.emit(filepath, i, self.results['total'],
                                                     "Missing from remote - adding to upload queue")
                             self.results['missing'] += 1
                             self.error_details['missing_remote'].append({
@@ -2092,15 +2185,15 @@ class IntegrityCheckThread(QThread):
                         # File exists on remote but differs from expected
                         # We cannot determine if it's corruption or legitimate change
                         # Always treat as a conflict and use conflict resolution settings
-                        
+
                         if stored_checksum and current_checksum.lower() != stored_checksum.lower():
                             # Both local and remote have changed - definitely a conflict
                             conflict_reason = "Both local and remote files have changed since last sync"
                         else:
                             # Local unchanged, remote different - could be corruption or server-side change
                             conflict_reason = "Remote file differs from expected (possible corruption or server-side change)"
-                        
-                        self.progress_signal.emit(filepath, i, self.results['total'], 
+
+                        self.progress_signal.emit(filepath, i, self.results['total'],
                                                 "File conflict detected - applying conflict resolution")
                         self.results['changed'] += 1
                         self.error_details['changed_local'].append({
@@ -4426,7 +4519,7 @@ class MainWindow(QMainWindow):
 
                         # Compare checksums
                         if expected_checksum == remote_checksum:
-                            logger.debug(f"Checksums match")
+                            logger.debug("Checksums match")
                             return True, "Size + checksum verified"
                         else:
                             logger.debug(f"Checksum mismatch: local {expected_checksum}, remote {remote_checksum}")
@@ -4645,15 +4738,15 @@ class MainWindow(QMainWindow):
 
             # Calculate relative path from monitored directory
             relative_path = os.path.relpath(filepath, local_base)
-            
+
             # Don't allow relative paths that go outside the monitored directory
             if relative_path.startswith('..'):
                 return None
-                
+
             # Combine remote base with relative path, using forward slashes for WebDAV
             remote_path = remote_base.rstrip('/') + '/' + relative_path.replace('\\', '/')
             return remote_path
-            
+
         except Exception as e:
             logger.error(f"Error determining remote path for {filepath}: {e}")
             return None
@@ -4860,9 +4953,9 @@ class MainWindow(QMainWindow):
         """Create a detailed breakdown of integrity check errors"""
         if not error_details:
             return "  - Various errors occurred during verification"
-        
+
         breakdown_parts = []
-        
+
         if error_details.get('missing_remote'):
             count = len(error_details['missing_remote'])
             files = error_details['missing_remote'][:3]  # Show first 3
@@ -4870,7 +4963,7 @@ class MainWindow(QMainWindow):
             if count > 3:
                 file_list += f" (and {count - 3} more)"
             breakdown_parts.append(f"  - {count} files missing from remote: {file_list}")
-            
+
         if error_details.get('changed_local'):
             count = len(error_details['changed_local'])
             files = error_details['changed_local'][:3]
@@ -4878,7 +4971,7 @@ class MainWindow(QMainWindow):
             if count > 3:
                 file_list += f" (and {count - 3} more)"
             breakdown_parts.append(f"  - {count} files with conflicts (local/remote differences): {file_list}")
-            
+
         if error_details.get('network_errors'):
             count = len(error_details['network_errors'])
             files = error_details['network_errors'][:2]
@@ -4886,7 +4979,7 @@ class MainWindow(QMainWindow):
             if count > 2:
                 file_list += f" (and {count - 2} more)"
             breakdown_parts.append(f"  - {count} network/connection errors: {file_list}")
-            
+
         if error_details.get('other_errors'):
             count = len(error_details['other_errors'])
             files = error_details['other_errors'][:2]
@@ -4894,38 +4987,38 @@ class MainWindow(QMainWindow):
             if count > 2:
                 file_list += f" (and {count - 2} more)"
             breakdown_parts.append(f"  - {count} other errors: {file_list}")
-        
+
         return "\n".join(breakdown_parts) if breakdown_parts else "  - Various errors occurred"
 
     def _get_recommended_actions(self, error_details, missing_count, corrupted_count):
         """Generate recommended actions based on the types of issues found"""
         actions = []
-        
+
         # Handle files missing from remote
         if error_details and error_details.get('missing_remote'):
             count = len(error_details['missing_remote'])
             actions.append(f"• {count} missing files have been automatically queued for upload")
-            
+
         # Handle file conflicts (renamed from corrupted since we don't assume corruption)
         if error_details and error_details.get('changed_local'):
             count = len(error_details['changed_local'])
             actions.append(f"• {count} files have differences - conflict resolution dialogs will appear")
-            
+
         # Handle network errors
         if error_details and error_details.get('network_errors'):
             actions.append("• Check your network connection and retry integrity check")
-            
+
         # Handle other errors
         if error_details and error_details.get('other_errors'):
             count = len(error_details['other_errors'])
             actions.append(f"• {count} files had other errors - check the log for details")
-            
+
         # General monitoring status
         if missing_count > 0 or corrupted_count > 0:
             actions.append("• File monitoring will continue and process queued uploads automatically")
         else:
             actions.append("• File monitoring continues - your conflict resolution settings will be applied")
-        
+
         return "\n".join(actions) if actions else "• No immediate action required"
 
     # Continue with the rest of the integrity check completion

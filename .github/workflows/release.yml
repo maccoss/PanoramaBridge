@@ -214,16 +214,57 @@ jobs:
           - **PanoramaBridge.exe** - For Intel/AMD Windows computers
           - Compatible with Windows 10/11 systems
           
-          ### Installation
-          1. Download `PanoramaBridge.exe`
+          ### Installation Options
+
+          **Option 1: Windows Standalone Executable (Recommended for most users)**
+          1. Download `PanoramaBridge.exe` from the assets below
           2. Run the executable (Windows may show a security warning for unsigned applications - click "More info" then "Run anyway")
           3. Configure your WebDAV server settings
           4. Start monitoring your files!
+
+          **Option 2: Install from PyPI (For Python developers)**
+
+          PanoramaBridge is now available on PyPI! Install it using pip:
+
+          ```bash
+          pip install panoramabridge
+          ```
+
+          Then run it with:
+          ```bash
+          panoramabridge
+          ```
+
+          Or import it in your Python code:
+          ```python
+          from panoramabridge import PanoramaBridgeApp
+          ```
+
+          **Requirements for PyPI installation:**
+          - Python 3.12 or higher
+          - Windows, macOS, or Linux
+          - Dependencies automatically installed: PyQt6, requests, watchdog, lxml
           
-          ### What's New
-          - Nearly ready for people to start trying this
-          - Improved error handling and reporting for file uploads
-          - Better conflict resolution for file uploads and when files are modified
+          ### What's New in v0.1.9
+
+          **Major Improvements:**
+          - **Enhanced Upload Reliability**: Added comprehensive retry logic for transient server errors (HTTP 502/503/504) with exponential backoff
+          - **Better Error Reporting**: All HTTP errors now include status codes, reason phrases, and server response details
+          - **Improved Progress Tracking**: Real-time progress indicators now work accurately for large files using streaming uploads
+          - **Smarter Verification**: Added retry logic for file verification with automatic delays to handle server-side indexing
+          - **Timeout Protection**: All HTTP operations now have configurable timeouts to prevent infinite hangs
+
+          **Bug Fixes:**
+          - Fixed TypeError in verification message checking that was causing uploads to fail
+          - Fixed progress bar jumping from 0% to 100% for large files by implementing true streaming uploads
+          - Fixed silent upload failures by ensuring all errors are properly reported to users
+          - Resolved 404 errors during verification by adding retry delays
+
+          **Technical Enhancements:**
+          - Streaming file uploads with 1MB chunks for better memory efficiency
+          - Content-Length headers for proper HTTP streaming support
+          - Comprehensive test suite with 22 tests covering all error scenarios
+          - Code quality improvements with ruff linter compliance
                    
           ### System Requirements
           - **Windows 11** (recommended) or **Windows 10**

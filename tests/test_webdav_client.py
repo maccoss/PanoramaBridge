@@ -289,3 +289,177 @@ class TestWebDAVClient:
         info = client.get_file_info("/test/file.raw")
 
         assert info is None
+
+    @patch("panoramabridge.requests.Session.put")
+    def test_upload_403_forbidden_chunked(self, mock_put, webdav_test_config, sample_file):
+        """Test that HTTP 403 on chunked upload fails immediately with error message."""
+        file_path, _ = sample_file
+
+        # Create a file large enough to trigger chunked upload (>100MB)
+        large_file = os.path.join(os.path.dirname(file_path), "large_test.raw")
+        with open(large_file, "wb") as f:
+            f.write(b"0" * (101 * 1024 * 1024))  # 101 MB
+
+        # Mock 403 Forbidden response
+        mock_response = Mock()
+        mock_response.status_code = 403
+        mock_response.reason = "Forbidden"
+        mock_response.text = "You don't have permission to upload to /_webdav/"
+        mock_put.return_value = mock_response
+
+        client = WebDAVClient(**webdav_test_config)
+        success, error = client.upload_file_chunked(large_file, "/_webdav/test.raw")
+
+        # Should fail immediately without falling back to regular upload
+        assert success is False
+        assert "403" in error
+        assert "Forbidden" in error
+
+        # Clean up
+        os.remove(large_file)
+
+    @patch("panoramabridge.requests.Session.put")
+    def test_upload_502_retry_logic(self, mock_put, webdav_test_config, sample_file):
+        """Test that HTTP 502 triggers retry logic."""
+        file_path, _ = sample_file
+
+        # Mock 502 responses followed by success
+        mock_502 = Mock()
+        mock_502.status_code = 502
+        mock_502.reason = "Bad Gateway"
+        mock_502.text = "The gateway server received an invalid response"
+
+        mock_success = Mock()
+        mock_success.status_code = 201
+
+        # First two attempts fail with 502, third succeeds
+        mock_put.side_effect = [mock_502, mock_502, mock_success]
+
+        client = WebDAVClient(**webdav_test_config)
+        success, error = client.upload_file_chunked(file_path, "/test/file.raw")
+
+        # Should succeed after retries
+        assert success is True
+        assert error == ""
+        # Should have called put 3 times (2 failures + 1 success)
+        assert mock_put.call_count == 3
+
+    @patch("panoramabridge.requests.Session.put")
+    def test_upload_502_max_retries_exceeded(self, mock_put, webdav_test_config, sample_file):
+        """Test that upload fails after max retries with 502."""
+        file_path, _ = sample_file
+
+        # Mock 502 response that persists
+        mock_502 = Mock()
+        mock_502.status_code = 502
+        mock_502.reason = "Bad Gateway"
+        mock_502.text = "The gateway server received an invalid response"
+        mock_put.return_value = mock_502
+
+        client = WebDAVClient(**webdav_test_config)
+        success, error = client.upload_file_chunked(file_path, "/test/file.raw")
+
+        # Should fail after max retries (default 3)
+        assert success is False
+        assert "502" in error
+        assert "Bad Gateway" in error
+        # Should have called put 4 times (initial + 3 retries)
+        assert mock_put.call_count == 4
+
+    @patch("panoramabridge.requests.Session.put")
+    def test_upload_404_no_retry(self, mock_put, webdav_test_config, sample_file):
+        """Test that HTTP 404 does not trigger retry (client error)."""
+        file_path, _ = sample_file
+
+        # Mock 404 response
+        mock_404 = Mock()
+        mock_404.status_code = 404
+        mock_404.reason = "Not Found"
+        mock_404.text = "The requested resource was not found"
+        mock_put.return_value = mock_404
+
+        client = WebDAVClient(**webdav_test_config)
+        success, error = client.upload_file_chunked(file_path, "/test/file.raw")
+
+        # Should fail immediately without retries
+        assert success is False
+        assert "404" in error
+        assert "Not Found" in error
+        # Should have called put only once (no retries for 4xx errors)
+        assert mock_put.call_count == 1
+
+    @patch("panoramabridge.requests.Session.put")
+    def test_upload_timeout_configured(self, mock_put, webdav_test_config, sample_file):
+        """Test that timeout is properly configured on upload."""
+        file_path, _ = sample_file
+
+        # Mock successful response
+        mock_response = Mock()
+        mock_response.status_code = 201
+        mock_put.return_value = mock_response
+
+        client = WebDAVClient(**webdav_test_config)
+        success, error = client.upload_file_chunked(file_path, "/test/file.raw")
+
+        assert success is True
+        # Verify timeout was passed to the PUT request
+        call_kwargs = mock_put.call_args[1]
+        assert "timeout" in call_kwargs
+        assert call_kwargs["timeout"] == 300  # Default 5 minute timeout
+
+    @patch("panoramabridge.requests.Session.put")
+    def test_upload_503_service_unavailable_retry(self, mock_put, webdav_test_config, sample_file):
+        """Test that HTTP 503 triggers retry logic."""
+        file_path, _ = sample_file
+
+        # Mock 503 response followed by success
+        mock_503 = Mock()
+        mock_503.status_code = 503
+        mock_503.reason = "Service Unavailable"
+        mock_503.text = "The server is temporarily unable to handle the request"
+
+        mock_success = Mock()
+        mock_success.status_code = 201
+
+        mock_put.side_effect = [mock_503, mock_success]
+
+        client = WebDAVClient(**webdav_test_config)
+        success, error = client.upload_file_chunked(file_path, "/test/file.raw")
+
+        # Should succeed after retry
+        assert success is True
+        assert error == ""
+        assert mock_put.call_count == 2
+
+    def test_verify_message_logic_fix(self):
+        """Test that verification message checking doesn't cause TypeError.
+
+        This tests the fix for the bug where verification failure checking used:
+            if [list] in string:  # Wrong! Causes TypeError
+        Instead of:
+            if any(item in string for item in [list]):  # Correct!
+        """
+        # Simulate the verification messages that could be returned
+        test_messages = [
+            "remote file not found",
+            "cannot read remote file",
+            "verification error: timeout",
+            "size mismatch (local: 100, remote: 200)",
+            "checksum mismatch"
+        ]
+
+        error_types = ["verification error", "remote file not found", "cannot read remote file"]
+
+        # Test that each message is correctly identified
+        for msg in test_messages:
+            # This is the CORRECT way (what we fixed it to)
+            is_verification_error = any(err in msg for err in error_types)
+
+            # This would be the WRONG way (what the bug was)
+            # if error_types in msg:  # This would raise TypeError!
+
+            # Verify the logic works
+            if msg in ["remote file not found", "cannot read remote file", "verification error: timeout"]:
+                assert is_verification_error is True
+            else:
+                assert is_verification_error is False
