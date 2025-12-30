@@ -17,7 +17,7 @@ Author: Michael MacCoss - MacCoss Lab, University of Washington
 License: Apache License 2.0
 """
 
-__version__ = "0.1.9rc2"
+__version__ = "0.1.9rc3"
 
 import hashlib  # For calculating SHA256 checksums
 import json  # For configuration file storage
