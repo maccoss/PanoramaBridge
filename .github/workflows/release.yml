@@ -222,7 +222,7 @@ jobs:
           3. Configure your WebDAV server settings
           4. Start monitoring your files!
 
-          **Option 2: Install from PyPI (For Python developers)**
+          **Option 2: Install from PyPI (For those comfortable with Python)**
 
           PanoramaBridge is now available on PyPI! Install it using pip:
 
@@ -234,12 +234,6 @@ jobs:
           ```bash
           panoramabridge
           ```
-
-          Or import it in your Python code:
-          ```python
-          from panoramabridge import PanoramaBridgeApp
-          ```
-
           **Requirements for PyPI installation:**
           - Python 3.12 or higher
           - Windows, macOS, or Linux
