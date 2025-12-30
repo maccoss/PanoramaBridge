@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "panoramabridge"
-version = "0.1.9rc1"
+version = "0.1.9rc2"
 description = "A Python Qt6 application for monitoring local directories and automatically transferring files to Panorama WebDAV servers"
 readme = "README.md"
 license = "Apache-2.0"
