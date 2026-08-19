@@ -102,6 +102,21 @@ jobs:
       - name: Install vpk
         run: dotnet tool install -g vpk
 
+      # vpk builds a delta by diffing against a previous full package sitting in the output
+      # directory. A CI runner starts empty, so without this step every release ships as a
+      # 66 MB full download and the delta mechanism silently does nothing. Both variants are
+      # attempted because --pre selects either the latest stable or the latest prerelease, and
+      # the previous release may be either -- notably at the seam where an rc line becomes
+      # stable. Failure is expected and ignored for the very first release on a channel.
+      - name: Download the previous release as a delta base
+        continue-on-error: true
+        shell: bash
+        run: |
+          for pre in false true; do
+            vpk download github               --repoUrl "https://github.com/${{ github.repository }}"               --token "${{ secrets.GITHUB_TOKEN }}"               --channel "${{ steps.meta.outputs.channel }}"               --outputDir artifacts/releases               --pre "$pre" || echo "No previous release found (pre=$pre); this is fine."
+          done
+          ls -la artifacts/releases 2>/dev/null || echo "(no previous releases)"
+
       # Delta packages are why the publish output is a folder rather than a single file:
       # a full package is ~66 MB, a delta between adjacent versions is a few hundred KB.
       - name: Pack
@@ -133,10 +148,15 @@ jobs:
 
       # Written outside artifacts/releases: vpk uploads only the assets it produced, and a
       # stray file in its output directory is ignored. It is attached separately below.
+      #
+      # Packages from earlier releases are present as delta bases, so they are filtered out --
+      # only this version's assets belong in this release's checksum list.
       - name: Checksums
         shell: pwsh
         run: |
+          $version = '${{ steps.meta.outputs.version }}'
           Get-ChildItem artifacts/releases -File |
+            Where-Object { $_.Extension -ne '.nupkg' -or $_.Name -like "*-$version-*" } |
             Get-FileHash -Algorithm SHA256 |
             ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
             Set-Content artifacts/SHA256SUMS.txt
