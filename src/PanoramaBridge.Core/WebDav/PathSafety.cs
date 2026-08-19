@@ -1,0 +1,208 @@
+namespace PanoramaBridge.Core.WebDav;
+
+/// <summary>Why a name cannot be used as a remote path segment.</summary>
+public enum PathRejectionReason
+{
+    /// <summary>The name is usable.</summary>
+    None,
+
+    /// <summary>Empty, or entirely whitespace.</summary>
+    Empty,
+
+    /// <summary>A relative-path segment that would escape the destination.</summary>
+    Traversal,
+
+    /// <summary>
+    /// Contains a semicolon, which the server silently truncates the name at.
+    /// </summary>
+    SemicolonTruncatesOnServer,
+
+    /// <summary>Contains a character that cannot appear in a path segment at all.</summary>
+    IllegalCharacter,
+
+    /// <summary>Longer than the server will accept.</summary>
+    TooLong,
+}
+
+/// <summary>The outcome of validating one name.</summary>
+/// <param name="Reason">Why the name was rejected, or <see cref="PathRejectionReason.None"/>.</param>
+/// <param name="Message">An explanation written for the person who has to fix it.</param>
+public readonly record struct PathValidation(PathRejectionReason Reason, string? Message)
+{
+    /// <summary>True when the name can be used.</summary>
+    public bool IsValid => Reason == PathRejectionReason.None;
+
+    /// <summary>A passing result.</summary>
+    public static PathValidation Ok => new(PathRejectionReason.None, null);
+}
+
+/// <summary>
+/// Validates names before they are used to build a remote destination.
+/// </summary>
+/// <remarks>
+/// This runs on the name a local file <em>would be given</em> on the server, not on paths read
+/// back from the server -- an existing remote name has to be representable whatever it contains.
+/// </remarks>
+public static class PathSafety
+{
+    /// <summary>
+    /// Longest single segment accepted. Well under any server limit, and long enough for the
+    /// most verbose instrument naming conventions.
+    /// </summary>
+    public const int MaxSegmentLength = 255;
+
+    /// <summary>
+    /// Characters that cannot survive a path segment. Windows cannot produce most of these in
+    /// a filename, so in practice they only appear in a hand-edited destination path.
+    /// </summary>
+    private static readonly char[] IllegalCharacters = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
+
+    /// <summary>
+    /// Checks one path segment -- a file or folder name -- for anything that would make the
+    /// remote copy wrong.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The semicolon rule is the one that matters, and it is not theoretical. Verified against
+    /// panoramaweb.org on 2026-08-19: the servlet container strips path parameters
+    /// <em>after</em> percent-decoding, so a segment is silently truncated at the first
+    /// semicolon.
+    /// </para>
+    /// <para>
+    /// Uploading <c>run;rep1.raw</c> and <c>run;rep2.raw</c> stores <em>both</em> as a single
+    /// object named <c>run</c>: the second overwrites the first, and both requests return
+    /// 201 Created. Nothing surfaces the loss, because a later GET of the original URL is
+    /// truncated the same way and succeeds. No client-side encoding avoids it -- <c>%3B</c> is
+    /// decoded and then truncated, while <c>%253B</c> produces a literal, differently-wrong
+    /// name. Refusing the upload and asking for a rename is the only option that cannot lose
+    /// an acquisition.
+    /// </para>
+    /// </remarks>
+    public static PathValidation ValidateSegment(string? segment)
+    {
+        if (string.IsNullOrWhiteSpace(segment))
+        {
+            return new PathValidation(PathRejectionReason.Empty, "The name is empty.");
+        }
+
+        if (segment is "." or "..")
+        {
+            return new PathValidation(
+                PathRejectionReason.Traversal,
+                $"'{segment}' is a relative path segment and cannot be used as a name.");
+        }
+
+        if (segment.Contains(';', StringComparison.Ordinal))
+        {
+            return new PathValidation(
+                PathRejectionReason.SemicolonTruncatesOnServer,
+                $"'{segment}' contains a semicolon. Panorama truncates the name at the first "
+                + $"semicolon, so this would be stored as '{segment[..segment.IndexOf(';', StringComparison.Ordinal)]}' "
+                + "and could silently overwrite another file. Rename it before uploading.");
+        }
+
+        if (segment.Length > MaxSegmentLength)
+        {
+            return new PathValidation(
+                PathRejectionReason.TooLong,
+                $"The name is {segment.Length} characters; the limit is {MaxSegmentLength}.");
+        }
+
+        var illegal = segment.IndexOfAny(IllegalCharacters);
+        if (illegal >= 0)
+        {
+            return new PathValidation(
+                PathRejectionReason.IllegalCharacter,
+                $"'{segment}' contains '{segment[illegal]}', which cannot be used in a remote name.");
+        }
+
+        foreach (var c in segment)
+        {
+            if (char.IsControl(c))
+            {
+                return new PathValidation(
+                    PathRejectionReason.IllegalCharacter,
+                    "The name contains a control character.");
+            }
+        }
+
+        return PathValidation.Ok;
+    }
+
+    /// <summary>
+    /// Validates every segment of a relative path, returning the first problem found.
+    /// </summary>
+    public static PathValidation ValidateRelativePath(string relativePath)
+    {
+        ArgumentNullException.ThrowIfNull(relativePath);
+
+        var segments = relativePath
+            .Replace('\\', '/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        if (segments.Length == 0)
+        {
+            return new PathValidation(PathRejectionReason.Empty, "The path is empty.");
+        }
+
+        foreach (var segment in segments)
+        {
+            var result = ValidateSegment(segment);
+            if (!result.IsValid)
+            {
+                return result;
+            }
+        }
+
+        return PathValidation.Ok;
+    }
+
+    /// <summary>
+    /// Maps a local file to its destination under <paramref name="destinationRoot"/>, preserving
+    /// the directory structure below <paramref name="localBaseDirectory"/>.
+    /// </summary>
+    /// <remarks>
+    /// Refuses to produce a path that escapes the destination, whatever the inputs. The
+    /// containment check is a belt-and-braces assertion on the result rather than trust in the
+    /// validation above.
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// The file lies outside the base directory, or a name cannot be used remotely.
+    /// </exception>
+    public static RemotePath ResolveDestination(
+        string localBaseDirectory,
+        string localFilePath,
+        RemotePath destinationRoot)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(localBaseDirectory);
+        ArgumentException.ThrowIfNullOrWhiteSpace(localFilePath);
+        ArgumentNullException.ThrowIfNull(destinationRoot);
+
+        var relative = Path.GetRelativePath(localBaseDirectory, localFilePath);
+
+        if (Path.IsPathRooted(relative) || relative.StartsWith("..", StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"'{localFilePath}' is not inside '{localBaseDirectory}'.",
+                nameof(localFilePath));
+        }
+
+        var validation = ValidateRelativePath(relative);
+        if (!validation.IsValid)
+        {
+            throw new ArgumentException(validation.Message, nameof(localFilePath));
+        }
+
+        var root = destinationRoot.AsCollection();
+        var resolved = root.Append(RemotePath.Parse(relative));
+
+        if (!resolved.IsUnder(root))
+        {
+            throw new ArgumentException(
+                $"Refusing to upload outside the destination folder: '{resolved}'.",
+                nameof(localFilePath));
+        }
+
+        return resolved;
+    }
+}
