@@ -89,7 +89,14 @@ public sealed class UpdateService
 
         try
         {
-            var source = new GithubSource(AppInfo.RepositoryUrl, accessToken: null, prerelease: false);
+            // prerelease: true means "consider GitHub releases flagged as prereleases", not
+            // "install experimental builds". Gating is the channel's job: stable installs read
+            // releases.win.json and pilot machines read releases.win-beta.json, so an update
+            // only reaches a machine that is already on that channel. The GitHub prerelease
+            // flag is presentation -- it marks a build as not-yet-production on the Releases
+            // page. Leaving this false made the flag a second, invisible gate, so a release
+            // candidate published to the stable channel was silently never offered.
+            var source = new GithubSource(AppInfo.RepositoryUrl, accessToken: null, prerelease: true);
             var options = new UpdateOptions { ExplicitChannel = explicitChannel };
             _manager = new UpdateManager(source, options);
         }

@@ -31,9 +31,12 @@ jobs:
       # tag must agree with it, so the assembly version, the package version and the release
       # name can never drift apart.
       #
-      # Channel and prerelease are independent. The channel decides which installed builds see
-      # the update; the prerelease flag only decides how the Release is presented on GitHub. A
-      # beta goes to its own channel so it can be piloted on one instrument first.
+      # Channel and prerelease are independent, and the split matters:
+      #   channel     decides WHO receives the update. Stable installs read releases.win.json;
+      #               a beta tag publishes releases.win-beta.json for pilot machines only.
+      #   prerelease  decides only HOW the Release is presented on GitHub.
+      # The client sets GithubSource(prerelease: true) so the flag never silently gates
+      # delivery -- see UpdateService for why.
       - name: Resolve and verify version
         id: meta
         shell: bash
@@ -128,13 +131,16 @@ jobs:
           SIGNING_CERT_BASE64: ${{ secrets.SIGNING_CERT_BASE64 }}
           SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
 
+      # Written outside artifacts/releases: vpk uploads only the assets it produced, and a
+      # stray file in its output directory is ignored. It is attached separately below.
       - name: Checksums
         shell: pwsh
         run: |
           Get-ChildItem artifacts/releases -File |
             Get-FileHash -Algorithm SHA256 |
             ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
-            Set-Content artifacts/releases/SHA256SUMS.txt
+            Set-Content artifacts/SHA256SUMS.txt
+          Get-Content artifacts/SHA256SUMS.txt
 
       # vpk creates the Release so that releases.<channel>.json and the packages land together;
       # updates will not resolve if the feed and the assets are published separately.
@@ -160,9 +166,9 @@ jobs:
       # vpk does not take a release body, so the notes file is applied afterwards. It is
       # published verbatim, which is why release-notes/README.md insists it be written for the
       # people reading the Releases page.
-      - name: Set the release description
+      - name: Attach checksums and set the release description
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: >
-          gh release edit v${{ steps.meta.outputs.version }}
-          --notes-file ${{ steps.notes.outputs.notes }}
+        run: |
+          gh release upload v${{ steps.meta.outputs.version }} artifacts/SHA256SUMS.txt --clobber
+          gh release edit v${{ steps.meta.outputs.version }} --notes-file ${{ steps.notes.outputs.notes }}
