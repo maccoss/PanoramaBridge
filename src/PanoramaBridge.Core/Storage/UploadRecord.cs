@@ -1,0 +1,167 @@
+using PanoramaBridge.Core.Hashing;
+
+namespace PanoramaBridge.Core.Storage;
+
+/// <summary>
+/// Where a file stands in the transfer pipeline.
+/// </summary>
+/// <remarks>
+/// Explicit states, persisted on every transition, replace the Python version's single
+/// "Completed" label -- which meant three different things depending on how it was reached and
+/// left the UI and the on-disk history free to disagree.
+/// </remarks>
+public enum TransferState
+{
+    /// <summary>Seen on disk but not yet considered stable enough to touch.</summary>
+    Discovered = 0,
+
+    /// <summary>Stable and accepted into the queue.</summary>
+    Queued = 1,
+
+    /// <summary>Bytes are moving.</summary>
+    Uploading = 2,
+
+    /// <summary>The server accepted the PUT but the copy has not been verified yet.</summary>
+    Uploaded = 3,
+
+    /// <summary>The remote copy has been confirmed. The terminal success state.</summary>
+    Verified = 4,
+
+    /// <summary>An identical copy was already on the server, so nothing was sent.</summary>
+    Skipped = 5,
+
+    /// <summary>A different file already occupies the destination; a decision is needed.</summary>
+    Conflict = 6,
+
+    /// <summary>Locked by another process, typically an instrument still writing to it.</summary>
+    LockedRetrying = 7,
+
+    /// <summary>The local file changed while it was being uploaded, so the result is void.</summary>
+    Superseded = 8,
+
+    /// <summary>Gave up. <see cref="UploadRecord.LastError"/> says why.</summary>
+    Failed = 9,
+}
+
+/// <summary>
+/// How thoroughly a remote copy was checked.
+/// </summary>
+/// <remarks>
+/// Recorded and surfaced in the UI so a green tick never overstates what was actually proven.
+/// The Python version could report "verified" after doing nothing more than downloading the
+/// first 8 KB and finding it readable.
+/// </remarks>
+public enum VerifyMethod
+{
+    /// <summary>Not checked at all.</summary>
+    None = 0,
+
+    /// <summary>Only the byte count was compared. Catches truncation, nothing else.</summary>
+    SizeOnly = 1,
+
+    /// <summary>
+    /// The server's own MD5, computed over the bytes it stored, matched the local hash. The
+    /// only genuinely end-to-end result.
+    /// </summary>
+    ServerMd5 = 2,
+}
+
+/// <summary>
+/// Identity of a local file at a moment in time.
+/// </summary>
+/// <remarks>
+/// Size plus modification time is the cheap test for "has this changed since we last looked",
+/// and it is what makes the fast path fast: answering it needs one stat call, no hashing and no
+/// network.
+/// </remarks>
+/// <param name="Path">Full local path.</param>
+/// <param name="Length">Size in bytes.</param>
+/// <param name="LastWriteUnixMs">Modification time, UTC, in Unix milliseconds.</param>
+public readonly record struct LocalFileStamp(string Path, long Length, long LastWriteUnixMs)
+{
+    /// <summary>Stats a file on disk.</summary>
+    public static LocalFileStamp FromFile(string path)
+    {
+        var info = new FileInfo(path);
+        return FromFileInfo(info);
+    }
+
+    /// <summary>Builds a stamp from an already-populated <see cref="FileInfo"/>.</summary>
+    public static LocalFileStamp FromFileInfo(FileInfo info)
+    {
+        ArgumentNullException.ThrowIfNull(info);
+
+        return new LocalFileStamp(
+            info.FullName,
+            info.Length,
+            new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero).ToUnixTimeMilliseconds());
+    }
+
+    /// <summary>True when size and modification time both still match.</summary>
+    public bool Matches(long length, long lastWriteUnixMs) =>
+        Length == length && LastWriteUnixMs == lastWriteUnixMs;
+}
+
+/// <summary>
+/// One row of the upload ledger: what is known about a local file and its remote copy.
+/// </summary>
+/// <param name="LocalPath">Full local path. The primary key.</param>
+/// <param name="RemotePath">Encoded destination path.</param>
+/// <param name="Length">Local size at the point recorded.</param>
+/// <param name="LastWriteUnixMs">Local modification time at the point recorded.</param>
+/// <param name="Md5">Lower-case hex MD5, once known.</param>
+/// <param name="Sha256">Lower-case hex SHA-256, kept as the provenance record.</param>
+/// <param name="State">Where it stands.</param>
+/// <param name="VerifyMethod">How the remote copy was checked.</param>
+/// <param name="VerifiedUtc">When verification last succeeded.</param>
+/// <param name="Attempts">Upload attempts so far.</param>
+/// <param name="LastError">Why the last attempt failed.</param>
+/// <param name="IsDataset">True when this row represents a folder acquisition rather than a file.</param>
+public sealed record UploadRecord(
+    string LocalPath,
+    string RemotePath,
+    long Length,
+    long LastWriteUnixMs,
+    string? Md5,
+    string? Sha256,
+    TransferState State,
+    VerifyMethod VerifyMethod,
+    DateTimeOffset? VerifiedUtc,
+    int Attempts,
+    string? LastError,
+    bool IsDataset)
+{
+    /// <summary>
+    /// True when this file is known to be safely on the server, unchanged since.
+    /// </summary>
+    /// <remarks>
+    /// Requires the hash to have actually been checked. A row that reached
+    /// <see cref="TransferState.Uploaded"/> but never got past
+    /// <see cref="VerifyMethod.SizeOnly"/> is not treated as settled, which is what stops a
+    /// truncated or mis-stored copy from being mistaken for a good one.
+    /// </remarks>
+    public bool IsSettled(LocalFileStamp stamp) =>
+        (State is TransferState.Verified or TransferState.Skipped)
+        && VerifyMethod == VerifyMethod.ServerMd5
+        && stamp.Matches(Length, LastWriteUnixMs);
+
+    /// <summary>A new row for a file that has just been discovered.</summary>
+    public static UploadRecord ForNewFile(LocalFileStamp stamp, string remotePath) =>
+        new(
+            LocalPath: stamp.Path,
+            RemotePath: remotePath,
+            Length: stamp.Length,
+            LastWriteUnixMs: stamp.LastWriteUnixMs,
+            Md5: null,
+            Sha256: null,
+            State: TransferState.Discovered,
+            VerifyMethod: VerifyMethod.None,
+            VerifiedUtc: null,
+            Attempts: 0,
+            LastError: null,
+            IsDataset: false);
+
+    /// <summary>Returns this row with hashes attached.</summary>
+    public UploadRecord WithHashes(ContentHashes hashes) =>
+        this with { Md5 = hashes.Md5, Sha256 = hashes.Sha256 };
+}

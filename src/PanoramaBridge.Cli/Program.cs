@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using PanoramaBridge.Core.Storage;
+using PanoramaBridge.Core.Transfer;
 using PanoramaBridge.Core.WebDav;
 
 namespace PanoramaBridge.Cli;
@@ -102,6 +104,8 @@ internal static class Program
             "md5" => await Md5Async(client, Target(rest, 0), cancellationToken).ConfigureAwait(false),
             "put" => await PutAsync(client, rest, cancellationToken).ConfigureAwait(false),
             "rm" => await RemoveAsync(client, Target(rest, 0), cancellationToken).ConfigureAwait(false),
+            "sync" => await SyncAsync(client, rest, cancellationToken).ConfigureAwait(false),
+            "status" => await StatusAsync(cancellationToken).ConfigureAwait(false),
             _ => Unknown(command),
         };
     }
@@ -258,6 +262,169 @@ internal static class Program
         return 0;
     }
 
+    /// <summary>
+    /// Mirrors a local directory into a remote folder, then reports what it cost.
+    /// </summary>
+    /// <remarks>
+    /// The counters printed at the end are the point: a second run over an unchanged directory
+    /// should report every file skipped, zero bytes sent, and no hashing.
+    /// </remarks>
+    private static async Task<int> SyncAsync(
+        IWebDavClient client,
+        string[] args,
+        CancellationToken cancellationToken)
+    {
+        if (args.Length == 0 || !Directory.Exists(args[0]))
+        {
+            Console.Error.WriteLine("usage: pbctl sync <local-dir> [remote-dir] [--concurrency N] [--no-verify]");
+            return 2;
+        }
+
+        var localDirectory = Path.GetFullPath(args[0]);
+        var remaining = args[1..];
+
+        var concurrency = 3;
+        var verify = true;
+        var pathArguments = new List<string>();
+
+        for (var i = 0; i < remaining.Length; i++)
+        {
+            switch (remaining[i])
+            {
+                case "--concurrency" when i + 1 < remaining.Length:
+                    concurrency = int.Parse(remaining[++i], System.Globalization.CultureInfo.InvariantCulture);
+                    break;
+                case "--no-verify":
+                    verify = false;
+                    break;
+                default:
+                    pathArguments.Add(remaining[i]);
+                    break;
+            }
+        }
+
+        var destination = Target([.. pathArguments], 0).AsCollection();
+
+        await using var store = new SqliteStateStore(StateDatabasePath());
+
+        var options = new TransferEngineOptions
+        {
+            LocalBaseDirectory = localDirectory,
+            DestinationRoot = destination,
+            MaxConcurrentTransfers = concurrency,
+            VerifyUploads = verify,
+        };
+
+        await using var coordinator = new TransferCoordinator(client, store, options);
+
+        var tiers = new System.Collections.Concurrent.ConcurrentDictionary<string, int>();
+        coordinator.Progress += progress =>
+        {
+            if (progress.State is TransferState.Uploading)
+            {
+                return;
+            }
+
+            tiers.AddOrUpdate(progress.Phase, 1, (_, count) => count + 1);
+            Console.WriteLine($"  {progress.State,-11} {progress.FileName}  {progress.Message}");
+        };
+
+        Console.WriteLine($"syncing {localDirectory}");
+        Console.WriteLine($"     to {destination}");
+        Console.WriteLine($"  concurrency {concurrency}, verify {(verify ? "on" : "off")}");
+        Console.WriteLine();
+
+        await coordinator.RecoverInterruptedAsync(cancellationToken).ConfigureAwait(false);
+
+        var files = Directory.EnumerateFiles(
+            localDirectory,
+            "*",
+            new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = true,
+                AttributesToSkip = FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint,
+            });
+
+        var offered = 0;
+        foreach (var file in files)
+        {
+            if (await coordinator.EnqueueAsync(file, cancellationToken).ConfigureAwait(false))
+            {
+                offered++;
+            }
+        }
+
+        coordinator.CompleteAdding();
+
+        var summary = await coordinator.RunAsync(cancellationToken).ConfigureAwait(false);
+
+        Console.WriteLine();
+        Console.WriteLine($"offered   {offered}");
+        Console.WriteLine($"uploaded  {summary.Uploaded}");
+        Console.WriteLine($"skipped   {summary.Skipped}");
+        Console.WriteLine($"conflicts {summary.Conflicts}");
+        Console.WriteLine($"failed    {summary.Failed}");
+        Console.WriteLine($"bytes     {summary.BytesUploaded:N0} ({FormatBytes((long)summary.BytesPerSecond)}/s)");
+        Console.WriteLine($"elapsed   {summary.Elapsed.TotalSeconds:F1}s");
+
+        return summary.Failed > 0 ? 1 : 0;
+    }
+
+    /// <summary>Prints the ledger, which is what "did that actually get uploaded" means.</summary>
+    private static async Task<int> StatusAsync(CancellationToken cancellationToken)
+    {
+        await using var store = new SqliteStateStore(StateDatabasePath());
+
+        var counts = await store.CountByStateAsync(cancellationToken).ConfigureAwait(false);
+
+        Console.WriteLine($"ledger: {StateDatabasePath()}");
+        Console.WriteLine();
+
+        if (counts.Count == 0)
+        {
+            Console.WriteLine("  (empty)");
+            return 0;
+        }
+
+        foreach (var (state, count) in counts.OrderByDescending(c => c.Value))
+        {
+            Console.WriteLine($"  {state,-14} {count,6}");
+        }
+
+        // Anything unresolved is what a person actually needs to act on.
+        var attention = await store
+            .GetByStateAsync(
+                [TransferState.Failed, TransferState.Conflict, TransferState.Superseded],
+                limit: 20,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (attention.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine("needs attention:");
+            foreach (var record in attention)
+            {
+                Console.WriteLine($"  {record.State,-11} {Path.GetFileName(record.LocalPath)}");
+                Console.WriteLine($"    {record.LastError}");
+            }
+        }
+
+        return 0;
+    }
+
+    private static string StateDatabasePath()
+    {
+        // Kept apart from the application's own database so the harness can never disturb it.
+        var directory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "PanoramaBridge");
+
+        Directory.CreateDirectory(directory);
+        return Path.Combine(directory, "pbctl-state.db");
+    }
+
     private static int Unknown(string command)
     {
         Console.Error.WriteLine($"unknown command '{command}'");
@@ -308,6 +475,10 @@ internal static class Program
                                            the whole collection in one request
           put   <local-file> [remote-dir]  upload, then verify against the server's hash
           rm    <remote-path>              delete
+          sync  <local-dir> [remote-dir]    mirror a directory, then report what it cost
+                  --concurrency N            files in flight at once (default 3)
+                  --no-verify                skip hash verification
+          status                           what the upload ledger currently holds
 
         Environment:
           PANORAMABRIDGE_IT_URL      server, e.g. https://panoramaweb.org
