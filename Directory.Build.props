@@ -1,8 +1,18 @@
 <Project>
 
-  <!-- Single source of truth for the product version. CI overrides this from the git tag. -->
+  <!--
+    Single source of truth for the product version.
+
+    CalVer, YY.feature.patch:
+      YY       two-digit year (26 = 2026)
+      feature  incremented for each release containing new features, restarting each year
+      patch    incremented for bug-fix-only releases within the same feature version
+
+    This value and the git tag must match: release.yml refuses to publish when
+    tag v<version> disagrees with this property. Bump it here, commit, then tag.
+  -->
   <PropertyGroup>
-    <Version Condition="'$(Version)' == ''">0.1.0</Version>
+    <Version>26.1.0</Version>
     <Product>PanoramaBridge</Product>
     <Company>MacCoss Lab, University of Washington</Company>
     <Authors>MacCoss Lab, University of Washington</Authors>

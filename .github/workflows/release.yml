@@ -1,17 +1,13 @@
+# Release - triggered by a v* tag.
+#
+# Pushing the tag both builds the artifacts and creates the GitHub Release. Do not hand-create
+# the Release. See release-notes/README.md for the full process.
 name: Release
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version to build, without a leading v (e.g. 1.0.0)"
-        required: true
-      prerelease:
-        description: "Publish to the beta channel instead of stable"
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -31,24 +27,64 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      # One source of truth for the version: the tag (or the manual input) flows into the
-      # assembly and into --packVersion. Nothing is hardcoded in a csproj.
-      - name: Resolve version and channel
+      # The version lives in exactly one place, Directory.Build.props. For a tagged build the
+      # tag must agree with it, so the assembly version, the package version and the release
+      # name can never drift apart.
+      #
+      # Channel and prerelease are independent. The channel decides which installed builds see
+      # the update; the prerelease flag only decides how the Release is presented on GitHub. A
+      # beta goes to its own channel so it can be piloted on one instrument first.
+      - name: Resolve and verify version
         id: meta
-        shell: pwsh
+        shell: bash
         run: |
-          if ($env:GITHUB_REF -like 'refs/tags/v*') {
-            $version = $env:GITHUB_REF -replace '^refs/tags/v', ''
-            $pre = $version -match '-'
-          } else {
-            $version = '${{ inputs.version }}'
-            $pre = '${{ inputs.prerelease }}' -eq 'true'
-          }
-          $channel = if ($pre) { 'win-beta' } else { 'win' }
-          "version=$version"   >> $env:GITHUB_OUTPUT
-          "channel=$channel"   >> $env:GITHUB_OUTPUT
-          "prerelease=$($pre.ToString().ToLower())" >> $env:GITHUB_OUTPUT
-          Write-Host "Building $version on channel $channel"
+          PROPS=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | tr -d '[:space:]')
+          if [ -z "$PROPS" ]; then
+            echo "::error::Could not read <Version> from Directory.Build.props"
+            exit 1
+          fi
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            if [ "$TAG" != "$PROPS" ]; then
+              echo "::error::Directory.Build.props Version ($PROPS) does not match tag ($TAG). Bump the property, commit, then re-tag."
+              exit 1
+            fi
+            VERSION="$TAG"
+          else
+            VERSION="$PROPS"
+          fi
+
+          case "$VERSION" in
+            *beta*) CHANNEL=win-beta ;;
+            *)      CHANNEL=win ;;
+          esac
+
+          case "$VERSION" in
+            *alpha*|*beta*|*rc*) PRERELEASE=true ;;
+            *)                   PRERELEASE=false ;;
+          esac
+
+          {
+            echo "version=$VERSION"
+            echo "channel=$CHANNEL"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION channel=$CHANNEL prerelease=$PRERELEASE"
+
+      # Resolved from the version so the path cannot drift from the tag. Failing here, before
+      # the long build, beats dying at the publish step or silently shipping an empty release.
+      - name: Locate the release notes
+        id: notes
+        shell: bash
+        run: |
+          NOTES="release-notes/RELEASE_NOTES_v${{ steps.meta.outputs.version }}.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "::error::Expected release notes at $NOTES. Rename the draft (release-notes/RELEASE_NOTES_next.md) to match the version before tagging - see release-notes/README.md."
+            exit 1
+          fi
+          echo "Using release notes: $NOTES ($(wc -l < "$NOTES") lines)"
+          echo "notes=$NOTES" >> "$GITHUB_OUTPUT"
 
       - name: Test
         run: dotnet test PanoramaBridge.sln -c Release
@@ -58,22 +94,10 @@ jobs:
           dotnet publish src/PanoramaBridge.App/PanoramaBridge.App.csproj
           -c Release -r win-x64 --self-contained true
           -p:PublishReadyToRun=true
-          -p:Version=${{ steps.meta.outputs.version }}
           -o artifacts/publish
 
       - name: Install vpk
         run: dotnet tool install -g vpk
-
-      - name: Write release notes
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force artifacts | Out-Null
-          @"
-          ## PanoramaBridge ${{ steps.meta.outputs.version }}
-
-          Installed per-user with no administrator rights. Existing installations update
-          themselves in the background and apply the update on the next restart.
-          "@ | Set-Content artifacts/release-notes.md
 
       # Delta packages are why the publish output is a folder rather than a single file:
       # a full package is ~66 MB, a delta between adjacent versions is a few hundred KB.
@@ -85,7 +109,7 @@ jobs:
             [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx", [Convert]::FromBase64String($env:SIGNING_CERT_BASE64))
             $sign = @('--signParams', "/f $env:RUNNER_TEMP\cert.pfx /p $env:SIGNING_CERT_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256")
           } else {
-            Write-Warning "No signing certificate configured; the build will be unsigned and will trigger SmartScreen."
+            Write-Warning "No signing certificate configured; this build is unsigned and will trigger SmartScreen."
           }
 
           vpk pack `
@@ -96,7 +120,7 @@ jobs:
             --packTitle "PanoramaBridge" `
             --packAuthors "MacCoss Lab, University of Washington" `
             --icon src/PanoramaBridge.App/Assets/panoramabridge.ico `
-            --releaseNotes artifacts/release-notes.md `
+            --releaseNotes ${{ steps.notes.outputs.notes }} `
             --channel ${{ steps.meta.outputs.channel }} `
             --outputDir artifacts/releases `
             @sign
@@ -112,17 +136,33 @@ jobs:
             ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
             Set-Content artifacts/releases/SHA256SUMS.txt
 
-      # --merge lets a channel be added to an existing release for the same tag; Velopack
-      # requires one full package and one delta per release for updates to resolve.
+      # vpk creates the Release so that releases.<channel>.json and the packages land together;
+      # updates will not resolve if the feed and the assets are published separately.
+      # --merge allows a second channel to be added to an existing Release for the same tag.
       - name: Upload to GitHub Releases
+        shell: pwsh
+        run: |
+          $arguments = @(
+            'upload', 'github',
+            '--repoUrl',     'https://github.com/${{ github.repository }}',
+            '--token',       '${{ secrets.GITHUB_TOKEN }}',
+            '--outputDir',   'artifacts/releases',
+            '--channel',     '${{ steps.meta.outputs.channel }}',
+            '--tag',         'v${{ steps.meta.outputs.version }}',
+            '--releaseName', 'PanoramaBridge ${{ steps.meta.outputs.version }}',
+            '--merge',
+            '--publish'
+          )
+          if ('${{ steps.meta.outputs.prerelease }}' -eq 'true') { $arguments += '--pre' }
+
+          vpk @arguments
+
+      # vpk does not take a release body, so the notes file is applied afterwards. It is
+      # published verbatim, which is why release-notes/README.md insists it be written for the
+      # people reading the Releases page.
+      - name: Set the release description
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: >
-          vpk upload github
-          --repoUrl https://github.com/${{ github.repository }}
-          --token ${{ secrets.GITHUB_TOKEN }}
-          --outputDir artifacts/releases
-          --channel ${{ steps.meta.outputs.channel }}
-          --tag v${{ steps.meta.outputs.version }}
-          --releaseName "PanoramaBridge ${{ steps.meta.outputs.version }}"
-          --merge
-          --publish
-          ${{ steps.meta.outputs.prerelease == 'true' && '--pre' || '' }}
+          gh release edit v${{ steps.meta.outputs.version }}
+          --notes-file ${{ steps.notes.outputs.notes }}
