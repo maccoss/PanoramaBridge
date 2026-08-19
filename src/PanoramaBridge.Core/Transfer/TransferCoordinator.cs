@@ -368,12 +368,9 @@ public sealed class TransferCoordinator : IAsyncDisposable
             lastReport = stopwatch.Elapsed;
 
             var rate = stopwatch.Elapsed.TotalSeconds > 0 ? sent / stopwatch.Elapsed.TotalSeconds : 0;
-            var remaining = rate > 0 && stamp.Length > sent
-                ? TimeSpan.FromSeconds((stamp.Length - sent) / rate)
-                : (TimeSpan?)null;
 
             Report(localPath, encoded, TransferState.Uploading, "Uploading",
-                sent, stamp.Length, rate, remaining);
+                sent, stamp.Length, rate);
         });
 
         var result = await _client
@@ -532,11 +529,10 @@ public sealed class TransferCoordinator : IAsyncDisposable
         long transferred,
         long total,
         double rate = 0,
-        TimeSpan? eta = null,
         VerifyMethod verification = VerifyMethod.None,
         string? message = null) =>
         Progress?.Invoke(new TransferProgress(
-            localPath, remotePath, state, phase, transferred, total, rate, eta, verification, message));
+            localPath, remotePath, state, phase, transferred, total, rate, verification, message));
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()

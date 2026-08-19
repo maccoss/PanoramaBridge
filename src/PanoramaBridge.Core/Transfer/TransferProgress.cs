@@ -19,7 +19,6 @@ namespace PanoramaBridge.Core.Transfer;
 /// <param name="BytesTransferred">Bytes handed to the socket so far.</param>
 /// <param name="TotalBytes">Size of the file.</param>
 /// <param name="BytesPerSecond">Recent throughput.</param>
-/// <param name="Eta">Estimated time remaining, when it can be estimated.</param>
 /// <param name="Verification">How the remote copy has been checked, if at all.</param>
 /// <param name="Message">Extra detail, such as why something was skipped or failed.</param>
 public sealed record TransferProgress(
@@ -30,13 +29,24 @@ public sealed record TransferProgress(
     long BytesTransferred,
     long TotalBytes,
     double BytesPerSecond = 0,
-    TimeSpan? Eta = null,
     VerifyMethod Verification = VerifyMethod.None,
     string? Message = null)
 {
     /// <summary>Completion as a fraction, or null when the size is unknown.</summary>
     public double? Fraction => TotalBytes > 0
         ? Math.Clamp((double)BytesTransferred / TotalBytes, 0, 1)
+        : null;
+
+    /// <summary>
+    /// Estimated time remaining, or null when there is nothing to base it on.
+    /// </summary>
+    /// <remarks>
+    /// Derived rather than passed in. As a constructor parameter it was possible to supply a
+    /// throughput figure and forget the estimate, leaving the UI showing a rate with no ETA
+    /// beside it for no reason the user could discern.
+    /// </remarks>
+    public TimeSpan? Eta => BytesPerSecond > 0 && TotalBytes > BytesTransferred
+        ? TimeSpan.FromSeconds((TotalBytes - BytesTransferred) / BytesPerSecond)
         : null;
 
     /// <summary>The file name alone, for a narrow column.</summary>
