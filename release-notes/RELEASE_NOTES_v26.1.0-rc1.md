@@ -1,8 +1,10 @@
-# PanoramaBridge v26.1.0 Release Notes
+# PanoramaBridge v26.1.0-rc1 Release Notes
 
-First release of PanoramaBridge as a native Windows application, rebuilt on .NET 8. This release
-establishes the new installer and automatic update path; the monitoring and transfer features
-follow in subsequent releases.
+Release candidate for the first native Windows build of PanoramaBridge, rebuilt on .NET 8.
+
+**This build cannot transfer files yet.** It exists to validate the new installer and the
+automatic update path on real lab machines ahead of 26.1.0. Keep using the existing Python
+application for actual uploads until 26.1.0 ships.
 
 ## Installing
 
