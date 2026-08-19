@@ -1,0 +1,48 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{AE2E348D-1743-43D1-BEF0-DFD41291133E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PanoramaBridge.Core", "src\PanoramaBridge.Core\PanoramaBridge.Core.csproj", "{7FF7BE4D-B39A-425E-9D58-0C6B74CFEA87}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PanoramaBridge.Cli", "src\PanoramaBridge.Cli\PanoramaBridge.Cli.csproj", "{625BCE88-9B03-4C10-BD84-B4B1B0F6FFAE}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PanoramaBridge.Tests", "src\PanoramaBridge.Tests\PanoramaBridge.Tests.csproj", "{06C2F040-6120-43AB-B393-C46C7E84A4AB}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PanoramaBridge.App", "src\PanoramaBridge.App\PanoramaBridge.App.csproj", "{260ABF55-70E6-4C27-9C43-0DA39209B051}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7FF7BE4D-B39A-425E-9D58-0C6B74CFEA87}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7FF7BE4D-B39A-425E-9D58-0C6B74CFEA87}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7FF7BE4D-B39A-425E-9D58-0C6B74CFEA87}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7FF7BE4D-B39A-425E-9D58-0C6B74CFEA87}.Release|Any CPU.Build.0 = Release|Any CPU
+		{625BCE88-9B03-4C10-BD84-B4B1B0F6FFAE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{625BCE88-9B03-4C10-BD84-B4B1B0F6FFAE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{625BCE88-9B03-4C10-BD84-B4B1B0F6FFAE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{625BCE88-9B03-4C10-BD84-B4B1B0F6FFAE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{06C2F040-6120-43AB-B393-C46C7E84A4AB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{06C2F040-6120-43AB-B393-C46C7E84A4AB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{06C2F040-6120-43AB-B393-C46C7E84A4AB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{06C2F040-6120-43AB-B393-C46C7E84A4AB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{260ABF55-70E6-4C27-9C43-0DA39209B051}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{260ABF55-70E6-4C27-9C43-0DA39209B051}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{260ABF55-70E6-4C27-9C43-0DA39209B051}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{260ABF55-70E6-4C27-9C43-0DA39209B051}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{7FF7BE4D-B39A-425E-9D58-0C6B74CFEA87} = {AE2E348D-1743-43D1-BEF0-DFD41291133E}
+		{625BCE88-9B03-4C10-BD84-B4B1B0F6FFAE} = {AE2E348D-1743-43D1-BEF0-DFD41291133E}
+		{06C2F040-6120-43AB-B393-C46C7E84A4AB} = {AE2E348D-1743-43D1-BEF0-DFD41291133E}
+		{260ABF55-70E6-4C27-9C43-0DA39209B051} = {AE2E348D-1743-43D1-BEF0-DFD41291133E}
+	EndGlobalSection
+EndGlobal

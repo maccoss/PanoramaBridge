@@ -1,11 +1,13 @@
-# Publish PanoramaBridge to PyPI
-# Triggered on release creation or manual dispatch
+# Publish the retired Python PanoramaBridge package to PyPI.
+#
+# The application has been ported to .NET; this workflow is kept only to publish the final
+# deprecation release that points users at the GitHub Releases page. The automatic
+# "on: release published" trigger has been removed deliberately -- it would otherwise fire
+# on every .NET release and try to publish the Python package alongside it.
 
-name: Publish to PyPI
+name: Publish to PyPI (retired Python package)
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       test_pypi:
