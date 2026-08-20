@@ -20,6 +20,8 @@
                     </DockPanel>
                     <CheckBox Content="Include subdirectories"
                               IsChecked="{Binding IncludeSubdirectories}" />
+                    <TextBlock Style="{StaticResource Hint}"
+                               Text="A folder on a file server works too. Prefer the full network path over a mapped drive letter: drive letters belong to a single Windows sign-in, so a path like Y:\ will not resolve if PanoramaBridge is ever started as a service or scheduled task." />
                 </StackPanel>
             </GroupBox>
 
