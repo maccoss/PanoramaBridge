@@ -1,3 +1,5 @@
+using System.IO;
+using System.Net.Http;
 using Microsoft.Extensions.Logging;
 using PanoramaBridge.Core.Security;
 using PanoramaBridge.Core.Storage;

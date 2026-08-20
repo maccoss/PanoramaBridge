@@ -1,0 +1,97 @@
+<UserControl x:Class="PanoramaBridge.App.Views.UploadsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PanoramaBridge.App.ViewModels"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:UploadsViewModel}"
+             d:DesignHeight="600" d:DesignWidth="1000">
+
+    <DockPanel LastChildFill="True">
+
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,8"
+                       Text="The durable record of what reached the server. Survives a restart, so it still answers the question next week or on a rebuilt machine." />
+
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="Refresh" Style="{StaticResource ToolbarButton}"
+                            Command="{Binding RefreshCommand}" />
+                    <Button Content="Export CSV" Command="{Binding ExportCsvCommand}" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal">
+                    <ComboBox Width="150" VerticalAlignment="Center"
+                              SelectedValue="{Binding Filter}"
+                              SelectedValuePath="Tag">
+                        <ComboBoxItem Content="Everything" Tag="{x:Static vm:UploadFilter.All}" />
+                        <ComboBoxItem Content="On the server" Tag="{x:Static vm:UploadFilter.Verified}" />
+                        <ComboBoxItem Content="Needs attention" Tag="{x:Static vm:UploadFilter.NeedsAttention}" />
+                    </ComboBox>
+
+                    <TextBox Width="220" Margin="8,0,0,0" VerticalAlignment="Center"
+                             Text="{Binding Search, UpdateSourceTrigger=PropertyChanged, Delay=300}" />
+                    <TextBlock Style="{StaticResource Hint}" Margin="8,0,0,0" Text="Search by file name" />
+                </StackPanel>
+            </DockPanel>
+
+            <TextBlock Margin="0,8,0,0" Text="{Binding Summary}" />
+        </StackPanel>
+
+        <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}"
+                   Text="Nothing recorded yet. Run a transfer and it will appear here."
+                   Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibility}}" />
+
+        <DataGrid ItemsSource="{Binding Rows}"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  HeadersVisibility="Column"
+                  GridLinesVisibility="Horizontal"
+                  SelectionMode="Extended"
+                  RowHeight="26"
+                  EnableRowVirtualization="True"
+                  EnableColumnVirtualization="True"
+                  VirtualizingPanel.IsVirtualizing="True"
+                  VirtualizingPanel.VirtualizationMode="Recycling"
+                  ScrollViewer.CanContentScroll="True">
+
+            <DataGrid.RowStyle>
+                <Style TargetType="DataGridRow">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding NeedsAttention}" Value="True">
+                            <Setter Property="Background" Value="#FDECEA" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.RowStyle>
+
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="2*" />
+                <DataGridTextColumn Header="State" Binding="{Binding State}" Width="130" />
+
+                <!--
+                    Stated rather than implied. A tick that only means "the byte count matched" is
+                    how upload tracking loses trust, so the column says exactly what was checked.
+                -->
+                <DataGridTextColumn Header="Checked" Binding="{Binding Verification}" Width="110">
+                    <DataGridTextColumn.CellStyle>
+                        <Style TargetType="DataGridCell">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsTrustworthy}" Value="False">
+                                    <Setter Property="Foreground" Value="#8A6100" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGridTextColumn.CellStyle>
+                </DataGridTextColumn>
+
+                <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="90" />
+                <DataGridTextColumn Header="Verified" Binding="{Binding VerifiedAt}" Width="130" />
+                <DataGridTextColumn Header="Remote path" Binding="{Binding RemotePath}" Width="3*" />
+                <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" Width="2*" />
+            </DataGrid.Columns>
+        </DataGrid>
+
+    </DockPanel>
+</UserControl>

@@ -1,104 +1,127 @@
 <Window x:Class="PanoramaBridge.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:vm="clr-namespace:PanoramaBridge.App.ViewModels"
-        d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:PanoramaBridge.App.ViewModels"
+        xmlns:views="clr-namespace:PanoramaBridge.App.Views"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         mc:Ignorable="d"
-        Title="PanoramaBridge"
-        Height="480" Width="760"
-        MinHeight="360" MinWidth="560"
+        d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
+        Title="{Binding WindowTitle}"
+        Height="720" Width="1080"
+        MinHeight="520" MinWidth="820"
         WindowStartupLocation="CenterScreen">
+
+    <!--
+        Overall progress on the taskbar button, so someone can leave the window minimised during
+        a long transfer and still see where it is up to.
+    -->
+    <Window.TaskbarItemInfo>
+        <shell:TaskbarItemInfo
+            ProgressState="{Binding IsBusy, Converter={StaticResource EnumMatch}, ConverterParameter=Normal, Mode=OneWay, FallbackValue=None}"
+            ProgressValue="{Binding TransferStatus.OverallProgress, FallbackValue=0, TargetNullValue=0}" />
+    </Window.TaskbarItemInfo>
 
     <DockPanel LastChildFill="True">
 
-        <!-- Blocking banner: shown only when this build is below the published version floor. -->
-        <Border DockPanel.Dock="Top"
-                Background="#B3261E"
-                Padding="14,10"
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="_View">
+                <MenuItem Header="Application _logs" Command="{Binding OpenLogFolderCommand}" />
+                <MenuItem Header="_Data folder" Command="{Binding OpenDataFolderCommand}" />
+            </MenuItem>
+            <MenuItem Header="_Help">
+                <MenuItem Header="Check for _updates" Command="{Binding CheckForUpdatesCommand}" />
+                <Separator />
+                <MenuItem Header="_About" Command="{Binding ShowAboutCommand}" />
+            </MenuItem>
+        </Menu>
+
+        <!--
+            Blocking banner. Shown only when this build is below the published minimum supported
+            version, in which case no new upload may start.
+        -->
+        <Border DockPanel.Dock="Top" Background="#B3261E" Padding="14,10"
                 Visibility="{Binding UploadsBlocked, Converter={StaticResource BooleanToVisibility}}">
             <DockPanel>
-                <Button DockPanel.Dock="Right"
-                        Content="Update and restart"
-                        Padding="12,4"
-                        Margin="12,0,0,0"
+                <Button DockPanel.Dock="Right" Content="Update and restart" Margin="12,0,0,0"
                         Command="{Binding ApplyUpdateCommand}" />
-                <TextBlock Foreground="White"
-                           TextWrapping="Wrap"
-                           VerticalAlignment="Center"
+                <TextBlock Foreground="White" TextWrapping="Wrap" VerticalAlignment="Center"
                            Text="{Binding UpdateDetail}" />
             </DockPanel>
         </Border>
 
-        <StatusBar DockPanel.Dock="Bottom">
-            <StatusBarItem>
-                <TextBlock Text="{Binding UpdateSummary}" />
-            </StatusBarItem>
-        </StatusBar>
+        <!-- Informational strip: an update is staged and will apply on the next restart. -->
+        <Border DockPanel.Dock="Top" Background="#1F6FEB" Padding="14,8"
+                Visibility="{Binding ShowUpdateBanner, Converter={StaticResource BooleanToVisibility}}">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Restart now" Margin="12,0,0,0"
+                        Command="{Binding ApplyUpdateCommand}" />
+                <TextBlock Foreground="White" VerticalAlignment="Center" TextWrapping="Wrap"
+                           Text="{Binding UpdateSummary}" />
+            </DockPanel>
+        </Border>
 
-        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="20">
-            <StackPanel>
-
-                <TextBlock Text="PanoramaBridge" FontSize="24" FontWeight="SemiBold" />
-                <TextBlock Margin="0,2,0,18" Opacity="0.75"
-                           Text="Monitors local directories and transfers acquisitions to Panorama." />
-
-                <GroupBox Header="This build" Padding="12">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-
-                        <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="Version" />
-                        <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource FieldValue}" Text="{Binding Version}" />
-
-                        <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="Platform" />
-                        <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource FieldValue}" Text="{Binding RuntimeIdentifier}" />
-
-                        <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="Install" />
-                        <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource FieldValue}" Text="{Binding InstallKind}" />
-
-                        <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="Data" />
-                        <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource FieldValue}"
-                                   Text="{Binding DataDirectory}" ToolTip="{Binding DataDirectory}" />
-
-                        <TextBlock Grid.Row="4" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="Logs" />
-                        <TextBlock Grid.Row="4" Grid.Column="1" Style="{StaticResource FieldValue}"
-                                   Text="{Binding LogDirectory}" ToolTip="{Binding LogDirectory}" />
-                    </Grid>
-                </GroupBox>
-
-                <GroupBox Header="Updates" Padding="12" Margin="0,14,0,0">
-                    <StackPanel>
-                        <TextBlock Text="{Binding UpdateSummary}" TextWrapping="Wrap" />
-                        <TextBlock Text="{Binding UpdateDetail}" TextWrapping="Wrap" Opacity="0.75" Margin="0,4,0,0" />
-                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                            <Button Content="Check now" Padding="12,4"
-                                    Command="{Binding CheckForUpdatesCommand}" />
-                            <Button Content="Restart to apply" Padding="12,4" Margin="8,0,0,0"
-                                    Command="{Binding ApplyUpdateCommand}" />
-                        </StackPanel>
-                    </StackPanel>
-                </GroupBox>
-
-                <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
-                    <Button Content="Open data folder" Padding="12,4"
-                            Command="{Binding OpenDataFolderCommand}" />
-                    <Button Content="Open log folder" Padding="12,4" Margin="8,0,0,0"
-                            Command="{Binding OpenLogFolderCommand}" />
+        <!-- Command bar. -->
+        <Border DockPanel.Dock="Bottom" BorderThickness="0,1,0,0"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                Padding="12,10">
+            <DockPanel>
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                    <Button Content="Upload now" Style="{StaticResource ToolbarButton}"
+                            Command="{Binding UploadNowCommand}" IsDefault="True" />
+                    <Button Content="Stop" Style="{StaticResource ToolbarButton}"
+                            Command="{Binding CancelCommand}" />
+                    <Button Content="Test connection" Style="{StaticResource ToolbarButton}"
+                            Command="{Binding TestConnectionCommand}" />
+                    <Button Content="Save settings" Style="{StaticResource ToolbarButton}"
+                            Command="{Binding SaveSettingsCommand}" />
                 </StackPanel>
 
+                <ProgressBar DockPanel.Dock="Right" Width="160" Height="6" Margin="12,0,0,0"
+                             VerticalAlignment="Center" IsIndeterminate="False"
+                             Maximum="1"
+                             Value="{Binding TransferStatus.OverallProgress, Mode=OneWay, FallbackValue=0, TargetNullValue=0}"
+                             Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibility}}" />
+
+                <TextBlock VerticalAlignment="Center" Margin="16,0,0,0" TextTrimming="CharacterEllipsis"
+                           Text="{Binding TransferStatus.Summary}" Opacity="0.8" />
+            </DockPanel>
+        </Border>
+
+        <!-- Status line: the outcome of the last command, and any connection detail. -->
+        <Border DockPanel.Dock="Bottom" Padding="12,6,12,0">
+            <StackPanel>
+                <TextBlock TextWrapping="Wrap" Text="{Binding StatusLine}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ConnectionFailed}" Value="True">
+                                    <Setter Property="Foreground" Value="#B3261E" />
+                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <TextBlock Style="{StaticResource Hint}" Text="{Binding ConnectionDetail}" />
             </StackPanel>
-        </ScrollViewer>
+        </Border>
+
+        <TabControl Margin="8" Padding="12">
+            <TabItem Header="Local Monitoring">
+                <views:LocalMonitoringView DataContext="{Binding Settings}" />
+            </TabItem>
+            <TabItem Header="Remote Settings">
+                <views:RemoteSettingsView x:Name="RemoteSettings" DataContext="{Binding Settings}" />
+            </TabItem>
+            <TabItem Header="Transfer Status">
+                <views:TransferStatusView DataContext="{Binding TransferStatus}" />
+            </TabItem>
+            <TabItem Header="Uploads">
+                <views:UploadsView DataContext="{Binding Uploads}" />
+            </TabItem>
+        </TabControl>
 
     </DockPanel>
 </Window>

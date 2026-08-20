@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.Http;
 using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
@@ -5,6 +6,8 @@ using Microsoft.Extensions.Logging;
 using PanoramaBridge.App.Services;
 using PanoramaBridge.App.ViewModels;
 using PanoramaBridge.Core.Infrastructure;
+using PanoramaBridge.Core.Security;
+using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Core.Updates;
 using Serilog;
 using Serilog.Extensions.Logging;
@@ -16,10 +19,10 @@ namespace PanoramaBridge.App;
 /// Explicit entry point.
 /// </summary>
 /// <remarks>
-/// WPF normally generates its own Main, but Velopack requires
-/// <see cref="VelopackApp"/> to run before anything else in the process -- it is what handles
-/// the install, update and uninstall hooks that the launcher invokes. So the generated entry
-/// point is suppressed with the DISABLE_XAML_GENERATED_MAIN constant and this takes its place.
+/// WPF normally generates its own Main, but Velopack requires <see cref="VelopackApp"/> to run
+/// before anything else in the process -- it is what handles the install, update and uninstall
+/// hooks the launcher invokes. App.xaml is therefore demoted from ApplicationDefinition to Page
+/// so no entry point is generated, and this takes its place.
 /// </remarks>
 public static class Program
 {
@@ -75,8 +78,20 @@ public static class Program
         services.AddSingleton(paths);
         services.AddLogging(builder => builder.AddProvider(new SerilogLoggerProvider(dispose: false)));
 
-        // One HttpClient for the process. Update checks are low volume, but the same
-        // discipline that the transfer layer needs starts here.
+        // -- Storage ---------------------------------------------------------------------------
+        services.AddSingleton<ISettingsStore>(provider => new JsonSettingsStore(
+            paths.SettingsFile,
+            provider.GetRequiredService<ILogger<JsonSettingsStore>>()));
+
+        // The ledger is opened once and shared: several upload workers write to it concurrently.
+        services.AddSingleton<IStateStore>(_ => new SqliteStateStore(paths.StateDatabase));
+
+        // -- Security --------------------------------------------------------------------------
+        services.AddSingleton<ICredentialStore>(provider => new WindowsCredentialStore(
+            provider.GetRequiredService<ILogger<WindowsCredentialStore>>()));
+        services.AddSingleton<ICredentialStoreAccessor, CredentialStoreAccessor>();
+
+        // -- Updates ---------------------------------------------------------------------------
         services.AddSingleton(_ =>
         {
             var client = new HttpClient(new SocketsHttpHandler
@@ -96,6 +111,23 @@ public static class Program
             log: provider.GetRequiredService<ILogger<VersionPolicyClient>>()));
 
         services.AddSingleton<UpdateService>();
+
+        // -- Transfers -------------------------------------------------------------------------
+        services.AddSingleton<TransferService>();
+
+        // -- View models -----------------------------------------------------------------------
+        //
+        // Settings are read synchronously here on purpose: the shell cannot be built without
+        // them, and doing it asynchronously would only move a few milliseconds of file I/O
+        // behind a loading state nobody would see.
+        services.AddSingleton(provider => new SettingsViewModel(
+            provider.GetRequiredService<ISettingsStore>(),
+            provider.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult()));
+
+        services.AddSingleton(provider => new TransferStatusViewModel(
+            provider.GetRequiredService<TransferService>().Progress));
+
+        services.AddSingleton<UploadsViewModel>();
         services.AddSingleton<MainViewModel>();
         services.AddSingleton<MainWindow>();
 

@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.RegularExpressions;
 using PanoramaBridge.Core.Infrastructure;
 using Serilog;

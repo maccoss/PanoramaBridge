@@ -1,3 +1,4 @@
+using System.IO;
 using System.Diagnostics;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -5,134 +6,321 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using PanoramaBridge.App.Services;
 using PanoramaBridge.Core.Infrastructure;
+using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Core.Updates;
 
 namespace PanoramaBridge.App.ViewModels;
 
 /// <summary>
-/// Shell view model.
+/// The shell: the tabs, the command bar, the update banner and the status line.
 /// </summary>
 /// <remarks>
-/// At this stage it exists to prove the update rail end to end. The monitoring, transfer and
-/// upload-ledger tabs are layered on top of this shell in later phases.
+/// The secret is never a property here. The view's password box holds it and hands it over
+/// through <see cref="SecretProvider"/> only at the moment a command needs it, so it is never
+/// part of anything bound, serialized, or picked up by a diagnostic that dumps the view model.
 /// </remarks>
 public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
+    private static readonly TimeSpan UpdateCheckInterval = TimeSpan.FromHours(4);
+
+    private readonly TransferService _transfers;
     private readonly UpdateService _updates;
+    private readonly ICredentialStoreAccessor _credentials;
     private readonly AppPaths _paths;
     private readonly ILogger<MainViewModel> _log;
     private readonly CancellationTokenSource _shutdown = new();
 
-    private PeriodicTimer? _updateTimer;
     private Task? _updateLoop;
+    private PeriodicTimer? _updateTimer;
 
-    /// <summary>How often the background update check runs.</summary>
-    private static readonly TimeSpan UpdateCheckInterval = TimeSpan.FromHours(4);
-
-    public MainViewModel(UpdateService updates, AppPaths paths, ILogger<MainViewModel> log)
+    public MainViewModel(
+        SettingsViewModel settings,
+        TransferStatusViewModel transferStatus,
+        UploadsViewModel uploads,
+        TransferService transfers,
+        UpdateService updates,
+        ICredentialStoreAccessor credentials,
+        AppPaths paths,
+        ILogger<MainViewModel> log)
     {
+        Settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        TransferStatus = transferStatus ?? throw new ArgumentNullException(nameof(transferStatus));
+        Uploads = uploads ?? throw new ArgumentNullException(nameof(uploads));
+        _transfers = transfers ?? throw new ArgumentNullException(nameof(transfers));
         _updates = updates ?? throw new ArgumentNullException(nameof(updates));
+        _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _log = log ?? throw new ArgumentNullException(nameof(log));
 
         _updates.StatusChanged += OnUpdateStatusChanged;
-        ApplyStatus(_updates.Status);
+        _transfers.RunStateChanged += OnRunStateChanged;
+
+        ApplyUpdateStatus(_updates.Status);
     }
+
+    public SettingsViewModel Settings { get; }
+
+    public TransferStatusViewModel TransferStatus { get; }
+
+    public UploadsViewModel Uploads { get; }
+
+    /// <summary>
+    /// Supplies the secret from the view's password box on demand.
+    /// </summary>
+    /// <remarks>
+    /// A callback rather than a bound property so the secret lives only in the control that
+    /// collected it, for as long as the command needs it.
+    /// </remarks>
+    public Func<string?>? SecretProvider { get; set; }
 
     public string ProductName => AppInfo.ProductName;
 
     public string Version => AppInfo.InformationalVersion;
 
-    public string RuntimeIdentifier => AppInfo.RuntimeIdentifier;
+    public string WindowTitle => $"{AppInfo.ProductName} {AppInfo.InformationalVersion}";
 
-    public string DataDirectory => _paths.Root;
+    // -- Command bar ---------------------------------------------------------------------------
 
-    public string LogDirectory => _paths.LogDirectory;
-
-    public string InstallKind => _updates.IsManagedInstall
-        ? "Managed install (updates enabled)"
-        : "Unmanaged build (updates disabled)";
-
-    /// <summary>One-line summary of the update state, shown in the shell.</summary>
     [ObservableProperty]
-    private string _updateSummary = "Update status unknown.";
+    [NotifyCanExecuteChangedFor(nameof(UploadNowCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CancelCommand))]
+    private bool _isBusy;
 
-    /// <summary>Longer explanation, including any operator message from the version policy.</summary>
+    [ObservableProperty]
+    private string _statusLine = "Ready.";
+
+    [ObservableProperty]
+    private string? _connectionDetail;
+
+    [ObservableProperty]
+    private bool _connectionFailed;
+
+    // -- Update banner -------------------------------------------------------------------------
+
+    [ObservableProperty]
+    private string _updateSummary = string.Empty;
+
     [ObservableProperty]
     private string? _updateDetail;
 
-    /// <summary>True while a check or download is in flight, so the button can disable itself.</summary>
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(CheckForUpdatesCommand))]
-    private bool _isCheckingForUpdates;
-
-    /// <summary>True once an update is staged and a restart would move to it.</summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ApplyUpdateCommand))]
     private bool _isUpdateReady;
 
     /// <summary>
-    /// True when this build is below the published minimum supported version. New uploads
-    /// must not start while this is set.
+    /// True when this build is below the published minimum. No new upload may start.
     /// </summary>
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(UploadNowCommand))]
     private bool _uploadsBlocked;
 
-    /// <summary>Starts the periodic background update check. Called once the window is shown.</summary>
+    /// <summary>Whether to show the informational update strip.</summary>
+    public bool ShowUpdateBanner => IsUpdateReady && !UploadsBlocked;
+
+    /// <summary>Starts the background update loop once there is a window to report into.</summary>
     public void Start()
     {
         _updateLoop ??= Task.Run(() => RunUpdateLoopAsync(_shutdown.Token));
+        _ = Uploads.RefreshAsync();
     }
 
-    [RelayCommand(CanExecute = nameof(CanCheckForUpdates))]
-    private async Task CheckForUpdatesAsync()
+    /// <summary>
+    /// Scans the monitored directory and uploads whatever needs uploading.
+    /// </summary>
+    /// <remarks>
+    /// Blocked while the version floor is unmet, so a build known to mishandle data cannot start
+    /// new work. Anything already in flight is allowed to finish.
+    /// </remarks>
+    [RelayCommand(CanExecute = nameof(CanUploadNow))]
+    private async Task UploadNowAsync()
     {
-        IsCheckingForUpdates = true;
+        var settings = await Settings.SaveAsync(_shutdown.Token).ConfigureAwait(true);
+
+        var problems = settings.Validate();
+        if (problems.Count > 0)
+        {
+            StatusLine = problems[0];
+            ConnectionFailed = true;
+            return;
+        }
+
+        IsBusy = true;
+        ConnectionFailed = false;
+        StatusLine = "Looking for files to transfer...";
+
         try
         {
-            await _updates.CheckAsync(_shutdown.Token).ConfigureAwait(true);
+            RememberCredential(settings);
+
+            var summary = await _transfers
+                .ScanAndUploadAsync(settings, SecretProvider?.Invoke(), _shutdown.Token)
+                .ConfigureAwait(true);
+
+            StatusLine = Describe(summary);
+            await Uploads.RefreshAsync().ConfigureAwait(true);
         }
         catch (OperationCanceledException)
         {
-            // Shutting down.
+            StatusLine = "Stopped.";
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "The transfer run failed.");
+            StatusLine = ex.Message;
+            ConnectionFailed = true;
         }
         finally
         {
-            IsCheckingForUpdates = false;
+            IsBusy = false;
         }
     }
 
-    private bool CanCheckForUpdates() => !IsCheckingForUpdates;
+    private bool CanUploadNow() => !IsBusy && !UploadsBlocked;
 
-    [RelayCommand(CanExecute = nameof(CanApplyUpdate))]
+    [RelayCommand(CanExecute = nameof(IsBusy))]
+    private void Cancel()
+    {
+        StatusLine = "Stopping...";
+        _transfers.Cancel();
+    }
+
+    [RelayCommand]
+    private async Task TestConnectionAsync()
+    {
+        var settings = Settings.ToSettings();
+
+        StatusLine = "Checking the connection...";
+        ConnectionFailed = false;
+        ConnectionDetail = null;
+
+        var result = await _transfers
+            .TestConnectionAsync(settings, SecretProvider?.Invoke(), _shutdown.Token)
+            .ConfigureAwait(true);
+
+        StatusLine = result.Summary;
+        ConnectionDetail = result.Detail;
+
+        // A read-only destination is a failure worth flagging now rather than at the end of a
+        // long transfer.
+        ConnectionFailed = !result.Succeeded || !result.CanUploadToDestination;
+
+        if (result.Succeeded)
+        {
+            RememberCredential(settings);
+        }
+    }
+
+    [RelayCommand]
+    private async Task SaveSettingsAsync()
+    {
+        await Settings.SaveAsync(_shutdown.Token).ConfigureAwait(true);
+        StatusLine = "Settings saved.";
+    }
+
+    [RelayCommand(CanExecute = nameof(IsUpdateReady))]
     private void ApplyUpdate()
     {
-        // Later phases gate this on an idle transfer queue. Restarting mid-upload would be
-        // worse than staying a version behind.
+        if (_transfers.IsRunning)
+        {
+            // Restarting mid-transfer would be worse than staying a version behind.
+            StatusLine = "Waiting for the current transfer to finish before updating.";
+            return;
+        }
+
         if (!_updates.ApplyAndRestart())
         {
-            _log.LogWarning("Apply update was requested but nothing was staged.");
+            StatusLine = "No update is staged.";
         }
     }
 
-    private bool CanApplyUpdate() => IsUpdateReady;
+    [RelayCommand]
+    private async Task CheckForUpdatesAsync()
+    {
+        StatusLine = "Checking for updates...";
+        await _updates.CheckAsync(_shutdown.Token).ConfigureAwait(true);
+    }
+
+    [RelayCommand]
+    private void OpenLogFolder() => OpenFolder(_paths.LogDirectory);
 
     [RelayCommand]
     private void OpenDataFolder() => OpenFolder(_paths.Root);
 
     [RelayCommand]
-    private void OpenLogFolder() => OpenFolder(_paths.LogDirectory);
+    private static void ShowAbout() =>
+        MessageBox.Show(
+            $"{AppInfo.ProductName} {AppInfo.InformationalVersion}\n"
+            + $"{AppInfo.RuntimeIdentifier}\n\n"
+            + "MacCoss Lab, University of Washington",
+            $"About {AppInfo.ProductName}",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
 
-    private void OpenFolder(string path)
+    /// <summary>Stores or clears the credential according to the user's choice.</summary>
+    private void RememberCredential(AppSettings settings)
     {
-        try
+        var secret = SecretProvider?.Invoke();
+
+        if (!settings.SaveCredentials)
         {
-            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            // Unticking the box has to actually remove what was stored earlier, not merely stop
+            // adding to it.
+            _credentials.Forget(settings.ServerUrl);
+            return;
         }
-        catch (Exception ex)
+
+        if (!string.IsNullOrWhiteSpace(secret))
         {
-            _log.LogWarning(ex, "Could not open {Path}.", path);
+            _credentials.Remember(
+                settings.ServerUrl,
+                settings.AuthMode == AuthMode.ApiKey ? "apikey" : settings.UserName,
+                secret);
         }
+    }
+
+    private static string Describe(Core.Transfer.TransferSummary summary)
+    {
+        if (summary.Total == 0)
+        {
+            return "Nothing needed transferring.";
+        }
+
+        var parts = new List<string>();
+
+        if (summary.Uploaded > 0)
+        {
+            parts.Add($"{summary.Uploaded} uploaded");
+        }
+
+        if (summary.Skipped > 0)
+        {
+            parts.Add($"{summary.Skipped} already there");
+        }
+
+        if (summary.Conflicts > 0)
+        {
+            parts.Add($"{summary.Conflicts} need a decision");
+        }
+
+        if (summary.Failed > 0)
+        {
+            parts.Add($"{summary.Failed} failed");
+        }
+
+        return string.Join(", ", parts) + $" in {summary.Elapsed.TotalSeconds:F0}s.";
+    }
+
+    private void OnRunStateChanged()
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            dispatcher.InvokeAsync(() => IsBusy = _transfers.IsRunning);
+            return;
+        }
+
+        IsBusy = _transfers.IsRunning;
     }
 
     private async Task RunUpdateLoopAsync(CancellationToken cancellationToken)
@@ -149,7 +337,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
         catch (OperationCanceledException)
         {
-            // Normal shutdown.
+            // Shutting down.
         }
         catch (Exception ex)
         {
@@ -159,71 +347,80 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private void OnUpdateStatusChanged(UpdateStatus status)
     {
-        // UpdateService raises this from a background thread.
         var dispatcher = Application.Current?.Dispatcher;
+
         if (dispatcher is not null && !dispatcher.CheckAccess())
         {
-            dispatcher.InvokeAsync(() => ApplyStatus(status));
+            dispatcher.InvokeAsync(() => ApplyUpdateStatus(status));
             return;
         }
 
-        ApplyStatus(status);
+        ApplyUpdateStatus(status);
     }
 
-    private void ApplyStatus(UpdateStatus status)
+    private void ApplyUpdateStatus(UpdateStatus status)
     {
-        UpdateSummary = status.Stage switch
-        {
-            UpdateStage.Idle => "Update status unknown.",
-            UpdateStage.NotInstalled => "Updates are not available for this build.",
-            UpdateStage.Checking => "Checking for updates...",
-            UpdateStage.UpToDate => $"PanoramaBridge {Version} is up to date.",
-            UpdateStage.Downloading =>
-                $"Downloading update {status.AvailableVersion} ({status.DownloadPercent}%)...",
-            UpdateStage.ReadyToApply =>
-                $"Update {status.AvailableVersion} is ready. Restart to apply it.",
-            UpdateStage.Failed => "Could not check for updates.",
-            _ => "Update status unknown.",
-        };
-
         IsUpdateReady = status.RestartWouldUpdate;
         UploadsBlocked = status.UploadsBlocked;
 
-        UpdateDetail = BuildDetail(status);
+        UpdateSummary = status.Stage switch
+        {
+            UpdateStage.ReadyToApply =>
+                $"Version {status.AvailableVersion} is ready. Restart to apply it.",
+            UpdateStage.Downloading =>
+                $"Downloading version {status.AvailableVersion} ({status.DownloadPercent}%)...",
+            UpdateStage.UpToDate => $"{AppInfo.InformationalVersion} is up to date.",
+            UpdateStage.NotInstalled => "Updates are not available for this build.",
+            UpdateStage.Failed => "Could not check for updates.",
+            _ => string.Empty,
+        };
+
+        UpdateDetail = status.UploadsBlocked
+            ? $"This build is older than the minimum supported version "
+              + $"({status.Policy?.MinimumSupportedVersion}). New uploads are blocked until it is "
+              + $"updated. {status.Policy?.Message}".TrimEnd()
+            : null;
+
+        OnPropertyChanged(nameof(ShowUpdateBanner));
     }
 
-    private string? BuildDetail(UpdateStatus status)
+    private void OpenFolder(string path)
     {
-        if (status.UploadsBlocked)
+        try
         {
-            var floor = status.Policy?.MinimumSupportedVersion?.ToString() ?? "a newer version";
-            var message = string.IsNullOrWhiteSpace(status.Policy?.Message)
-                ? string.Empty
-                : " " + status.Policy!.Message;
-
-            return $"This build is older than the minimum supported version ({floor}). "
-                + $"New uploads are blocked until it is updated.{message}";
+            Directory.CreateDirectory(path);
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
         }
-
-        if (status.Stage == UpdateStage.Failed && !string.IsNullOrWhiteSpace(status.Error))
+        catch (Exception ex)
         {
-            return $"{status.Error} PanoramaBridge keeps working; it will try again later.";
+            _log.LogWarning(ex, "Could not open {Path}.", path);
         }
-
-        if (status.Policy?.Status == VersionPolicyStatus.Unavailable)
-        {
-            return "The update policy could not be read, so no version floor is being enforced.";
-        }
-
-        return null;
     }
 
+    /// <inheritdoc />
     public void Dispose()
     {
         _updates.StatusChanged -= OnUpdateStatusChanged;
+        _transfers.RunStateChanged -= OnRunStateChanged;
 
         _shutdown.Cancel();
         _updateTimer?.Dispose();
         _shutdown.Dispose();
+
+        TransferStatus.Dispose();
     }
+}
+
+/// <summary>
+/// Narrow view of the credential store for the shell.
+/// </summary>
+/// <remarks>
+/// Deliberately smaller than the full store interface: the shell needs to remember and forget,
+/// and nothing more. Reading a secret back out is the transfer service's business.
+/// </remarks>
+public interface ICredentialStoreAccessor
+{
+    void Remember(string serverUrl, string userName, string secret);
+
+    void Forget(string serverUrl);
 }
