@@ -136,6 +136,30 @@ Requires the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0). See
 [`CLAUDE.md`](CLAUDE.md) for house style and [`docs/DOTNET_PORT_HANDOFF.md`](docs/DOTNET_PORT_HANDOFF.md)
 for the architecture and the reasoning behind it.
 
+## Additional documentation
+
+The topics that used to have a page each are answered in
+[`docs/DOTNET_PORT_HANDOFF.md`](docs/DOTNET_PORT_HANDOFF.md), which is kept current. One page
+that matches the code beats a dozen that quietly stop matching it -- which is what happened to
+the set this replaces.
+
+| Question | Where it is answered |
+|---|---|
+| How files are found, and why a full sweep rather than file-system events alone | [Handoff, §7 Continuous monitoring](docs/DOTNET_PORT_HANDOFF.md#7-continuous-monitoring-as-built) |
+| When a file counts as finished, and why two independent signals are required | [Handoff, §6 Correctness](docs/DOTNET_PORT_HANDOFF.md#correctness) |
+| How an upload is verified, and what *Verified (server MD5)* claims that *Uploaded* does not | [Handoff, §5 Verified server facts](docs/DOTNET_PORT_HANDOFF.md#5-verified-server-facts--do-not-re-discover-these) |
+| What checksums are cached, where, and what the fast path avoids re-reading | [Handoff, §6 Correctness](docs/DOTNET_PORT_HANDOFF.md#correctness) |
+| What monitoring costs on an instrument computer, measured | [Handoff, §7 What it costs](docs/DOTNET_PORT_HANDOFF.md#what-it-costs) and [§6 Resource use](docs/DOTNET_PORT_HANDOFF.md#resource-use-on-an-instrument-computer) |
+| Which project a given piece of logic belongs in | [Handoff, §3 Layout](docs/DOTNET_PORT_HANDOFF.md#3-layout) and [`CLAUDE.md`](CLAUDE.md#layout) |
+| Running the tests, and the suites that need a server or a share | [`CLAUDE.md`](CLAUDE.md#building-and-testing) and [Handoff, §2](docs/DOTNET_PORT_HANDOFF.md#opt-in-test-suites) |
+| Driving the transport by hand, without the UI | [`pbctl`](docs/DOTNET_PORT_HANDOFF.md#pbctl-the-headless-harness) |
+| How a release is built and published | [`release-notes/README.md`](release-notes/README.md) |
+| Conventions to follow when changing this code | [`CLAUDE.md`](CLAUDE.md#house-style) |
+
+Builds and releases are produced by [`ci.yml`](.github/workflows/ci.yml) and
+[`release.yml`](.github/workflows/release.yml); pushing a `v*` tag is what creates a GitHub
+Release, and nothing is built locally for distribution.
+
 ## Support
 
 1. **Logs** - `%LOCALAPPDATA%\PanoramaBridge\logs`, or **Help → Open log folder**. Credentials are
