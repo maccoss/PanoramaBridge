@@ -106,7 +106,11 @@ public sealed class SettingsViewModelTests
         saved.RecentRemotePaths.ShouldContain(AppSettings.MacCossFilesPath, "the lab default stays available");
     }
 
-    [Fact]
+    // SkippableFact, not Fact: Skip.If throws a SkipException that only [SkippableFact] turns
+    // into a skip. Under a plain [Fact] it is a failure, and one that hides on any machine that
+    // happens to have a network drive mapped -- which is every machine this was written on, and
+    // no build agent.
+    [SkippableFact]
     public async Task A_mapped_drive_is_recorded_as_the_share_it_stands_for()
     {
         // A drive letter belongs to one Windows sign-in, so storing one makes the monitored

@@ -274,6 +274,13 @@ not rediscover them the hard way.
   does, the capability exists and only the mechanism is unknown, and `DavController.java` in
   `LabKey/platform` is public.
 
+- **`Skip.If` under a plain `[Fact]` is a failing test, not a skipped one.** Xunit.SkippableFact
+  works by throwing, and only `[SkippableFact]` catches that and reports a skip. The mistake is
+  invisible on any machine where the condition is false -- a test guarded by "skip if there is no
+  mapped network drive" passes on every developer machine in this lab, because they all have
+  three, and fails on every build agent, because none do. It reached CI as part of the v26.1.0
+  tag. Grep for `Skip.If` and check the attribute above each one.
+
 - **`AddLogging` filters at Information before Serilog ever sees the event.** There was a
   `LoggingLevelSwitch` wired up for the "Verbose logging" toggle, and a toggle in the UI, and
   nothing that connected them — and even once connected, the Microsoft.Extensions.Logging
