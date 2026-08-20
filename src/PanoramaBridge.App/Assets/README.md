@@ -39,6 +39,33 @@ square.resize((256, 256), Image.LANCZOS).save(
     'panoramabridge.ico', format='ICO', sizes=[(s, s) for s in SIZES])
 ```
 
-The fill deliberately reaches the inside of the ring, through the gap where the Space Needle
-crosses it, so the emblem sits on transparency rather than on a white tile. That is what stops it
-showing as a white square on a dark taskbar.
+## Why the disc is opaque
+
+An earlier version left the inside of the ring transparent, which looked clean in isolation and
+was wrong in use: the blue skyline sat straight on the taskbar colour and disappeared against a
+dark one. The emblem now sits on an opaque **white disc**, clipped to the ring rather than to the
+whole tile.
+
+White rather than a grey matched to the Windows 11 title bar (`#F2F3F4`, sampled from a
+screenshot): an icon carries one fixed colour and cannot follow the theme, and white is the one
+that survives a dark taskbar. On a light taskbar the yellow ring supplies the edge, so the disc
+disappearing into the background does not matter. A square white tile was tried too and is worse
+-- a round emblem in a hard white box, heavy against a dark bar.
+
+To produce the disc, find the yellow ring's extent and clip to it:
+
+```python
+xs, ys = [], []
+for y in range(0, h, 2):
+    for x in range(0, w, 2):
+        r, g, b = rgb.getpixel((x, y))
+        if r > 200 and 130 < g < 215 and b < 120:   # the ring's yellow
+            xs.append(x); ys.append(y)
+
+cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+radius = max(max(xs) - min(xs), max(ys) - min(ys)) / 2
+```
+
+The ring is what defines the circle, not the bounding box of everything drawn: the Space Needle
+pokes out above the ring, and it is kept opaque so the tip is not clipped off. Draw the disc at
+four times the size and downsample it, or the rim is visibly stepped.
