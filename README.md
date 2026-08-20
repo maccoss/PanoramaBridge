@@ -13,7 +13,8 @@ A Python Qt6 application for monitoring local directories and automatically tran
 - **[Windows Build](build_scripts/BUILD_WINDOWS.md)** - Create standalone executable
 - **[GitHub Actions](build_scripts/GITHUB_ACTIONS.md)** - Automated builds and releases
 - **[Technical Docs](docs/README.md)** - Architecture and implementation details
-- **[AI Agents Guide](AGENTS.md)** - Guide for AI-assisted development
+- **[AI Development Guide](CLAUDE.md)** - Conventions for AI-assisted development
+- **[.NET Port Handoff](docs/DOTNET_PORT_HANDOFF.md)** - Current state of the C# rewrite
 
 
 ## Features
