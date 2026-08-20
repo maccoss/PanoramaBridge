@@ -43,12 +43,6 @@ public sealed class AppPaths
     /// <summary>Upload ledger, hash cache and queue state.</summary>
     public string StateDatabase { get; }
 
-    /// <summary>The legacy Python configuration, imported once on first run if present.</summary>
-    public static string LegacyConfigFile => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".panoramabridge",
-        "config.json");
-
     /// <summary>Creates the directories that must exist before anything else runs.</summary>
     public void EnsureCreated()
     {

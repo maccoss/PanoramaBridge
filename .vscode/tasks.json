@@ -2,82 +2,56 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Run All Tests",
+            "label": "build",
             "type": "shell",
-            "command": ".venv/bin/python",
-            "args": [
-                "-m",
-                "pytest",
-                "tests/",
-                "-v"
-            ],
-            "group": {
-                "kind": "test",
-                "isDefault": true
-            },
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "shared",
-                "showReuseMessage": true,
-                "clear": false
-            },
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "problemMatcher": []
+            "command": "dotnet",
+            "args": ["build", "PanoramaBridge.sln", "-c", "Debug"],
+            "group": { "kind": "build", "isDefault": true },
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": "$msCompile"
         },
         {
-            "label": "Run WebDAV Tests",
+            "label": "test",
             "type": "shell",
-            "command": ".venv/bin/python",
-            "args": [
-                "-m",
-                "pytest",
-                "tests/test_webdav_client.py",
-                "-v"
-            ],
-            "group": "test",
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "shared",
-                "showReuseMessage": true,
-                "clear": false
-            },
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "problemMatcher": []
+            "command": "dotnet",
+            "args": ["test", "PanoramaBridge.sln", "-c", "Debug"],
+            "group": { "kind": "test", "isDefault": true },
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": "$msCompile"
         },
         {
-            "label": "Run Tests with Coverage",
+            "label": "test (current file's class)",
             "type": "shell",
-            "command": ".venv/bin/python",
+            "command": "dotnet",
             "args": [
-                "-m",
-                "pytest",
-                "tests/",
-                "--cov=panoramabridge",
-                "--cov-report=html:htmlcov",
-                "--cov-report=term-missing",
-                "-v"
+                "test",
+                "PanoramaBridge.sln",
+                "-c",
+                "Debug",
+                "--filter",
+                "FullyQualifiedName~${fileBasenameNoExtension}"
             ],
             "group": "test",
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "shared",
-                "showReuseMessage": true,
-                "clear": false
-            },
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "problemMatcher": []
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": "$msCompile"
+        },
+        {
+            // Matches what CI builds and what vpk packs, so packaging breakage shows up here
+            // rather than at release time.
+            "label": "publish (release, self-contained)",
+            "type": "shell",
+            "command": "dotnet",
+            "args": [
+                "publish",
+                "src/PanoramaBridge.App/PanoramaBridge.App.csproj",
+                "-c", "Release",
+                "-r", "win-x64",
+                "--self-contained", "true",
+                "-p:PublishReadyToRun=true",
+                "-o", "artifacts/publish"
+            ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": "$msCompile"
         }
     ]
 }
