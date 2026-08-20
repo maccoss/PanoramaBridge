@@ -12,7 +12,7 @@
     tag v<version> disagrees with this property. Bump it here, commit, then tag.
   -->
   <PropertyGroup>
-    <Version>26.1.0-rc3</Version>
+    <Version>26.1.0</Version>
     <Product>PanoramaBridge</Product>
     <Company>MacCoss Lab, University of Washington</Company>
     <Authors>MacCoss Lab, University of Washington</Authors>

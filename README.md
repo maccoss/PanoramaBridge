@@ -1,178 +1,137 @@
 # PanoramaBridge
 
-[![PyPI version](https://badge.fury.io/py/panoramabridge.svg)](https://badge.fury.io/py/panoramabridge)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![CI](https://github.com/maccoss/PanoramaBridge/actions/workflows/ci.yml/badge.svg)](https://github.com/maccoss/PanoramaBridge/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/maccoss/PanoramaBridge?label=release)](https://github.com/maccoss/PanoramaBridge/releases/latest)
+[![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4)](https://dotnet.microsoft.com/download/dotnet/8.0)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D6)](https://github.com/maccoss/PanoramaBridge/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/maccoss/PanoramaBridge/total)](https://github.com/maccoss/PanoramaBridge/releases)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-A Python Qt6 application for monitoring local directories and automatically transferring files to Panorama WebDAV servers. This tool provides intelligent file monitoring with secure credential storage, robust upload capabilities, and advanced features specifically designed for mass spectrometer workflows.
+Watches the folder your mass spectrometer writes into and transfers each acquisition to a
+Panorama (LabKey) server as it finishes, confirming every upload against the checksum the server
+computes over the bytes it stored.
+
+A native Windows application built on .NET 8 and WPF. It runs on the instrument computer, so it
+is written to stay out of the way: watching a folder costs about 0.026% of one processor core.
+
+> **Upgrading from the Python version?** See [Moving from the Python application](#moving-from-the-python-application).
+> The Python source is still in this repository but is no longer developed.
 
 ## Quick Links
 
-- **[Installation](#installation)** - Get started with pip or from source
-- **[User Guide](#user-interface)** - How to use the application
-- **[Windows Build](build_scripts/BUILD_WINDOWS.md)** - Create standalone executable
-- **[GitHub Actions](build_scripts/GITHUB_ACTIONS.md)** - Automated builds and releases
-- **[Technical Docs](docs/README.md)** - Architecture and implementation details
-- **[AI Development Guide](CLAUDE.md)** - Conventions for AI-assisted development
-- **[.NET Port Handoff](docs/DOTNET_PORT_HANDOFF.md)** - Current state of the C# rewrite
+- **[Download the installer](https://github.com/maccoss/PanoramaBridge/releases/latest)** - per-user install, no administrator rights
+- **[Release notes](release-notes/)** - what changed, per version
+- **[.NET port handoff](docs/DOTNET_PORT_HANDOFF.md)** - architecture, measurements, and the traps that cost real time
+- **[AI development guide](CLAUDE.md)** - conventions for working on this codebase
 
+## Installing
 
-## Features
+Download `MacCossLab.PanoramaBridge-win-Setup.exe` from the
+[latest release](https://github.com/maccoss/PanoramaBridge/releases/latest) and run it. It
+installs for the current user only and needs no administrator rights, so it works on a
+locked-down instrument PC. Nothing else has to be installed first.
 
-### Core Features
-- **Intelligent File Monitoring**: OS-level file system events with optional backup polling
-- **WebDAV Integration**: Seamless integration with Panorama WebDAV servers
-- **Secure Credential Storage**: Uses system keyring for safe password storage
-- **Chunked Upload**: Efficient handling of large files with progress tracking
-- **Directory Structure Preservation**: Maintains folder hierarchy on remote server
-- **Remote Directory Browser**: Navigate and create folders on the WebDAV server
+The build is not yet code-signed, so SmartScreen warns on first run: choose **More info**, then
+**Run anyway**. `SHA256SUMS.txt` is published with every release if you would like to check the
+download.
 
-### Advanced Features
-- **Smart Locked File Handling**: Automatically detects and retries locked files from mass spectrometers
-- **Checksum Caching**: Dramatic performance improvements (up to 1700x faster for unchanged files)
-- **Upload History Tracking**: Persistent tracking of successfully uploaded files with integrity verification
-- **Remote File Integrity Verification**: Comprehensive verification system that ensures all local files are properly uploaded to the remote server, with intelligent conflict resolution for file differences
-- **Progress Indication**: Real-time progress bars with elapsed time and countdown timers
-- **Windows Native Support**: Optimized .venv-win virtual environment for better file system event detection
-- **Configurable Retry Logic**: Customizable wait times and retry attempts for locked files
+Installed copies update themselves: they check at startup and every four hours, download in the
+background, and apply on the next restart. An upload in progress is never interrupted.
 
-### Performance & Reliability
-- **OS Event-Driven Monitoring**: Immediate file detection without polling overhead
-- **Intelligent Conflict Resolution**: Smart file comparison and conflict handling with user choice
-- **Remote Integrity Verification**: Automatically verifies and resolves missing or changed remote files
-- **Persistent State Management**: Maintains upload history across application restarts
-- **Comprehensive Logging**: Detailed logs with menu-based access for troubleshooting
-- **Cross-platform**: Works on Windows, Linux, and macOS (Windows native recommended)
+A portable `.zip` is published as well, for machines where installing is not an option.
 
-## Requirements
+## Getting started
 
-- **Python 3.9 or later**
-- **Operating System**: Windows (recommended), Linux, or macOS
+1. **Remote Settings** - enter your Panorama server and an API key (User menu → External Tool
+   Access on Panorama), then **Test connection**. It reports whether the destination is writable
+   before you start a six-hour transfer rather than after.
+2. **Local Monitoring** - choose the folder your instrument writes into and the file extensions
+   to transfer.
+3. **Start monitoring** - that is all. Files are transferred as they finish being written.
 
-### Python Dependencies
+**Upload now** does a single pass instead, for anyone who would rather drive it by hand.
 
-```text
-PyQt6>=6.4.0
-watchdog>=3.0.0
-requests>=2.31.0
-keyring>=24.0.0
-keyrings.alt>=5.0.0
-```
+## What it does
 
-## Installation
+- **Watches continuously.** The folder is walked in full every fifteen minutes, and that walk is
+  what guarantees nothing is missed. Windows change notifications are used as well so a file
+  usually starts within seconds, but they are treated as a bonus: they are dropped under load and
+  are server-dependent over a network share.
+- **Never uploads a half-written file.** A file transfers only once nothing else holds it open
+  *and* its size has stopped changing. Both are required: an instrument often leaves its output
+  readable while still writing, and Windows does not keep a file's recorded size up to date while
+  a write handle is open.
+- **Never overstates what it checked.** Every upload is confirmed against Panorama's own
+  checksum. The Uploads tab distinguishes *Verified (server MD5)* from *Uploaded — size only*
+  from *not verified*.
+- **Leaves a record with the data.** A small `.md5` file is written beside each upload holding
+  its checksum, its size and the date the instrument wrote it. The first line is what `md5sum`
+  writes, so `md5sum -c run.raw.md5` works years later with no special tooling.
+- **Keeps the collection date.** A file on Panorama shows the date it was acquired, not the date
+  it was transferred.
+- **Remembers.** The Uploads tab reads a durable record, so "did that actually get uploaded?" is
+  still answerable next week or on a rebuilt machine. It filters, searches and exports to CSV.
+- **Stays out of the way.** Transfers run at below-normal priority so an acquisition always wins.
 
-### Prerequisites: Install Python
+`pbctl`, a command-line harness, ships alongside for scripted transfers and for measuring what
+monitoring costs on a given machine.
 
-PanoramaBridge requires Python 3.9 or later. If you don't have Python installed:
+## Moving from the Python application
 
-**Windows:**
+Install the new application alongside the old one rather than over it. They keep entirely
+separate settings and history, so you can run the Python version until you are satisfied.
 
-1. Download Python from [python.org/downloads](https://www.python.org/downloads/)
-2. Run the installer
-3. **Important:** Check the box "Add Python to PATH" during installation
-4. Click "Install Now"
-5. Verify installation by opening Command Prompt or PowerShell and running:
-   ```powershell
-   python --version
-   ```
+- Settings are **not** imported. Fill in the two settings tabs once.
+- Upload history is **not** imported: the old format was a Python pickle, which cannot be read
+  safely from .NET.
+- Nothing is lost by that. Point the new application at the same folder and the same destination,
+  and its first pass recognises everything already on the server from its checksums and records
+  it as already there.
+- Application data now lives in `%LOCALAPPDATA%\PanoramaBridge\` rather than
+  `~/.panoramabridge/`.
 
-**macOS:**
-
-```bash
-# Using Homebrew (recommended)
-brew install python
-
-# Verify installation
-python3 --version
-```
-
-**Linux (Ubuntu/Debian):**
+## Building from source
 
 ```bash
-sudo apt update
-sudo apt install python3 python3-pip python3-venv
-
-# Verify installation
-python3 --version
+dotnet build PanoramaBridge.sln -c Release
+dotnet test  PanoramaBridge.sln -c Release      # no network required
+src/PanoramaBridge.App/bin/Release/net8.0-windows/PanoramaBridge.exe
 ```
 
-### Option 1: Install from PyPI (Recommended)
+Requires the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0). See
+[`CLAUDE.md`](CLAUDE.md) for house style and [`docs/DOTNET_PORT_HANDOFF.md`](docs/DOTNET_PORT_HANDOFF.md)
+for the architecture and the reasoning behind it.
 
-Once Python is installed, open a terminal (Command Prompt, PowerShell, or Terminal) and run:
+## Support
 
-```bash
-pip install panoramabridge
-```
+1. **Logs** - `%LOCALAPPDATA%\PanoramaBridge\logs`, or **Help → Open log folder**. Credentials are
+   scrubbed from them, so a log is safe to attach to a support request.
+2. **Test connection** - reports whether the server is reachable and the destination writable.
+3. **[Open an issue](https://github.com/maccoss/PanoramaBridge/issues)** - please include the
+   version from the title bar and the relevant log.
 
-Then run the application:
+### File types commonly sent to Panorama
 
-```bash
-panoramabridge
-```
+- **Mass spectrometry**: `.raw`, `.wiff`, `.wiff2`, `.mzML`, `.mzXML`
+- **Xcalibur sequences**: `.sld`
+- **Proteomics**: `.fasta`, `.csv`, `.tsv`, `.txt`
+- **Analysis results**: `.pdf`, `.xlsx`, `.zip`
 
-**Note:** On some systems you may need to use `pip3` instead of `pip`, and `python3` instead of `python`.
+---
 
-### Option 2: Install from Source
+# The Python application (retired)
 
-1. **Clone the repository:**
+> [!NOTE]
+> Everything below describes the **retired** Python/PyQt6 application, kept for reference while
+> existing installations are migrated. It is no longer developed, and the `panoramabridge` PyPI
+> package is no longer the recommended way to install. It will be removed from this repository in
+> a future release - see [`docs/PYTHON_REMOVAL_PLAN.md`](docs/PYTHON_REMOVAL_PLAN.md).
 
-```bash
-git clone https://github.com/maccoss/PanoramaBridge.git
-cd PanoramaBridge
-```
+[![PyPI version](https://badge.fury.io/py/panoramabridge.svg)](https://badge.fury.io/py/panoramabridge)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 
-2. **Create virtual environment (recommended):**
-
-**Windows (Native Performance):**
-
-```bash
-python -m venv .venv-win
-.venv-win\Scripts\activate
-```
-
-**Linux/macOS:**
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-3. **Install dependencies:**
-
-```bash
-pip install -r requirements.txt
-```
-
-4. **Run the application:**
-
-```bash
-python panoramabridge.py
-```
-
-### Option 3: Download Windows Executable
-
-Download a pre-built executable from the [Releases page](https://github.com/maccoss/PanoramaBridge/releases):
-
-1. Download `PanoramaBridge.exe`
-2. Run the executable (Windows may show a security warning - click "More info" → "Run anyway")
-3. No Python installation required
-
-
-## Quick Start
-
-1. **Launch the application**: `python panoramabridge.py`
-2. **Configure WebDAV connection**:
-   - Go to "Remote Settings" tab
-   - Enter your Panorama server URL (e.g., `https://panoramaweb.org`)
-   - Add your username and password
-   - Click "Test Connection" to verify
-3. **Set up monitoring**:
-   - Go to "Local Monitoring" tab
-   - Select directory to monitor
-   - Specify file extensions (e.g., `raw, sld, csv`)
-   - Choose remote destination folder
-4. **Start monitoring**: Click "Start Monitoring"
-5. **View progress**: Check "Transfer Status" tab for real-time updates
+Install with `pip install panoramabridge`, then run `panoramabridge`. Requires Python 3.9 or
+later and PyQt6, watchdog, requests and keyring.
 
 ## Creating a Windows Executable (Optional)
 
