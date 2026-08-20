@@ -145,6 +145,25 @@ public sealed record UploadRecord(
         && VerifyMethod == VerifyMethod.ServerMd5
         && stamp.Matches(Length, LastWriteUnixMs);
 
+    /// <summary>
+    /// True when this file is settled <em>and</em> settled at the destination it would be sent
+    /// to now.
+    /// </summary>
+    /// <remarks>
+    /// The destination has to be part of the question. A verified row proves the bytes reached
+    /// somewhere; it does not prove they reached the folder currently configured. Point the
+    /// application at a different remote path and every file needs sending again, however
+    /// thoroughly the old copy was checked.
+    /// <para>
+    /// Shared by the decision ladder's first tier and by the reconciliation sweep so the two can
+    /// not drift: the sweep deciding a file is accounted for when the ladder would not agree
+    /// means the file is silently never offered.
+    /// </para>
+    /// </remarks>
+    public bool IsSettledAt(LocalFileStamp stamp, string encodedDestination) =>
+        IsSettled(stamp)
+        && string.Equals(RemotePath, encodedDestination, StringComparison.Ordinal);
+
     /// <summary>A new row for a file that has just been discovered.</summary>
     public static UploadRecord ForNewFile(LocalFileStamp stamp, string remotePath) =>
         new(

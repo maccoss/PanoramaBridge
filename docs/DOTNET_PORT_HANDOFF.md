@@ -19,14 +19,16 @@ the Python application.
 | Stability gate | **Done, pulled forward from Phase 4** — it is the highest-risk correctness property. |
 | Resource behaviour on an instrument PC | **Done, measured.** |
 | SMB share monitoring | **Verified** against a live file server. |
-| 4 — Continuous monitoring | **Not started.** See §7. |
-| 5 — Datasets, conflict dialog, polish | Not started. |
-| 6 — Code signing, ship | Not started. |
+| 4 — Continuous monitoring | **Done, measured.** See §7 for what it is and §8 for what was left. |
+| 5 — Datasets, conflict dialog, polish | Not started. See §9. |
+| 6 — Code signing, ship | **Shipping as v26.1.0.** Code signing still outstanding; see §9. |
 
-281 tests passing, 7 skipped (opt-in SMB), CI green, warnings as errors.
+432 tests passing, 9 skipped unless the opt-in SMB suite is enabled, CI green, warnings as errors.
+Coverage: **Core 87%, App 49%, pbctl 17%**, 69% over everything hand-written.
 
-**What works today:** configure the two settings tabs, press **Upload now**, and files are
-transferred and verified. There is no automatic watching yet — that is Phase 4.
+**What works today:** configure the two settings tabs and press **Start monitoring**. The folder
+is watched, and each acquisition is transferred and verified once it has finished being written.
+**Upload now** still does a single pass for anyone who would rather drive it by hand.
 
 ---
 
@@ -34,7 +36,7 @@ transferred and verified. There is no automatic watching yet — that is Phase 4
 
 ```bash
 dotnet build PanoramaBridge.sln -c Release
-dotnet test  PanoramaBridge.sln -c Release          # 281 tests, no network needed
+dotnet test  PanoramaBridge.sln -c Release          # 432 tests, no network needed
 src/PanoramaBridge.App/bin/Release/net8.0-windows/PanoramaBridge.exe
 ```
 
@@ -54,8 +56,19 @@ pbctl mkdir     # recursive collection creation
 pbctl md5       # server-computed hash; trailing slash hashes a whole collection
 pbctl put       # upload, then verify against the server's own hash
 pbctl sync      # mirror a directory, then report what it cost
+pbctl watch     # monitor a directory until interrupted, then report what it cost the machine
 pbctl status    # what the ledger holds
 pbctl rm
+```
+
+`watch` is also the measuring instrument. It runs the same monitor the window runs with no XAML
+in the way, so its processor time is monitoring's processor time and nothing else's, and it
+prints that on the way out. To measure the idle cost of the mechanism alone, give it a filter
+that matches nothing: the folder is still walked in full on every sweep, but nothing is offered
+and the server is never contacted, so no credential is needed either.
+
+```bash
+pbctl watch <dir> /_webdav/unused/ --ext .no-such-extension --every 1
 ```
 
 ### Opt-in test suites
@@ -86,11 +99,17 @@ release-notes/               one file per version; becomes the GitHub Release bo
 src/PanoramaBridge.Core/     all logic. No UI dependency. net8.0
 src/PanoramaBridge.App/      WPF shell. net8.0-windows
 src/PanoramaBridge.Cli/      pbctl
-src/PanoramaBridge.Tests/    xUnit
+src/PanoramaBridge.Tests/    xUnit. net8.0-windows: see below
 ```
 
 `Core` is deliberately UI-free, which is why the progress aggregator and the readiness gate live
 there rather than in the view models: their behaviour is testable without a dispatcher.
+
+The test project targets **`net8.0-windows` with `UseWPF`**, so it can reference the shell and
+the harness and test them directly. That makes the suite Windows-only, which it already was in
+practice -- `WindowsCredentialStore` and `NetworkPaths` both P/Invoke -- and CI runs
+`windows-latest`. Note the consequence: `UseWPF` drops `System.IO` and `System.Net.Http` from the
+implicit usings, so the test project puts them back explicitly. See §6.
 
 ### The parts that carry the design
 
@@ -100,12 +119,18 @@ there rather than in the view models: their behaviour is testable without a disp
 | `WebDav/PathSafety` | Refuses names the server would mangle; resolves a local file to its destination and asserts containment. |
 | `WebDav/WebDavClient` | Recursive MKCOL, `?method=json`, `?method=md5sum`, streaming PUT with a stall watchdog, retry with jitter. |
 | `Monitoring/FileStabilityTracker` | Decides when a file has stopped being written. **The highest-risk correctness property in the application.** |
-| `Monitoring/ReadinessGate` | Puts that decision in the path. Nothing reaches the engine without passing through it. |
+| `Monitoring/ReadinessGate` | Puts that decision in the path. Nothing reaches the engine without passing through it — including **Upload now**, which used to go round it. |
+| `Monitoring/ReconciliationScanner` | The periodic walk. The mechanism monitoring rests on, and the only thing that guarantees a file is found. |
+| `Monitoring/DirectoryMonitor` | `FileSystemWatcher`, wrapped so it is allowed to fail. An accelerator, never the mechanism. |
+| `Monitoring/ContinuousMonitor` | Puts those two together and feeds the gate. |
+| `Monitoring/CandidateFilter` | Which files count as data. One filter, so the sweep and the watcher cannot disagree. |
 | `Transfer/UploadDecisionService` | The three-tier "does this need uploading?" ladder. |
+| `Transfer/ChecksumSidecar` | The `.md5` written beside every upload. The only record of a file's hash, and of the date it was acquired, that travels with the data rather than living in a database on one instrument PC. `md5sum -c` reads it unmodified. |
 | `Transfer/TransferCoordinator` | Owns all mutable transfer state, a bounded `Channel`, and N workers. |
 | `Transfer/TransferProgressAggregator` | Keeps the UI off the engine's back, and lets the UI timer stay stopped while idle. |
 | `Storage/SqliteStateStore` | The upload ledger and hash cache. |
 | `Infrastructure/ResourceGovernor` | Keeps the process out of the instrument's way. |
+| `Infrastructure/NetworkPaths` | Turns a mapped drive letter back into the share it stands for, because the folder picker returns whatever was clicked and a drive letter belongs to one sign-in. |
 
 ---
 
@@ -131,6 +156,7 @@ All confirmed with real HTTP against panoramaweb.org (LabKey 26.7).
 | Fact | Consequence |
 |---|---|
 | `?method=md5sum` returns a server-computed MD5, per file **or per whole collection** (flat, subdirectories omitted) | The basis of verification. One request per folder. |
+| A collection hash is **computed on demand, not cached**: the folder holding this lab's test `.raw` files, about 19 GB, took **30 s** | Roughly 600 MB/s of server-side hashing. The first transfer into a folder full of large files therefore waits half a minute before anything moves, once per folder per session. A 100 GB folder would be two to three minutes. |
 | `?method=json` carries `canRead/canUpload/canEdit/canDelete/canRename` and an `options` verb list | The folder browser can refuse a read-only destination up front. |
 | **`Content-Range` on PUT is not implemented** | No partial or resumable upload. One streaming PUT per file, any size. A retry restarts from zero. |
 | MKCOL is **single-level**: 409 on a nested path, 405 when it already exists | Recursive creation, treating 405 as success. |
@@ -139,6 +165,8 @@ All confirmed with real HTTP against panoramaweb.org (LabKey 26.7).
 | `Expect: 100-continue` is honoured | A rejected credential surfaces before gigabytes are sent. |
 | Basic only; **Digest never offered** | API key is `Basic base64("apikey:" + key)`. |
 | No CSRF requirement with stateless Basic and `UseCookies = false` | Keeps the transport simple. |
+| **`X-LABKEY-Last-Modified` sets the stored file's modification time.** Epoch milliseconds, as a request header or a query parameter, honoured on PUT and on the multipart POST the file browser uses | This is how an acquisition keeps the date the instrument wrote it. Sent on every upload. Works on a replacement too, and does not disturb the hash. |
+| Nothing standard does that job: `PROPPATCH` answers **405** unless the user agent looks like Windows Explorer, and `X-OC-Mtime` and a `Last-Modified` request header are both accepted with 201 and ignored | Measuring only the standard mechanisms produces a confident and wrong conclusion that the date cannot be preserved. It was reached here, and the evidence against it was a file in the Panorama UI showing its real acquisition date. When the server appears not to support something the web interface plainly does, read `DavController.java` -- LabKey Server is open source. |
 | Both `@files` and `%40files` resolve | `@` is sent literally, matching LabKey's own hrefs. |
 | Lab destination is `/_webdav/MacCoss/maccoss/@files/…` | `@files` hangs off the **`maccoss` container**, not the project root. |
 
@@ -187,6 +215,82 @@ not rediscover them the hard way.
   still matches what the server holds, nobody else touched it. Only an unaccountable remote copy
   is a real conflict. Tested both ways.
 
+- **A gate only guarantees anything if every path goes through it.** `ScanAndUploadAsync`
+  enumerated the folder and queued what it found, so **Upload now** could send a partially
+  written file — and during an acquisition is exactly when someone presses it. The gate had
+  existed and been tested for weeks; nothing in it was wrong. Fixed by routing the manual scan
+  through `PumpAsync` as well. Whenever a new way of discovering files is added, this is the
+  question to ask about it first.
+
+- **Not looking at a locked file for a long stretch is a latency bug, not a saving.** The design
+  originally deferred a file another process held open for thirty minutes before looking again,
+  which is what the setting on the Local Monitoring tab said to do. It was built, tested, and
+  then failed the first time the real window ran: a file copied into the watched folder was put
+  down mid-write and nothing brought it back, because **nothing announces that a handle has been
+  closed**. There is no notification for it and the file does not change, so the only way to find
+  out is to look. What the long wait bought was two file opens per thirty seconds.
+
+  The setting was removed rather than reinterpreted — a setting that does nothing is exactly what
+  this codebase criticises the Python version for. A file in use is now re-examined on the gate's
+  ordinary backoff, up to `LockedFileRetryIntervalSeconds`.
+
+  The general lesson is worth more than the specific fix: **a component that stops observing
+  cannot be woken by something that produces no event.** Anything that skips work here has to be
+  checked against what would restart it.
+
+- **Giving up on a locked file must not mean forgetting it.** After `LockedFileMaxRetries`
+  consecutive checks that all find the file in use, it stops being watched closely and goes back
+  to the periodic sweep, which offers it again on its next pass. Read as "stop asking so often",
+  never as "abandon" — plenty of acquisitions run longer than any close-watching budget.
+
+- **A `Dispose` that is not idempotent takes the application down on the way out.** The shell is
+  disposed twice on a normal exit -- once by the window as it closes, once by the service
+  container, which owns it too -- and the second `CancellationTokenSource.Cancel()` threw. The
+  exception escaped `Main`, so closing the application produced a dialog reading **"PanoramaBridge
+  could not start."** It was reported from a real install; a `Stop-Process` in a test script never
+  runs `OnClosed` and never reaches container disposal, so no amount of UI Automation had found
+  it. `Dispose` is required to tolerate being called twice. Both this and `TransferService` now do.
+
+  Also worth knowing: **a service that implements only `IAsyncDisposable` makes a synchronously
+  disposed container throw** rather than skip it. `Main` returning disposes the container
+  synchronously, so anything in the container needs `IDisposable` too.
+
+- **Invalidating the destination snapshot after every upload does not scale.** It looks obviously
+  right -- the folder changed, so drop what we knew about it -- and it made a batch of uploads
+  quadratic in the size of the destination, because refetching includes a collection hash the
+  server computes over every byte in the folder. A hundred files into a folder that is filling up
+  meant a hundred passes over an ever-larger directory. Nothing about it is visible in a test
+  against an empty destination, which is why the cost test seeds one first.
+  `RemoteSnapshotCache.Record` folds the upload into what is already cached instead: the name,
+  the length and the hash are all in hand by then, and the server has just confirmed the hash.
+
+- **"The server does not support it" is a conclusion worth double-checking against the server's
+  own web interface.** Four mechanisms for preserving a file's modification time were measured
+  against panoramaweb.org, all four failed, and the conclusion drawn -- that Panorama cannot do
+  it -- was wrong. LabKey has its own header, `X-LABKEY-Last-Modified`, which is what its file
+  browser sends. The measurements were each individually correct; the inference from them was
+  not, because a negative result over standard mechanisms says nothing about a proprietary one.
+  The cheap check that would have caught it: **does the product's own UI do the thing?** If it
+  does, the capability exists and only the mechanism is unknown, and `DavController.java` in
+  `LabKey/platform` is public.
+
+- **`AddLogging` filters at Information before Serilog ever sees the event.** There was a
+  `LoggingLevelSwitch` wired up for the "Verbose logging" toggle, and a toggle in the UI, and
+  nothing that connected them — and even once connected, the Microsoft.Extensions.Logging
+  pipeline dropped everything below Information first. So debug logging was unobtainable by any
+  means. This cost an afternoon on the bug above: the monitor looked completely silent when it
+  was in fact working exactly as instructed. `SetMinimumLevel(LogLevel.Trace)` hands filtering to
+  Serilog's switch, which is the only thing the toggle can control.
+
+- **A directory raises the same watcher events a file does.** A folder named `dataset.raw` passes
+  an extension filter, and handing it to the gate means opening it, failing, and telling the user
+  their file could not be read. Checked with `File.Exists` before anything is reported.
+
+- **Instrument and copy software rename into place.** A file written under a working name and
+  renamed on completion arrives as `Renamed`, not `Created`. Subscribing only to creations means
+  every such file waits for the next sweep, which looks like monitoring being slow rather than
+  broken.
+
 ### Resource use on an instrument computer
 
 - **`PROCESS_MODE_BACKGROUND_BEGIN` is actively harmful here.** It looks like exactly the right
@@ -200,11 +304,34 @@ not rediscover them the hard way.
   eliminated.** The transfer grid's 5 Hz dispatcher timer ran unconditionally; it now starts only
   when the aggregator raises `WorkAppeared`.
 
+- **Monitoring adds one recurring wait, and that is the whole budget.** The reconciliation
+  interval is the only timer in it. The readiness gate blocks on an empty channel rather than
+  polling, and the watcher's duplicate suppression is a comparison made when an event arrives
+  rather than a window that has to be waited out. Both were built that way on purpose, and both
+  are asserted in tests.
+
+- **Enumerating a network folder is not like enumerating a local one, and the difference is
+  three orders of magnitude.** Measured below. This is why the sweep filters against the ledger
+  before anything reaches the gate, and why `ReconciliationScanner` walks with `DirectoryInfo`
+  rather than `Directory.EnumerateFiles` — see the next entry.
+
+- **`Directory.EnumerateFiles` costs a second stat per file.** It yields paths, so anything
+  wanting the size has to open a `FileInfo` and ask, which over SMB is a second round trip per
+  file. `DirectoryInfo.EnumerateFiles` yields `FileInfo` objects already populated from what the
+  directory walk returned, so size and modification time are free. On a 35,000-file share that is
+  the difference between one walk and two.
+
 Measured before → after: idle **0.31% → 0.026%** of one core, **135 MB → 21 MB**, 24 → 14 threads.
 Transferring 128 MB costs 6.9% of one core. Those numbers are from a **32-core** machine; a
 4-core instrument PC will show roughly 8× the whole-machine percentage.
 
 ### Build and tooling
+
+- **`UseWPF` drops `System.IO` and `System.Net.Http` from the implicit usings**, because
+  `System.IO.Path` collides with `System.Windows.Shapes.Path`. That bites the moment a project
+  gains `UseWPF` -- retargeting the test project broke fifteen files at once, all of them
+  complaining about `HttpRequestMessage` and `Stream`. In `App` the right fix is a per-file
+  import; in the test project, which draws nothing, they are simply put back project-wide.
 
 - **WPF omits `System.IO` from implicit usings on purpose**, because `System.IO.Path` collides
   with `System.Windows.Shapes.Path`. Import it per file; adding it project-wide reintroduces the
@@ -242,65 +369,150 @@ Two of these mattered as much as product bugs:
 
 ---
 
-## 7. Next: Phase 4, continuous monitoring
+## 7. Continuous monitoring, as built
 
-The stability gate it depends on already exists and is tested. What is missing is the thing that
-feeds it.
+Sweep-first, as planned. `ReconciliationScanner` walks the tree and is the only thing that
+guarantees a file is found; `DirectoryMonitor` wraps `FileSystemWatcher` and is allowed to fail
+silently. `ContinuousMonitor` runs both and feeds `ReadinessGate`, which feeds the engine.
 
-**Build it sweep-first.** The periodic directory sweep is the mechanism; `FileSystemWatcher` is a
-pure accelerator that is allowed to fail silently. This is not defensive over-engineering — it is
-what the SMB measurements showed: notifications are server-dependent, and the server tested
-delivered **three events per new file**, so debouncing is required even when they do work.
+```
+DirectoryMonitor  ─┐
+                   ├─ Channel<GateCandidate> ─ ReadinessGate ─ TransferCoordinator ─ Panorama
+ReconciliationScanner ─┘
+```
 
-Concretely:
+What each piece does, and the parts that are not obvious:
 
-1. `DirectoryMonitor` — `FileSystemWatcher` with `InternalBufferSize = 65536`, **subscribing to
-   `Error`**: on `InternalBufferOverflowException`, log, recreate, and trigger a full sweep. The
-   Python version had no `Error` handler at all and lost events silently under load.
-2. `ReconciliationScanner` — every `ReconcileMinutes` (default 15) and at startup, enumerate with
-   `RecurseSubdirectories`, `IgnoreInaccessible`, and `AttributesToSkip` including `ReparsePoint`
-   (symlink loops), diffed against the ledger by `(path, size, mtime)`.
-3. Feed both into `ReadinessGate`, then the coordinator. The gate already backs off to 30 s while
-   nothing changes and resets the moment something moves.
-4. Locked-file retry policy wired to the engine, using the settings that already exist.
-5. **Re-measure idle CPU with monitoring running, and on a share.** Enumerating a network folder
-   every 15 minutes is a different cost profile from a local disk, and idle cost is the one thing
-   the user has been explicit about. Do not assume it carried over.
+- **`ReconciliationScanner`** walks with `RecurseSubdirectories`, `IgnoreInaccessible` and
+  `AttributesToSkip` including `ReparsePoint`, and drops anything the ledger already settles
+  *before* it reaches the gate. That filter is what keeps the sweep affordable: without it, every
+  file in the tree would be opened every quarter of an hour, on the disk an instrument is writing
+  to. A folder it cannot read is reported, not thrown — an unmounted share is ordinary here, and
+  the next sweep picks the folder up when it comes back.
 
-After that: dataset folders (`AcquisitionDetector`, atomic `.d` upload, collection-level
-verification), the conflict dialog, `LegacyConfigImporter`, then signing and ship.
+- **`DirectoryMonitor`** subscribes to `Error`, and on `InternalBufferOverflowException` logs,
+  rebuilds the watch and asks for a full sweep. It also subscribes to `Renamed`, and suppresses
+  repeats of the same path within a second — the measured share sends three notifications per
+  file. The suppression is a comparison made when an event arrives, not a window that has to be
+  waited out, so it costs nothing while idle.
+
+- **`ReadinessGate.WatchAsync`** is the continuous counterpart to `PumpAsync`. It blocks on an
+  empty channel rather than polling — that is where an idle monitor sits — and it is the only one
+  of the two that ever hands a file back, because a manual scan has someone waiting on it and
+  stops at its own deadline instead.
+
+- **`LockedFilePolicy`** carries the two settings under "Files held open by an instrument". Both
+  of the things that are load-bearing about it are in §6: it never stops looking at a file in
+  use, and handing one back to the sweep is not the same as abandoning it.
+
+`ScanAndUploadAsync` was rebuilt on the same two pieces, which closed a real defect — see §6.
+
+### What it costs
+
+Measured with `pbctl watch` on this 32-core machine, over five minutes, sweeping **every minute**
+— fifteen times more often than the default, so these are pessimistic:
+
+| | Local folder, 32 files | SMB share, 35,551 files |
+|---|---|---|
+| One sweep | 0–2 ms | 16.2, 26.3, 37.5, 29.1 s |
+| Processor | 0.078 s = **0.026% of one core** | 1.109 s = **0.37% of one core** |
+| Working set | 38.5 → 39.3 MB | 51.2 → 61.4 MB |
+| Threads | 15 | 15 |
+
+The local figure is the same **0.026%** the application idled at *before* monitoring existed, so
+the mechanism itself costs nothing measurable.
+
+The share figure is the one to think about. Walking 35,000 files over SMB takes **tens of
+seconds**, so at a one-minute interval it is sweeping about half the time — and even then it is
+0.37% of one core, because almost all of that is spent waiting on the network rather than on the
+processor. Per sweep it works out at roughly a quarter-second of processor time; at the default
+fifteen-minute interval that is about **0.03% of one core**, which is to say back at idle.
+
+Two things follow. The interval matters much more on a share than on a local disk, and nobody
+should point this at the root of a file server — an instrument's output folder is the intended
+target, and the Local Monitoring tab now says so.
+
+These measurements deliberately exclude the ledger lookup, because a filter matching nothing was
+used so that no credential was needed. That lookup is one indexed SQLite statement per five
+hundred files, asserted in `ReconciliationScannerTests`.
+
+Against the live share, the SMB suite also reports a sweep of a 25-file folder at 21 ms cold and
+8 ms warm, and confirms that this server does deliver change notifications — three per file, as
+before.
+
+### What the real window does
+
+Driven through UI Automation, watching a folder with the reconciliation interval turned down to
+one minute so several sweeps fit in a run:
+
+```
+23:01:33  Noticed a change to ...\monitored-run.raw          <- the file starts arriving
+23:01:34  Noticed a change to ...\monitored-run.raw          <- the repeat, one second later
+23:01:46  monitored-run.raw has settled; handing it to the transfer engine
+23:01:46  monitored-run.raw: Upload (decided at tier RemoteSnapshot) - Not present on the server
+23:01:47  Uploaded .../monitor-check/monitored-run.raw (786432 bytes) in 0.2s
+23:03:44  Swept ...: 1 file(s) examined, 0 offered, 1 already settled, in 3 ms
+23:04:44  Swept ...: 1 file(s) examined, 0 offered, 1 already settled, in 0 ms
+23:05:44  Swept ...: 1 file(s) examined, 0 offered, 1 already settled, in 0 ms
+```
+
+The last three lines are the steady state: the sweep keeps running, finds the file, recognises it
+from the ledger, and asks the server nothing at all.
 
 ---
 
-## 8. Open items and pending decisions
+## 8. Next: Phase 5
+
+1. **Dataset folders.** `AcquisitionDetector`, atomic `.d` and Waters `.raw` directory upload,
+   collection-level verification. `CandidateFilter` explicitly does not handle these: the
+   question is when a whole folder is complete, not whether one file inside it matches, so they
+   become transfer items of their own rather than a filter rule.
+2. **The conflict dialog.** The ledger already records `Conflict`, and the sweep deliberately
+   leaves such a file alone until a person or a local change resolves it. Nothing yet asks.
+3. **`LegacyConfigImporter`**, then signing and ship.
+
+---
+
+## 9. Open items and pending decisions
 
 | Item | Notes |
 |---|---|
 | Default concurrency on a 4-core instrument PC | 3 today. If a transfer's ~1.7% of a 4-core machine is too much, drop to 1–2. Needs real hardware. |
 | Code signing | Azure Trusted Signing (~$10/mo) preferred, then SignPath Foundation (free for OSS). Needs a decision and possibly UW paperwork. |
-| Is `?method=md5sum` computed on demand or cached? | Determines whether verifying a 100 GB folder is seconds or minutes. Untested at scale. |
 | Vendor completion sentinels | Bruker `analysis.tdf`, Agilent `AcqData\`, Waters `_HEADER.TXT` — validate against real acquisitions. |
 | Concurrency ceiling panoramaweb tolerates | Start at 3; nothing has been pushed hard enough to find a limit. |
-| Python removal | Nothing deleted yet. `publish-pypi.yml` is retriggered to manual only so a .NET release cannot publish the Python package. |
-| SQLite connection-per-operation | Fine at current scale; a warm run of 38 files took ~1.4 s of fixed overhead. Worth revisiting before the reconciliation sweep touches 200k files. |
+| Python removal | Staged, and written down: [`docs/PYTHON_REMOVAL_PLAN.md`](PYTHON_REMOVAL_PLAN.md). Nothing is deleted until every instrument has run the .NET application for a month. `publish-pypi.yml` is already reduced to manual trigger so a .NET release cannot publish the Python package. |
+| SQLite connection-per-operation | Fine at current scale; a warm run of 38 files took ~1.4 s of fixed overhead. The sweep no longer reads per file — `GetManyAsync` batches five hundred paths per statement — so the 200k case is much less alarming than it was, but it has still never been run. |
+| Retrying a failed upload | The sweep re-offers a failed file until `MaxUploadAttempts`, five, and then leaves it until the file changes or someone asks. Deliberately not a user setting yet: nobody has hit the case in anger, and one more box on that tab needs to earn its place. |
+| A sweep of a very large share | 35,000 files takes tens of seconds (§7). Nothing adapts the interval to how long the last sweep took, and perhaps it should. |
+| The first transfer into a big destination folder stalls for half a minute | Now measured and understood (§5): the server hashes the whole collection on demand. It is one request per folder per session and the answer is cached afterwards, but the user sees a file sit at "Waiting" with no explanation. Worth saying so in the UI, and worth asking whether a per-file hash is cheaper for a large destination. |
+| Monitoring while a manual scan runs | Refused rather than queued. **Upload now** turns into **Check now** while monitoring, which covers the case that actually comes up. |
+| A live-server test suite | `CLAUDE.md` documented one gated on `PANORAMABRIDGE_IT_*` and it never existed; those variables are read only by `pbctl`. It matters because every fact in §5 was established by a throwaway program and nothing re-checks any of them. If LabKey changes `?method=md5sum`, the semicolon behaviour, or `X-LABKEY-Last-Modified`, this document quietly becomes wrong. |
+| `pbctl` command bodies | 3.7% covered. The parsing is now extracted and fully tested; everything below it needs a server, which is the suite above. |
+| Watching more than one folder | One monitored directory, as before. The engine and the monitor are both per-folder objects, so a second one is not structurally hard — but the settings screen, the ledger's meaning of "the base directory", and the transfer list all assume one. |
 
 ---
 
-## 9. This machine
+## 10. This machine
 
 - **Settings** already point at `C:\Users\macco\Documents\test-panoramabridge-local` →
   `/_webdav/MacCoss/maccoss/@files/test-panoramabridge/`.
 - **An API key is stored in Windows Credential Manager** under
-  `PanoramaBridge:https://panoramaweb.org`, so **Test connection** and **Upload now** work without
-  typing anything. Note that folder holds 0.9–7.3 GB `.raw` files already present on the server,
-  so a run will hash them locally to compare.
+  `PanoramaBridge:https://panoramaweb.org`, so **Test connection**, **Upload now** and **Start
+  monitoring** work without typing anything. Note that folder holds 32 files, 52 GB of them
+  0.9–7.3 GB `.raw` files already present on the server, so a first run hashes them locally to
+  compare. The ledger (`%LOCALAPPDATA%\PanoramaBridge\state.db`) is currently absent, so that
+  first run has not happened yet.
 - **A live SMB server** is reachable at `\\192.168.1.199\DataAnalysis` (mapped as `Y:` in the
-  user's interactive session only — use the UNC path).
+  user's interactive session only — use the UNC path). It holds about 35,500 files, it does
+  deliver change notifications, and it sends three per new file.
+- The SMB suite runs against `\\192.168.1.199\DataAnalysis\panoramabridge-scratch`; set
+  `PANORAMABRIDGE_SMB_PATH` to it. Each test creates and removes its own subfolder.
 - Secrets are **never** committed. Integration and SMB suites read environment variables.
 
 ---
 
-## 10. House style
+## 11. House style
 
 Worth matching, because the existing code is consistent about it:
 

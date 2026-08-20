@@ -59,18 +59,24 @@ public sealed record AppSettings
     // -- Locked files -------------------------------------------------------------------------
 
     /// <summary>
-    /// How long to wait before first retrying a file another process holds open.
+    /// How often to look again at a file another process is holding open.
     /// </summary>
     /// <remarks>
-    /// Thirty minutes, because an instrument holds its output open for the whole run. Retrying
-    /// sooner just burns requests on a file that cannot be read yet.
+    /// Thirty seconds. There was once a companion setting that waited half an hour before the
+    /// first re-check, on the reasoning that an instrument holds its output open for the whole
+    /// run. It was removed: there is no way to learn that a file has been released except by
+    /// looking, so not looking simply means the file sits there after it finishes. What the long
+    /// wait saved was two file opens per thirty seconds.
     /// </remarks>
-    public int LockedFileInitialWaitMinutes { get; init; } = 30;
-
-    /// <summary>Interval between later retries of a locked file.</summary>
     public int LockedFileRetryIntervalSeconds { get; init; } = 30;
 
-    /// <summary>How many times to retry a locked file before giving up.</summary>
+    /// <summary>
+    /// How many consecutive checks may find a file in use before it stops being watched closely.
+    /// </summary>
+    /// <remarks>
+    /// Not an abandonment. The file goes back to the periodic folder check, which offers it again
+    /// on its next pass, so a run lasting all afternoon is still transferred when it finishes.
+    /// </remarks>
     public int LockedFileMaxRetries { get; init; } = 20;
 
     // -- Transfers ----------------------------------------------------------------------------
@@ -90,6 +96,17 @@ public sealed record AppSettings
 
     /// <summary>Whether to confirm every upload against the server's own hash.</summary>
     public bool VerifyUploads { get; init; } = true;
+
+    /// <summary>
+    /// Whether to write a <c>.md5</c> file beside each uploaded file on the server.
+    /// </summary>
+    /// <remarks>
+    /// On by default. It is the only record of the file's checksum that travels with the data:
+    /// the upload ledger lives on one instrument computer, and Panorama stamps an uploaded file
+    /// with the time it arrived rather than the time the instrument wrote it, so the acquisition
+    /// date survives only if something writes it down.
+    /// </remarks>
+    public bool WriteChecksumSidecars { get; init; } = true;
 
     /// <summary>
     /// Whether to stay out of the way of instrument software.
@@ -182,12 +199,12 @@ public sealed record AppSettings
             && IncludeSubdirectories == other.IncludeSubdirectories
             && StabilitySeconds == other.StabilitySeconds
             && ReconcileMinutes == other.ReconcileMinutes
-            && LockedFileInitialWaitMinutes == other.LockedFileInitialWaitMinutes
             && LockedFileRetryIntervalSeconds == other.LockedFileRetryIntervalSeconds
             && LockedFileMaxRetries == other.LockedFileMaxRetries
             && MaxConcurrentTransfers == other.MaxConcurrentTransfers
             && ConflictPolicy == other.ConflictPolicy
             && VerifyUploads == other.VerifyUploads
+            && WriteChecksumSidecars == other.WriteChecksumSidecars
             && YieldToInstrumentSoftware == other.YieldToInstrumentSoftware
             && RecordSha256 == other.RecordSha256
             && ServerUrl == other.ServerUrl
@@ -216,6 +233,7 @@ public sealed record AppSettings
         hash.Add(MaxConcurrentTransfers);
         hash.Add(ConflictPolicy);
         hash.Add(VerifyUploads);
+        hash.Add(WriteChecksumSidecars);
         hash.Add(YieldToInstrumentSoftware);
         hash.Add(RecordSha256);
         hash.Add(ServerUrl);

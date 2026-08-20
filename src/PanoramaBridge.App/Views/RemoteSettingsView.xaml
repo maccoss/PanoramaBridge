@@ -108,8 +108,13 @@
 
                     <CheckBox Content="Check every upload against the server's own hash"
                               IsChecked="{Binding VerifyUploads}" />
-                    <TextBlock Style="{StaticResource Hint}"
+                    <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,10"
                                Text="Costs one extra request per file and is the only thing that makes a green tick mean anything. Turning it off is not recommended." />
+
+                    <CheckBox Content="Write a .md5 file beside each upload"
+                              IsChecked="{Binding WriteChecksumSidecars}" />
+                    <TextBlock Style="{StaticResource Hint}"
+                               Text="A small text file next to each uploaded file, holding its checksum and the date the instrument wrote it, in the format md5sum reads. It is the only record that travels with the data: PanoramaBridge's own database stays on this computer, and Panorama stamps an uploaded file with the time it arrived rather than the time it was collected." />
                 </StackPanel>
             </GroupBox>
 

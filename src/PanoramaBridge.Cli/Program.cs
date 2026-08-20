@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using PanoramaBridge.Core.Monitoring;
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Core.Transfer;
 using PanoramaBridge.Core.WebDav;
@@ -105,6 +106,7 @@ internal static class Program
             "put" => await PutAsync(client, rest, cancellationToken).ConfigureAwait(false),
             "rm" => await RemoveAsync(client, Target(rest, 0), cancellationToken).ConfigureAwait(false),
             "sync" => await SyncAsync(client, rest, cancellationToken).ConfigureAwait(false),
+            "watch" => await WatchAsync(client, rest, cancellationToken).ConfigureAwait(false),
             "status" => await StatusAsync(cancellationToken).ConfigureAwait(false),
             _ => Unknown(command),
         };
@@ -281,41 +283,29 @@ internal static class Program
         }
 
         var localDirectory = Path.GetFullPath(args[0]);
-        var remaining = args[1..];
 
-        var concurrency = 3;
-        var verify = true;
-        var pathArguments = new List<string>();
-
-        for (var i = 0; i < remaining.Length; i++)
+        if (!CommandOptions.TryParse(args[1..], out var options, out var problem))
         {
-            switch (remaining[i])
-            {
-                case "--concurrency" when i + 1 < remaining.Length:
-                    concurrency = int.Parse(remaining[++i], System.Globalization.CultureInfo.InvariantCulture);
-                    break;
-                case "--no-verify":
-                    verify = false;
-                    break;
-                default:
-                    pathArguments.Add(remaining[i]);
-                    break;
-            }
+            Console.Error.WriteLine($"error: {problem}");
+            return 2;
         }
 
-        var destination = Target([.. pathArguments], 0).AsCollection();
+        var concurrency = options.Concurrency;
+        var verify = options.Verify;
+        var destination = Target([.. options.Paths], 0).AsCollection();
 
         await using var store = new SqliteStateStore(StateDatabasePath());
 
-        var options = new TransferEngineOptions
-        {
-            LocalBaseDirectory = localDirectory,
-            DestinationRoot = destination,
-            MaxConcurrentTransfers = concurrency,
-            VerifyUploads = verify,
-        };
-
-        await using var coordinator = new TransferCoordinator(client, store, options);
+        await using var coordinator = new TransferCoordinator(
+            client,
+            store,
+            new TransferEngineOptions
+            {
+                LocalBaseDirectory = localDirectory,
+                DestinationRoot = destination,
+                MaxConcurrentTransfers = concurrency,
+                VerifyUploads = verify,
+            });
 
         var tiers = new System.Collections.Concurrent.ConcurrentDictionary<string, int>();
         coordinator.Progress += progress =>
@@ -367,6 +357,155 @@ internal static class Program
         Console.WriteLine($"failed    {summary.Failed}");
         Console.WriteLine($"bytes     {summary.BytesUploaded:N0} ({FormatBytes((long)summary.BytesPerSecond)}/s)");
         Console.WriteLine($"elapsed   {summary.Elapsed.TotalSeconds:F1}s");
+
+        return summary.Failed > 0 ? 1 : 0;
+    }
+
+    /// <summary>
+    /// Watches a directory and transfers files as they finish being written, until interrupted.
+    /// </summary>
+    /// <remarks>
+    /// The same components the window uses, with no XAML in the way. That is what makes it the
+    /// right place to measure what monitoring actually costs while idle: this process does
+    /// nothing else, so its processor time is monitoring's processor time and nothing else's.
+    /// </remarks>
+    private static async Task<int> WatchAsync(
+        IWebDavClient client,
+        string[] args,
+        CancellationToken cancellationToken)
+    {
+        if (args.Length == 0)
+        {
+            Console.Error.WriteLine(
+                "usage: pbctl watch <local-dir> [remote-dir] [--concurrency N] [--no-verify] "
+                + "[--every MINUTES] [--stable SECONDS] [--ext .raw,.d]");
+            return 2;
+        }
+
+        var localDirectory = Path.GetFullPath(args[0]);
+
+        if (!CommandOptions.TryParse(args[1..], out var options, out var problem))
+        {
+            Console.Error.WriteLine($"error: {problem}");
+            return 2;
+        }
+
+        var concurrency = options.Concurrency;
+        var verify = options.Verify;
+        var reconcileMinutes = options.ReconcileMinutes;
+        var stableSeconds = options.StableSeconds;
+        var extensions = options.Extensions;
+        var destination = Target([.. options.Paths], 0).AsCollection();
+
+        await using var store = new SqliteStateStore(StateDatabasePath());
+
+        await using var coordinator = new TransferCoordinator(
+            client,
+            store,
+            new TransferEngineOptions
+            {
+                LocalBaseDirectory = localDirectory,
+                DestinationRoot = destination,
+                MaxConcurrentTransfers = concurrency,
+                VerifyUploads = verify,
+            });
+
+        coordinator.Progress += progress =>
+        {
+            if (progress.State is TransferState.Uploading)
+            {
+                return;
+            }
+
+            Console.WriteLine($"  {progress.State,-11} {progress.FileName}  {progress.Message}");
+        };
+
+        await using var monitor = new ContinuousMonitor(
+            store,
+            new MonitorOptions
+            {
+                Root = localDirectory,
+                DestinationRoot = destination,
+                Filter = new CandidateFilter(extensions),
+                StabilityPeriod = TimeSpan.FromSeconds(stableSeconds),
+                ReconcileInterval = TimeSpan.FromMinutes(Math.Max(1, reconcileMinutes)),
+            });
+
+        monitor.Swept += result => Console.WriteLine(
+            result.Failed
+                ? $"  sweep       {result.Problem}"
+                : $"  sweep       {result.Examined} examined, {result.Offered} offered, "
+                  + $"{result.AlreadyAccountedFor} already settled, "
+                  + $"{result.Elapsed.TotalMilliseconds:F0} ms");
+
+        monitor.Waiting += report =>
+        {
+            if (report.StillWatching)
+            {
+                Console.WriteLine($"  waiting     {Path.GetFileName(report.Path)}  {report.Readiness.Detail}");
+            }
+        };
+
+        Console.WriteLine($"watching {localDirectory}");
+        Console.WriteLine($"      to {destination}");
+        Console.WriteLine(
+            $"  extensions {(extensions.Count == 0 ? "(all)" : string.Join(", ", extensions))}");
+        Console.WriteLine(
+            $"  every {reconcileMinutes} min, stable after {stableSeconds}s, "
+            + $"concurrency {concurrency}, verify {(verify ? "on" : "off")}");
+        Console.WriteLine("  Ctrl+C to stop.");
+        Console.WriteLine();
+
+        await coordinator.RecoverInterruptedAsync(cancellationToken).ConfigureAwait(false);
+
+        var process = Process.GetCurrentProcess();
+        var startedAt = DateTimeOffset.UtcNow;
+        var processorAtStart = process.TotalProcessorTime;
+
+        var transfers = coordinator.RunAsync(cancellationToken);
+
+        try
+        {
+            await monitor
+                .RunAsync(path => coordinator.EnqueueAsync(path, cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Ctrl+C. The engine still has to be wound down.
+        }
+
+        coordinator.CompleteAdding();
+
+        TransferSummary summary;
+        try
+        {
+            summary = await transfers.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            summary = default;
+        }
+
+        var elapsed = DateTimeOffset.UtcNow - startedAt;
+        var processor = process.TotalProcessorTime - processorAtStart;
+
+        Console.WriteLine();
+        Console.WriteLine($"uploaded  {summary.Uploaded}");
+        Console.WriteLine($"skipped   {summary.Skipped}");
+        Console.WriteLine($"conflicts {summary.Conflicts}");
+        Console.WriteLine($"failed    {summary.Failed}");
+        Console.WriteLine($"bytes     {summary.BytesUploaded:N0}");
+
+        // What this run cost the machine, which is the number that decides whether monitoring is
+        // welcome on a computer attached to a mass spectrometer.
+        Console.WriteLine($"watched   {elapsed.TotalMinutes:F1} min");
+        Console.WriteLine(
+            $"processor {processor.TotalSeconds:F1}s "
+            + $"({(elapsed.TotalSeconds > 0 ? processor.TotalSeconds / elapsed.TotalSeconds * 100 : 0):F3}% of one core)");
+
+        process.Refresh();
+        Console.WriteLine($"memory    {FormatBytes(process.WorkingSet64)} working set");
 
         return summary.Failed > 0 ? 1 : 0;
     }
@@ -435,7 +574,7 @@ internal static class Program
     /// <summary>
     /// Resolves the path argument, falling back to the configured default.
     /// </summary>
-    private static RemotePath Target(string[] args, int index)
+    internal static RemotePath Target(string[] args, int index)
     {
         if (args.Length > index && !string.IsNullOrWhiteSpace(args[index]))
         {
@@ -449,7 +588,7 @@ internal static class Program
             : RemotePath.Parse(configured);
     }
 
-    private static string FormatBytes(long bytes)
+    internal static string FormatBytes(long bytes)
     {
         string[] units = ["B", "KB", "MB", "GB", "TB"];
         double value = bytes;
@@ -476,6 +615,13 @@ internal static class Program
           put   <local-file> [remote-dir]  upload, then verify against the server's hash
           rm    <remote-path>              delete
           sync  <local-dir> [remote-dir]    mirror a directory, then report what it cost
+                  --concurrency N            files in flight at once (default 3)
+                  --no-verify                skip hash verification
+          watch <local-dir> [remote-dir]    monitor a directory until interrupted, and
+                                             report what it cost the machine
+                  --every N                  minutes between folder checks (default 15)
+                  --stable N                 seconds a file must be unchanged (default 10)
+                  --ext .raw,.d              extensions to transfer
                   --concurrency N            files in flight at once (default 3)
                   --no-verify                skip hash verification
           status                           what the upload ledger currently holds

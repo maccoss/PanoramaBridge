@@ -44,6 +44,20 @@ public interface IStateStore
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Ledger rows for a batch of local paths, keyed by path.
+    /// </summary>
+    /// <remarks>
+    /// One statement per batch rather than one per file, because the reconciliation sweep asks
+    /// this about every file in the monitored tree. At a hundred thousand files the difference
+    /// between a batched read and a per-file read is the difference between a sweep that costs a
+    /// second and one that costs minutes of disk work on the volume an instrument is writing to.
+    /// Paths absent from the ledger are simply absent from the result.
+    /// </remarks>
+    Task<IReadOnlyDictionary<string, UploadRecord>> GetManyAsync(
+        IReadOnlyCollection<string> localPaths,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Finds a settled row with the same content, whatever its path.
     /// </summary>
     /// <remarks>

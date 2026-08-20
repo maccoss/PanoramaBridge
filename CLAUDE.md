@@ -38,7 +38,7 @@ release-notes/               one file per version; becomes the GitHub Release bo
 src/PanoramaBridge.Core/     all logic, no UI dependency          net8.0
 src/PanoramaBridge.App/      WPF shell                            net8.0-windows
 src/PanoramaBridge.Cli/      pbctl, the headless harness           net8.0
-src/PanoramaBridge.Tests/    xUnit
+src/PanoramaBridge.Tests/    xUnit, net8.0-windows so the WPF shell can be tested
 ```
 
 `Core` must stay free of UI types. That is why the progress aggregator and the readiness gate live
@@ -63,16 +63,23 @@ These skip cleanly unless their environment variables are set, and clean up afte
 
 | Suite | Variables |
 |---|---|
-| Live Panorama | `PANORAMABRIDGE_IT_URL`, `PANORAMABRIDGE_IT_APIKEY`, `PANORAMABRIDGE_IT_PATH` |
 | SMB share monitoring | `PANORAMABRIDGE_SMB_PATH` |
+
+`PANORAMABRIDGE_IT_URL`, `PANORAMABRIDGE_IT_APIKEY` and `PANORAMABRIDGE_IT_PATH` are read by
+`pbctl`, not by any test. A live-server suite is still to be written -- see the handoff's open
+items for why it matters.
 
 **Never commit a secret.** Credentials come from the environment or Windows Credential Manager,
 never from a file in the repository or a command-line argument.
 
 ### `pbctl`
 
-`caps`, `ls`, `mkdir`, `md5`, `put`, `sync`, `status`, `rm`. Exercises the transport and engine
-against a real server without any XAML.
+`caps`, `ls`, `mkdir`, `md5`, `put`, `sync`, `watch`, `status`, `rm`. Exercises the transport,
+the engine and continuous monitoring against a real server without any XAML.
+
+`watch` is also how idle cost is measured — it reports the processor time monitoring used. Give
+it a filter matching nothing and it walks the folder without contacting the server at all, so no
+credential is involved. See §7 of the handoff for the numbers.
 
 > From Git Bash, set `MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'` first, or MSYS rewrites
 > `/_webdav/...` into a local path and every request 404s. It looks exactly like a server fault.

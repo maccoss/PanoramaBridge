@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PanoramaBridge.Core.Hashing;
@@ -205,7 +206,8 @@ public sealed class WebDavClient : IWebDavClient
         string localFilePath,
         RemotePath destination,
         IProgress<long>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        DateTimeOffset? lastModified = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(localFilePath);
         ArgumentNullException.ThrowIfNull(destination);
@@ -257,6 +259,7 @@ public sealed class WebDavClient : IWebDavClient
                 using var response = await SendWithStallWatchdogAsync(
                     content,
                     destination,
+                    lastModified,
                     cancellationToken).ConfigureAwait(false);
 
                 await EnsureSuccessAsync(response, "PUT", destination, cancellationToken)
@@ -319,6 +322,74 @@ public sealed class WebDavClient : IWebDavClient
     }
 
     /// <inheritdoc />
+    /// <summary>
+    /// LabKey's own way of letting a client keep a file's modification time.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The value is epoch milliseconds, and it is read from either a header or a query parameter
+    /// by <c>DavController.getLastModifiedHeader()</c>, on both the PUT path and the multipart
+    /// POST the file browser web part uses. It is what makes an acquisition keep the date the
+    /// instrument wrote it rather than the date it happened to be transferred.
+    /// </para>
+    /// <para>
+    /// Nothing standard works here. <c>PROPPATCH</c> is implemented but gated on the user agent
+    /// looking like Windows Explorer, so it answers 405 for anybody else; a <c>Last-Modified</c>
+    /// request header and the ownCloud <c>X-OC-Mtime</c> convention are both accepted with 201
+    /// and silently ignored. All four were measured against panoramaweb.org.
+    /// </para>
+    /// </remarks>
+    private const string LastModifiedHeader = "X-LABKEY-Last-Modified";
+
+    private static void StampWith(HttpRequestMessage request, DateTimeOffset? lastModified)
+    {
+        if (lastModified is not { } moment)
+        {
+            return;
+        }
+
+        request.Headers.TryAddWithoutValidation(
+            LastModifiedHeader,
+            moment.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <inheritdoc />
+    public async Task UploadTextAsync(
+        string content,
+        RemotePath destination,
+        CancellationToken cancellationToken = default,
+        DateTimeOffset? lastModified = null)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        ArgumentNullException.ThrowIfNull(destination);
+
+        var validation = PathSafety.ValidateSegment(destination.Name);
+        if (!validation.IsValid)
+        {
+            throw new ArgumentException(validation.Message, nameof(destination));
+        }
+
+        await EnsureCollectionAsync(destination.Parent, cancellationToken).ConfigureAwait(false);
+
+        using var response = await SendAsync(
+            () =>
+            {
+                var request = new HttpRequestMessage(HttpMethod.Put, Url(destination))
+                {
+                    Content = new StringContent(content, Encoding.UTF8, "text/plain"),
+                };
+
+                StampWith(request, lastModified);
+                return request;
+            },
+            "PUT",
+            destination,
+            _options.MetadataTimeout,
+            cancellationToken).ConfigureAwait(false);
+
+        await EnsureSuccessAsync(response, "PUT", destination, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task DeleteAsync(RemotePath path, CancellationToken cancellationToken = default)
     {
         using var response = await SendAsync(
@@ -414,11 +485,13 @@ public sealed class WebDavClient : IWebDavClient
     private async Task<HttpResponseMessage> SendWithStallWatchdogAsync(
         StreamingFileContent content,
         RemotePath destination,
+        DateTimeOffset? lastModified,
         CancellationToken cancellationToken)
     {
         using var abort = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
         var request = new HttpRequestMessage(HttpMethod.Put, Url(destination)) { Content = content };
+        StampWith(request, lastModified);
         var send = _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, abort.Token);
 
         var stalled = false;

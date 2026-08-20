@@ -4,6 +4,7 @@ using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
+using PanoramaBridge.Core.Infrastructure;
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Core.Transfer;
 
@@ -62,15 +63,15 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
-    private int _lockedFileInitialWaitMinutes = 30;
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
     private int _lockedFileRetryIntervalSeconds = 30;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
     private int _lockedFileMaxRetries = 20;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
+    private bool _startMonitoringOnLaunch;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
@@ -86,6 +87,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
     private bool _verifyUploads = true;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
+    private bool _writeChecksumSidecars = true;
 
     /// <summary>
     /// Guidance shown beside the concurrency slider.
@@ -162,12 +167,13 @@ public sealed partial class SettingsViewModel : ObservableObject
         Extensions = AppSettings.ParseExtensions(ExtensionsText),
         StabilitySeconds = StabilitySeconds,
         ReconcileMinutes = ReconcileMinutes,
-        LockedFileInitialWaitMinutes = LockedFileInitialWaitMinutes,
         LockedFileRetryIntervalSeconds = LockedFileRetryIntervalSeconds,
         LockedFileMaxRetries = LockedFileMaxRetries,
+        StartMonitoringOnLaunch = StartMonitoringOnLaunch,
         MaxConcurrentTransfers = MaxConcurrentTransfers,
         ConflictPolicy = ConflictPolicy,
         VerifyUploads = VerifyUploads,
+        WriteChecksumSidecars = WriteChecksumSidecars,
         ServerUrl = ServerUrl.Trim(),
         AuthMode = AuthMode,
         UserName = UserName.Trim(),
@@ -183,6 +189,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>Persists the current edits.</summary>
     public async Task<AppSettings> SaveAsync(CancellationToken cancellationToken = default)
     {
+        // Also applied here, so a path typed by hand is stored in the durable form too. Done at
+        // the point of saving rather than as the box is edited, which would fight the typing.
+        LocalDirectory = NetworkPaths.ResolveMappedDrive(LocalDirectory);
+
         var settings = ToSettings().WithRecentPath(RemotePath.Trim());
 
         await _store.SaveAsync(settings, cancellationToken).ConfigureAwait(true);
@@ -190,6 +200,10 @@ public sealed partial class SettingsViewModel : ObservableObject
         _saved = settings;
         LoadFrom(settings);
         OnPropertyChanged(nameof(HasUnsavedChanges));
+
+        // Immediately, because someone turning this on is trying to capture something that is
+        // happening now.
+        Services.LoggingSetup.ApplyVerbosity(settings.VerboseLogging);
 
         return settings;
     }
@@ -203,10 +217,15 @@ public sealed partial class SettingsViewModel : ObservableObject
             InitialDirectory = Directory.Exists(LocalDirectory) ? LocalDirectory : null,
         };
 
-        if (dialog.ShowDialog() == true)
+        if (dialog.ShowDialog() != true)
         {
-            LocalDirectory = dialog.FolderName;
+            return;
         }
+
+        // Browsing to a network folder through This PC returns the drive letter that was
+        // clicked, and a drive letter belongs to one Windows sign-in. Translating it here is the
+        // only way the advice to prefer the full network path is actually followable.
+        LocalDirectory = NetworkPaths.ResolveMappedDrive(dialog.FolderName);
     }
 
     [RelayCommand]
@@ -248,12 +267,13 @@ public sealed partial class SettingsViewModel : ObservableObject
         ExtensionsText = settings.FormatExtensions();
         StabilitySeconds = settings.StabilitySeconds;
         ReconcileMinutes = settings.ReconcileMinutes;
-        LockedFileInitialWaitMinutes = settings.LockedFileInitialWaitMinutes;
         LockedFileRetryIntervalSeconds = settings.LockedFileRetryIntervalSeconds;
         LockedFileMaxRetries = settings.LockedFileMaxRetries;
+        StartMonitoringOnLaunch = settings.StartMonitoringOnLaunch;
         MaxConcurrentTransfers = settings.MaxConcurrentTransfers;
         ConflictPolicy = settings.ConflictPolicy;
         VerifyUploads = settings.VerifyUploads;
+        WriteChecksumSidecars = settings.WriteChecksumSidecars;
         ServerUrl = settings.ServerUrl;
         AuthMode = settings.AuthMode;
         UserName = settings.UserName;

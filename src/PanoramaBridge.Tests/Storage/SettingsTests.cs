@@ -74,7 +74,9 @@ public sealed class AppSettingsTests
         settings.MaxConcurrentTransfers.ShouldBe(3);
         settings.ReconcileMinutes.ShouldBeGreaterThan(0, "the periodic sweep is the real safety net");
         settings.StabilitySeconds.ShouldBeGreaterThan(0);
-        settings.LockedFileInitialWaitMinutes.ShouldBe(30, "an instrument holds its file for the whole run");
+        settings.LockedFileRetryIntervalSeconds.ShouldBe(
+            30,
+            "a file in use is looked at slowly, but it is always looked at");
     }
 
     [Fact]

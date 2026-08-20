@@ -37,6 +37,17 @@ public sealed class TransferEngineOptions
     /// anything, so it is on by default.
     /// </remarks>
     public bool VerifyUploads { get; init; } = true;
+
+    /// <summary>
+    /// Whether to write a <c>.md5</c> file beside each upload.
+    /// </summary>
+    /// <remarks>
+    /// The hashes are in the ledger regardless, but the ledger lives on one instrument computer
+    /// and does not travel with the data. A sidecar does, and it is the only place the date the
+    /// instrument wrote the file can survive -- the server stamps an upload with its arrival
+    /// time and will not accept anything else.
+    /// </remarks>
+    public bool WriteChecksumSidecars { get; init; } = true;
 }
 
 /// <summary>
@@ -251,7 +262,19 @@ public sealed class TransferCoordinator : IAsyncDisposable
         // verified standing that the ledger tier reads, so every file would fall through to
         // the network and the fast path would never fire.
         var decision = await _decisions
-            .DecideAsync(stamp, destination, _options.ConflictPolicy, cancellationToken)
+            .DecideAsync(
+                stamp,
+                destination,
+                _options.ConflictPolicy,
+                cancellationToken,
+                onStep: step => Report(
+                    localPath,
+                    encoded,
+                    TransferState.Queued,
+                    step,
+                    0,
+                    stamp.Length,
+                    message: Explain(step)))
             .ConfigureAwait(false);
 
         var record = await _store.GetAsync(localPath, cancellationToken).ConfigureAwait(false)
@@ -307,6 +330,26 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 return;
         }
     }
+
+    /// <summary>
+    /// Says why a check is taking a moment, in terms of what is actually happening.
+    /// </summary>
+    /// <remarks>
+    /// Both of these were reported as the application "sitting there doing nothing". Neither is
+    /// idle; both are waiting on work whose cost is proportional to something the user can see,
+    /// so saying which one it is turns a stall into a wait.
+    /// </remarks>
+    private static string Explain(string step) => step switch
+    {
+        "Checking server" =>
+            "Asking the server what is already in the destination folder. Panorama works this out "
+            + "over everything in the folder, so a folder holding a lot of data takes a moment.",
+
+        "Checking file" =>
+            "Reading this file to compare it with the copy already on the server.",
+
+        _ => step,
+    };
 
     private async Task CompleteSkipAsync(
         UploadRecord record,
@@ -376,8 +419,13 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 sent, stamp.Length, rate);
         });
 
+        // Stamped with the time the instrument wrote the file, not the time it was transferred.
+        // Moving data is not the same as collecting it, and the collection date is the one that
+        // means something a year later.
+        var acquired = ChecksumSidecar.AcquiredFrom(stamp);
+
         var result = await _client
-            .UploadAsync(localPath, destination, progress, cancellationToken)
+            .UploadAsync(localPath, destination, progress, cancellationToken, acquired)
             .ConfigureAwait(false);
 
         stopwatch.Stop();
@@ -405,7 +453,9 @@ public sealed class TransferCoordinator : IAsyncDisposable
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            _snapshots.Invalidate(destination.Parent);
+            // What the server now holds is what was just sent, whatever the local file has
+            // since become, so the cache can be told rather than emptied.
+            _snapshots.Record(destination, result.BytesUploaded, result.Hashes.Md5, acquired);
 
             Report(localPath, encoded, TransferState.Superseded, "Changed during upload",
                 result.BytesUploaded, stamp.Length,
@@ -417,7 +467,11 @@ public sealed class TransferCoordinator : IAsyncDisposable
             return;
         }
 
-        _snapshots.Invalidate(destination.Parent);
+        // Recorded, not invalidated. Dropping the snapshot here made every file in a batch pay
+        // for a fresh collection hash, which the server computes on demand over the whole folder
+        // -- so a hundred files into one destination cost a hundred hashes of an ever-growing
+        // directory. Everything the cache needs is already in hand.
+        _snapshots.Record(destination, result.BytesUploaded, result.Hashes.Md5, acquired);
 
         if (!_options.VerifyUploads)
         {
@@ -474,9 +528,63 @@ public sealed class TransferCoordinator : IAsyncDisposable
             .MarkVerifiedAsync(localPath, VerifyMethod.ServerMd5, DateTimeOffset.UtcNow, cancellationToken)
             .ConfigureAwait(false);
 
+        await WriteSidecarAsync(destination, stamp, result, acquired, cancellationToken)
+            .ConfigureAwait(false);
+
         Report(localPath, encoded, TransferState.Verified, "Verified",
             result.BytesUploaded, stamp.Length, result.BytesPerSecond,
             verification: VerifyMethod.ServerMd5);
+    }
+
+    /// <summary>
+    /// Writes the checksum sidecar next to a file that has just been verified.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately after verification, and deliberately unable to fail the transfer. The file
+    /// itself is on the server and proven; a sidecar that could not be written is a lesser
+    /// problem than a transfer reported as failed when the data arrived intact.
+    /// </remarks>
+    private async Task WriteSidecarAsync(
+        RemotePath destination,
+        LocalFileStamp stamp,
+        UploadResult result,
+        DateTimeOffset acquired,
+        CancellationToken cancellationToken)
+    {
+        if (!_options.WriteChecksumSidecars)
+        {
+            return;
+        }
+
+        var sidecar = ChecksumSidecar.PathFor(destination);
+
+        try
+        {
+            var text = ChecksumSidecar.Render(
+                destination.Name,
+                result.Hashes,
+                result.BytesUploaded,
+                acquired,
+                DateTimeOffset.UtcNow,
+                Infrastructure.AppInfo.UserAgent);
+
+            // Same date as the file it describes, so the two stay together however a listing is
+            // sorted.
+            await _client
+                .UploadTextAsync(text, sidecar, cancellationToken, acquired)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(
+                ex,
+                "{Path} was uploaded and verified, but its checksum file could not be written.",
+                sidecar);
+        }
     }
 
     private async Task SafeSetStateAsync(string localPath, TransferState state, string? error)

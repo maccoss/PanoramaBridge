@@ -15,4 +15,12 @@
     <ProjectReference Include="..\PanoramaBridge.Core\PanoramaBridge.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      The harness has no public surface and should not grow one just to be tested. Its argument
+      parsing and path resolution are real logic and are worth testing directly.
+    -->
+    <InternalsVisibleTo Include="PanoramaBridge.Tests" />
+  </ItemGroup>
+
 </Project>

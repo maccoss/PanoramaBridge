@@ -64,6 +64,178 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         return await coordinator.RunAsync();
     }
 
+    // -- The date the instrument wrote the file ---------------------------------------------------
+
+    [Fact]
+    public async Task An_upload_keeps_the_date_the_instrument_wrote_it()
+    {
+        // Moving a file is not the same as collecting it. Left alone the server stamps an upload
+        // with the moment it arrived, which turns every acquisition in an archive into today's
+        // date. LabKey takes the real one through X-LABKEY-Last-Modified, and the transport
+        // sends it on every PUT.
+        var acquired = new DateTime(2024, 7, 2, 14, 33, 42, DateTimeKind.Utc);
+
+        var file = await WriteAsync("acquired.raw", "acquisition data");
+        File.SetLastWriteTimeUtc(file, acquired);
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        _server.StampOf(Destination.Append("acquired.raw"))
+            .ShouldBe(new DateTimeOffset(acquired));
+    }
+
+    [Fact]
+    public async Task The_checksum_file_carries_the_same_date_as_the_file_it_describes()
+    {
+        // So the two stay adjacent however a directory listing is sorted.
+        var acquired = new DateTime(2024, 7, 2, 14, 33, 42, DateTimeKind.Utc);
+
+        var file = await WriteAsync("acquired.raw", "acquisition data");
+        File.SetLastWriteTimeUtc(file, acquired);
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        _server.StampOf(Destination.Append("acquired.raw.md5"))
+            .ShouldBe(new DateTimeOffset(acquired));
+    }
+
+    // -- The checksum sidecar --------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_verified_upload_leaves_its_checksum_beside_it_on_the_server()
+    {
+        var file = await WriteAsync("sample.raw", "acquisition data");
+        File.SetLastWriteTimeUtc(file, new DateTime(2025, 5, 19, 14, 32, 10, DateTimeKind.Utc));
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        var sidecar = _server.Text(Destination.Append("sample.raw.md5")).ShouldNotBeNull();
+
+        var record = (await _store.GetAsync(file)).ShouldNotBeNull();
+
+        sidecar.ShouldStartWith($"{record.Md5}  sample.raw");
+        sidecar.ShouldContain("# acquired  2025-05-19T14:32:10Z");
+        sidecar.ShouldContain("# bytes     16");
+    }
+
+    [Fact]
+    public async Task A_file_that_was_not_sent_gets_no_sidecar()
+    {
+        // Only a verified upload earns one. Writing a checksum for a file this run did not put
+        // there would be claiming something that was never checked.
+        var file = await WriteAsync("sample.raw", "acquisition data");
+        _server.Seed(Destination.Append("sample.raw"), "acquisition data"u8.ToArray());
+
+        var summary = await RunWithAsync(NewCoordinator(), file);
+
+        summary.Skipped.ShouldBe(1);
+        _server.Content(Destination.Append("sample.raw.md5")).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task A_sidecar_that_cannot_be_written_does_not_fail_the_transfer()
+    {
+        // The data is on the server and proven. Reporting that as a failure because a note
+        // beside it could not be written would be worse than the missing note.
+        var file = await WriteAsync("sample.raw", "acquisition data");
+
+        _server.FailTextUploads = true;
+
+        var summary = await RunWithAsync(NewCoordinator(), file);
+
+        summary.Uploaded.ShouldBe(1);
+        summary.Failed.ShouldBe(0);
+
+        var record = (await _store.GetAsync(file)).ShouldNotBeNull();
+        record.State.ShouldBe(TransferState.Verified);
+    }
+
+    [Fact]
+    public async Task Sidecars_can_be_turned_off()
+    {
+        var file = await WriteAsync("sample.raw", "acquisition data");
+
+        await using var coordinator = new TransferCoordinator(
+            _server,
+            _store,
+            new TransferEngineOptions
+            {
+                LocalBaseDirectory = _local,
+                DestinationRoot = Destination,
+                WriteChecksumSidecars = false,
+            });
+
+        await RunWithAsync(coordinator, file);
+
+        _server.Content(Destination.Append("sample.raw")).ShouldNotBeNull();
+        _server.Content(Destination.Append("sample.raw.md5")).ShouldBeNull();
+    }
+
+    // -- What a batch costs the server ---------------------------------------------------------
+
+    [Fact]
+    public async Task A_batch_into_one_folder_asks_the_server_for_its_contents_once()
+    {
+        // The collection hash is computed on demand: the server reads every byte in the folder to
+        // answer it, which against a folder holding 19 GB was measured at half a minute. Asking
+        // once per uploaded file therefore makes a batch quadratic in the size of the
+        // destination, and it grows as the batch proceeds. Everything needed to keep the cached
+        // listing current is already in hand after each upload, so it is updated rather than
+        // discarded.
+        // A destination that already holds data, which is the case that costs: the hash is over
+        // everything in the folder, so it gets more expensive the more has been archived there.
+        _server.Seed(Destination.Append("archived.raw"), "an earlier acquisition"u8.ToArray());
+
+        var files = new List<string>();
+
+        for (var i = 0; i < 12; i++)
+        {
+            files.Add(await WriteAsync($"batch{i:D2}.raw", $"acquisition {i}"));
+        }
+
+        var summary = await RunWithAsync(NewCoordinator(concurrency: 1), [.. files]);
+
+        summary.Uploaded.ShouldBe(12);
+
+        _server.ListCalls.ShouldBe(1, "one listing of the destination, however many files follow");
+        _server.CollectionHashCalls.ShouldBe(1, "and one collection hash, for the same reason");
+
+        _server.UploadCalls.ShouldBe(12);
+        _server.FileHashCalls.ShouldBe(12, "verification is per file and is meant to be");
+    }
+
+    [Fact]
+    public async Task A_file_uploaded_a_moment_ago_is_recognised_without_asking_again()
+    {
+        // Folding the upload into the cached listing has to leave it correct, not merely cheap.
+        // A second offer of the same file must reach the same conclusion the server would.
+        var file = await WriteAsync("sample.raw", "acquisition data");
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        var snapshots = new RemoteSnapshotCache(_server);
+        _server.Reset();
+
+        await using var second = new TransferCoordinator(
+            _server,
+            _store,
+            new TransferEngineOptions
+            {
+                LocalBaseDirectory = _local,
+                DestinationRoot = Destination,
+                MaxConcurrentTransfers = 1,
+            },
+            snapshots);
+
+        // Asked twice through one cache, as two files in the same folder would be.
+        await second.EnqueueAsync(file);
+        second.CompleteAdding();
+        var summary = await second.RunAsync();
+
+        summary.Skipped.ShouldBe(1);
+        _server.UploadCalls.ShouldBe(0, "it is already there, unchanged");
+    }
+
     // -- The happy path -----------------------------------------------------------------------
 
     [Fact]

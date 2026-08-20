@@ -33,6 +33,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private Task? _updateLoop;
     private PeriodicTimer? _updateTimer;
+    private bool _disposed;
 
     public MainViewModel(
         SettingsViewModel settings,
@@ -57,6 +58,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         _updates.StatusChanged += OnUpdateStatusChanged;
         _transfers.RunStateChanged += OnRunStateChanged;
+        _transfers.Swept += OnSwept;
+        _transfers.MonitoringFailed += OnMonitoringFailed;
 
         ApplyUpdateStatus(_updates.Status);
     }
@@ -87,7 +90,28 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(UploadNowCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ToggleMonitoringCommand))]
     private bool _isBusy;
+
+    /// <summary>Whether the monitored folder is being watched.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MonitoringButtonText))]
+    [NotifyPropertyChangedFor(nameof(UploadNowButtonText))]
+    [NotifyCanExecuteChangedFor(nameof(ToggleMonitoringCommand))]
+    private bool _isMonitoring;
+
+    /// <summary>Label on the monitoring button, so one button serves both states.</summary>
+    public string MonitoringButtonText => IsMonitoring ? "Stop monitoring" : "Start monitoring";
+
+    /// <summary>
+    /// Label on the scan button.
+    /// </summary>
+    /// <remarks>
+    /// While monitoring is running the same button asks for an immediate folder check, because
+    /// that is exactly the work a scan would do and running two walks of one folder at once gains
+    /// the user nothing.
+    /// </remarks>
+    public string UploadNowButtonText => IsMonitoring ? "Check now" : "Upload now";
 
     [ObservableProperty]
     private string _statusLine = "Ready.";
@@ -115,6 +139,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(UploadNowCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ToggleMonitoringCommand))]
     private bool _uploadsBlocked;
 
     /// <summary>Whether to show the informational update strip.</summary>
@@ -126,6 +151,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _updateLoop ??= Task.Run(() => RunUpdateLoopAsync(_shutdown.Token));
         _ = Uploads.RefreshAsync();
         _ = TrimAfterStartupAsync();
+
+        // Resuming monitoring is the whole point of the setting: an instrument computer is
+        // rebooted and nobody is there to press anything.
+        if (Settings.StartMonitoringOnLaunch)
+        {
+            _ = ToggleMonitoringCommand.ExecuteAsync(null);
+        }
     }
 
     /// <summary>
@@ -166,6 +198,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanUploadNow))]
     private async Task UploadNowAsync()
     {
+        // While monitoring, this asks for a folder check instead. The engine is already running
+        // and already knows what it has transferred, so a second scan would only duplicate it.
+        if (_transfers.RequestSweep("The user asked for a check."))
+        {
+            StatusLine = "Checking the folder now...";
+            return;
+        }
+
         var settings = await Settings.SaveAsync(_shutdown.Token).ConfigureAwait(true);
 
         var problems = settings.Validate();
@@ -208,6 +248,60 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     private bool CanUploadNow() => !IsBusy && !UploadsBlocked;
+
+    /// <summary>
+    /// Starts or stops watching the monitored folder.
+    /// </summary>
+    /// <remarks>
+    /// Stopping is always allowed, including while the version floor blocks new uploads: a build
+    /// that may not start new work still has to be able to stand down cleanly.
+    /// </remarks>
+    [RelayCommand(CanExecute = nameof(CanToggleMonitoring))]
+    private async Task ToggleMonitoringAsync()
+    {
+        if (_transfers.IsMonitoring)
+        {
+            StatusLine = "Stopping monitoring...";
+
+            await _transfers.StopMonitoringAsync().ConfigureAwait(true);
+
+            IsMonitoring = false;
+            StatusLine = "Monitoring stopped.";
+            await Uploads.RefreshAsync().ConfigureAwait(true);
+            return;
+        }
+
+        var settings = await Settings.SaveAsync(_shutdown.Token).ConfigureAwait(true);
+
+        var problems = settings.Validate();
+        if (problems.Count > 0)
+        {
+            StatusLine = problems[0];
+            ConnectionFailed = true;
+            return;
+        }
+
+        try
+        {
+            RememberCredential(settings);
+
+            await _transfers
+                .StartMonitoringAsync(settings, SecretProvider?.Invoke(), _shutdown.Token)
+                .ConfigureAwait(true);
+
+            IsMonitoring = true;
+            ConnectionFailed = false;
+            StatusLine = $"Monitoring {settings.LocalDirectory}.";
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Monitoring could not be started.");
+            StatusLine = ex.Message;
+            ConnectionFailed = true;
+        }
+    }
+
+    private bool CanToggleMonitoring() => IsMonitoring || (!IsBusy && !UploadsBlocked);
 
     [RelayCommand(CanExecute = nameof(IsBusy))]
     private void Cancel()
@@ -348,11 +442,74 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         if (dispatcher is not null && !dispatcher.CheckAccess())
         {
-            dispatcher.InvokeAsync(() => IsBusy = _transfers.IsRunning);
+            dispatcher.InvokeAsync(ApplyRunState);
             return;
         }
 
+        ApplyRunState();
+    }
+
+    private void ApplyRunState()
+    {
         IsBusy = _transfers.IsRunning;
+        IsMonitoring = _transfers.IsMonitoring;
+    }
+
+    /// <summary>
+    /// Reports what the periodic folder check found.
+    /// </summary>
+    /// <remarks>
+    /// Fires on a background thread, every reconciliation interval, for as long as monitoring
+    /// runs. Saying so in the status line is what makes a monitor that has nothing to do
+    /// distinguishable from one that has stopped working.
+    /// </remarks>
+    private void OnSwept(Core.Monitoring.SweepResult result)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            dispatcher.InvokeAsync(() => ApplySweep(result));
+            return;
+        }
+
+        ApplySweep(result);
+    }
+
+    private void OnMonitoringFailed(string message)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            dispatcher.InvokeAsync(() => ApplyMonitoringFailure(message));
+            return;
+        }
+
+        ApplyMonitoringFailure(message);
+    }
+
+    private void ApplyMonitoringFailure(string message)
+    {
+        StatusLine = message;
+        ConnectionFailed = true;
+        IsMonitoring = _transfers.IsMonitoring;
+    }
+
+    private void ApplySweep(Core.Monitoring.SweepResult result)
+    {
+        if (result.Failed)
+        {
+            StatusLine = result.Problem ?? "The folder could not be checked.";
+            ConnectionFailed = true;
+            return;
+        }
+
+        ConnectionFailed = false;
+
+        StatusLine = result.Offered > 0
+            ? $"Monitoring - {result.Offered} file(s) to transfer."
+            : $"Monitoring - {result.Examined} file(s) checked, all up to date.";
     }
 
     private async Task RunUpdateLoopAsync(CancellationToken cancellationToken)
@@ -429,11 +586,30 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Releases everything the shell holds.
+    /// </summary>
+    /// <remarks>
+    /// Called twice on a normal exit: once by the window as it closes, and again by the service
+    /// container, which owns this object too. Without the guard the second call cancels an
+    /// already-disposed <see cref="CancellationTokenSource"/>, and the resulting
+    /// <see cref="ObjectDisposedException"/> escapes <c>Main</c> and is reported to the user --
+    /// through the startup handler, so closing the application says "PanoramaBridge could not
+    /// start". Dispose is required to be safe to call more than once; this one was not.
+    /// </remarks>
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
         _updates.StatusChanged -= OnUpdateStatusChanged;
         _transfers.RunStateChanged -= OnRunStateChanged;
+        _transfers.Swept -= OnSwept;
+        _transfers.MonitoringFailed -= OnMonitoringFailed;
 
         _shutdown.Cancel();
         _updateTimer?.Dispose();

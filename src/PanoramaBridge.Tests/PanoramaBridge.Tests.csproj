@@ -1,7 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <!--
+      net8.0-windows rather than net8.0 so the WPF shell can be tested at all. The suite was
+      already Windows-only in practice - WindowsCredentialStore and NetworkPaths both P/Invoke -
+      and CI runs windows-latest, so this costs nothing that was not already spent. UseWPF is
+      needed for the dispatcher and timer types the view models build on.
+    -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
     <RootNamespace>PanoramaBridge.Tests</RootNamespace>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
@@ -19,10 +26,21 @@
   <ItemGroup>
     <Using Include="Xunit" />
     <Using Include="Shouldly" />
+
+    <!--
+      UseWPF drops System.IO and System.Net.Http from the implicit usings, because
+      System.IO.Path collides with System.Windows.Shapes.Path. That is the right call for the
+      App project, which draws things; here nothing does, so putting them back project-wide
+      costs nothing and saves the churn of importing them in every test file.
+    -->
+    <Using Include="System.IO" />
+    <Using Include="System.Net.Http" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\PanoramaBridge.Core\PanoramaBridge.Core.csproj" />
+    <ProjectReference Include="..\PanoramaBridge.App\PanoramaBridge.App.csproj" />
+    <ProjectReference Include="..\PanoramaBridge.Cli\PanoramaBridge.Cli.csproj" />
   </ItemGroup>
 
 </Project>

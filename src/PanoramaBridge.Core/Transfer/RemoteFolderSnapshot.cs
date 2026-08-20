@@ -107,11 +107,83 @@ public sealed class RemoteSnapshotCache
     }
 
     /// <summary>
-    /// Drops the cached snapshot for a folder. Called after uploading into it, so a later
-    /// question sees the file that was just added.
+    /// Drops the cached snapshot for a folder.
     /// </summary>
+    /// <remarks>
+    /// Prefer <see cref="Record"/> after an upload. Dropping the snapshot means the next file
+    /// into the same folder refetches it, and a refetch includes a collection hash, which the
+    /// server computes on demand over every byte in the folder. Doing that once per uploaded
+    /// file makes a batch quadratic in the size of the destination: measured against
+    /// panoramaweb.org, a folder holding 19 GB takes half a minute to hash.
+    /// </remarks>
     public void Invalidate(RemotePath folder) =>
         _cache.TryRemove(folder.AsCollection(), out _);
+
+    /// <summary>
+    /// Folds a file that has just been uploaded into the cached snapshot of its folder.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The alternative -- dropping the snapshot so the next question refetches it -- is what this
+    /// replaces, and it did not scale. Everything needed is already known: the destination, the
+    /// number of bytes sent, and the hash computed during the upload's own pass over the file,
+    /// which the server confirmed. So the cache can simply be told, instead of asking again.
+    /// </para>
+    /// <para>
+    /// Only the length, the collection flag and the hash are read by the decision ladder. The
+    /// rest of the entry is filled in as accurately as it can be from here and is not relied on.
+    /// </para>
+    /// </remarks>
+    /// <param name="file">Where the file was written.</param>
+    /// <param name="length">Bytes stored.</param>
+    /// <param name="md5">The hash the upload produced and the server agreed with.</param>
+    /// <param name="lastModified">What the server will now report for it.</param>
+    public void Record(RemotePath file, long length, string md5, DateTimeOffset? lastModified = null)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+
+        var key = file.Parent.AsCollection();
+
+        if (!_cache.TryGetValue(key, out var pending))
+        {
+            return;
+        }
+
+        if (!pending.IsCompletedSuccessfully)
+        {
+            // A fetch is in flight. It may have been issued before this upload, in which case
+            // its answer will not mention the new file, so the honest thing is to drop it.
+            _cache.TryRemove(new KeyValuePair<RemotePath, Task<RemoteFolderSnapshot>>(key, pending));
+            return;
+        }
+
+        var snapshot = pending.Result;
+
+        var entries = new Dictionary<string, WebDavResource>(snapshot.Entries, StringComparer.Ordinal)
+        {
+            [file.Name] = new WebDavResource(
+                file.Name,
+                file,
+                IsCollection: false,
+                Length: length,
+                LastModifiedUtc: lastModified ?? _clock(),
+                ETag: null,
+                ContentType: null,
+                CreatedBy: null,
+                Permissions: ResourcePermissions.Unknown),
+        };
+
+        var hashes = new Dictionary<string, string>(snapshot.Hashes, StringComparer.Ordinal)
+        {
+            [file.Name] = md5,
+        };
+
+        // Keeps the original TakenUtc, so recording does not extend the snapshot's life. Anything
+        // another client changed in the folder still shows up when the lifetime expires.
+        var updated = Task.FromResult(snapshot with { Entries = entries, Hashes = hashes });
+
+        _cache.TryUpdate(key, updated, pending);
+    }
 
     /// <summary>Drops everything. Used when the destination or credentials change.</summary>
     public void Clear() => _cache.Clear();

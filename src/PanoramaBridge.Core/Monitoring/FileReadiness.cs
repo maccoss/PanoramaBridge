@@ -63,6 +63,22 @@ public readonly record struct FileReadiness(ReadinessReason Reason, long Length,
             length,
             $"Unchanged for {quietFor.TotalSeconds:F0}s; waiting for {required.TotalSeconds:F0}s.");
 
+    /// <summary>
+    /// Held open by something else for so long that close watching has been given up.
+    /// </summary>
+    /// <remarks>
+    /// Still <see cref="ReadinessReason.Locked"/>, because that is what is true about the file.
+    /// The message is what differs: it has to tell someone watching for their data that it has
+    /// not been forgotten, only stopped being asked about so often.
+    /// </remarks>
+    public static FileReadiness StillInUse(long length, string path, int attempts) =>
+        new(
+            ReadinessReason.Locked,
+            length,
+            $"'{Path.GetFileName(path)}' has been open in another program for all of the last "
+            + $"{attempts} checks. It will be picked up at the next folder check, or as soon as "
+            + "it changes.");
+
     public static FileReadiness Unreadable(string path, string message) =>
         new(ReadinessReason.Unreadable, 0, $"Cannot read '{Path.GetFileName(path)}': {message}");
 }

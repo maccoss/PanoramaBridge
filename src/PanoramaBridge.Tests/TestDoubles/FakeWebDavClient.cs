@@ -27,6 +27,7 @@ public sealed class FakeWebDavClient : IWebDavClient
     private int _fileHashCalls;
     private int _uploadCalls;
     private int _mkcolCalls;
+    private int _textUploadCalls;
 
     /// <summary>Calls to each operation, for asserting on cost.</summary>
     public int ListCalls => Volatile.Read(ref _listCalls);
@@ -39,14 +40,33 @@ public sealed class FakeWebDavClient : IWebDavClient
 
     public int MkcolCalls => Volatile.Read(ref _mkcolCalls);
 
+    /// <summary>Small text writes, such as checksum sidecars.</summary>
+    public int TextUploadCalls => Volatile.Read(ref _textUploadCalls);
+
     /// <summary>Total requests of any kind.</summary>
-    public int TotalCalls => ListCalls + CollectionHashCalls + FileHashCalls + UploadCalls + MkcolCalls;
+    public int TotalCalls =>
+        ListCalls + CollectionHashCalls + FileHashCalls + UploadCalls + MkcolCalls + TextUploadCalls;
 
     /// <summary>Forces the next upload to fail this many times before succeeding.</summary>
     public int FailUploadsBeforeSucceeding { get; set; }
 
     /// <summary>When set, the server reports this instead of the true hash. Simulates corruption.</summary>
     public string? OverrideReportedHash { get; set; }
+
+    /// <summary>When true, small text writes fail, as a read-only or full server would.</summary>
+    public bool FailTextUploads { get; set; }
+
+    /// <summary>
+    /// Collections the account may read but not write to, by encoded path.
+    /// </summary>
+    /// <remarks>
+    /// The permission flags come back with the listing on a real server, which is what lets the
+    /// folder browser refuse a read-only destination before a transfer rather than after one.
+    /// </remarks>
+    public HashSet<string> ReadOnlyPaths { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Makes the next listing fail once, as a transient problem would.</summary>
+    public bool FailListingsOnce { get; set; }
 
     /// <summary>When true, collection hash requests report nothing, as a locked-down server might.</summary>
     public bool WithholdHashes { get; set; }
@@ -61,6 +81,7 @@ public sealed class FakeWebDavClient : IWebDavClient
         Volatile.Write(ref _fileHashCalls, 0);
         Volatile.Write(ref _uploadCalls, 0);
         Volatile.Write(ref _mkcolCalls, 0);
+        Volatile.Write(ref _textUploadCalls, 0);
     }
 
     /// <summary>Seeds a file with real content.</summary>
@@ -73,6 +94,32 @@ public sealed class FakeWebDavClient : IWebDavClient
             _collections.TryAdd(folder.AsCollection().ToEncodedString(), 0);
         }
     }
+
+    /// <summary>
+    /// What each stored file was stamped with, as LabKey's X-LABKEY-Last-Modified would.
+    /// </summary>
+    /// <remarks>
+    /// Recorded so a test can assert that an acquisition keeps the date the instrument wrote it.
+    /// A real server stamps an upload with its arrival time unless it is told otherwise, and the
+    /// whole point is that it is told otherwise.
+    /// </remarks>
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _stamps = new(StringComparer.Ordinal);
+
+    /// <summary>The modification time the server would report for a path, if one was supplied.</summary>
+    public DateTimeOffset? StampOf(RemotePath path) =>
+        _stamps.TryGetValue(path.AsCollection(false).ToEncodedString(), out var stamp) ? stamp : null;
+
+    private void Stamp(RemotePath path, DateTimeOffset? lastModified)
+    {
+        if (lastModified is { } moment)
+        {
+            _stamps[path.AsCollection(false).ToEncodedString()] = moment;
+        }
+    }
+
+    /// <summary>The stored text at a path, or null.</summary>
+    public string? Text(RemotePath path) =>
+        Content(path) is { } bytes ? System.Text.Encoding.UTF8.GetString(bytes) : null;
 
     /// <summary>The stored bytes at a path, or null.</summary>
     public byte[]? Content(RemotePath path) =>
@@ -91,6 +138,15 @@ public sealed class FakeWebDavClient : IWebDavClient
         CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _listCalls);
+
+        if (FailListingsOnce)
+        {
+            FailListingsOnce = false;
+            throw new WebDavException(
+                "GET(json)",
+                collection,
+                System.Net.HttpStatusCode.ServiceUnavailable);
+        }
 
         var prefix = collection.AsCollection().ToEncodedString();
         if (!_collections.ContainsKey(prefix))
@@ -136,7 +192,7 @@ public sealed class FakeWebDavClient : IWebDavClient
                     ETag: null,
                     ContentType: null,
                     CreatedBy: null,
-                    Permissions: Writable));
+                    Permissions: ReadOnlyPaths.Contains(folder) ? ReadOnly : Writable));
             }
         }
 
@@ -212,9 +268,11 @@ public sealed class FakeWebDavClient : IWebDavClient
         string localFilePath,
         RemotePath destination,
         IProgress<long>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        DateTimeOffset? lastModified = null)
     {
         Interlocked.Increment(ref _uploadCalls);
+        Stamp(destination, lastModified);
 
         if (FailUploadsBeforeSucceeding > 0)
         {
@@ -238,6 +296,36 @@ public sealed class FakeWebDavClient : IWebDavClient
             TimeSpan.FromMilliseconds(1));
     }
 
+    public Task UploadTextAsync(
+        string content,
+        RemotePath destination,
+        CancellationToken cancellationToken = default,
+        DateTimeOffset? lastModified = null)
+    {
+        Interlocked.Increment(ref _textUploadCalls);
+
+        if (FailTextUploads)
+        {
+            throw new WebDavException(
+                "PUT",
+                destination,
+                System.Net.HttpStatusCode.Forbidden,
+                "The server refused it.");
+        }
+
+        _files[destination.AsCollection(false).ToEncodedString()] =
+            System.Text.Encoding.UTF8.GetBytes(content);
+
+        Stamp(destination, lastModified);
+
+        for (var folder = destination.Parent; !folder.IsRoot; folder = folder.Parent)
+        {
+            _collections.TryAdd(folder.AsCollection().ToEncodedString(), 0);
+        }
+
+        return Task.CompletedTask;
+    }
+
     public Task MoveAsync(
         RemotePath source,
         RemotePath destination,
@@ -259,6 +347,15 @@ public sealed class FakeWebDavClient : IWebDavClient
         _collections.TryRemove(path.AsCollection().ToEncodedString(), out _);
         return Task.CompletedTask;
     }
+
+    /// <summary>What a folder the account may look at but not write to reports.</summary>
+    private static ResourcePermissions ReadOnly => new(
+        CanRead: true,
+        CanUpload: false,
+        CanEdit: false,
+        CanDelete: false,
+        CanRename: false,
+        AllowedMethods: ["GET"]);
 
     private static ResourcePermissions Writable => new(
         CanRead: true,

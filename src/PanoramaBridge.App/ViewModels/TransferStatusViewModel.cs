@@ -118,15 +118,21 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
             {
                 // Update in place: replacing the row would reset selection and scroll position,
                 // and virtualization recycles the container anyway.
+                var before = row.Band;
                 row.Apply(progress);
+
+                if (row.Band != before)
+                {
+                    Reband(row, before);
+                }
+
                 continue;
             }
 
             row = new TransferRowViewModel(progress);
             _byPath[progress.LocalPath] = row;
 
-            // Newest at the top, which is what someone watching a live transfer expects.
-            Rows.Insert(0, row);
+            Insert(row);
         }
 
         TrimOldRows();
@@ -148,15 +154,85 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
         }
     }
 
+    /// <summary>
+    /// Where each block of the grid starts, indexed by band.
+    /// </summary>
+    /// <remarks>
+    /// Kept alongside <see cref="Rows"/> rather than recomputed, so a row changing state costs a
+    /// single move rather than a re-sort of a grid that can hold thousands of rows and is being
+    /// refreshed five times a second.
+    /// </remarks>
+    private readonly int[] _bandCounts = new int[4];
+
+    private int StartOf(TransferBand band)
+    {
+        var start = 0;
+
+        for (var i = 0; i < (int)band; i++)
+        {
+            start += _bandCounts[i];
+        }
+
+        return start;
+    }
+
+    /// <summary>
+    /// Adds a row at the top of its block.
+    /// </summary>
+    /// <remarks>
+    /// Newest first within a block, which is what someone watching a live transfer expects: the
+    /// file that just started is at the top, and the one that just finished verifying is at the
+    /// top of the finished block directly below it.
+    /// </remarks>
+    private void Insert(TransferRowViewModel row)
+    {
+        Rows.Insert(StartOf(row.Band), row);
+        _bandCounts[(int)row.Band]++;
+    }
+
+    /// <summary>Moves a row whose state has taken it into a different block.</summary>
+    private void Reband(TransferRowViewModel row, TransferBand from)
+    {
+        var oldIndex = Rows.IndexOf(row);
+
+        if (oldIndex < 0)
+        {
+            return;
+        }
+
+        _bandCounts[(int)from]--;
+
+        // Move interprets its target index in the list as it will be after the removal, which is
+        // exactly what the counts now describe.
+        Rows.Move(oldIndex, StartOf(row.Band));
+        _bandCounts[(int)row.Band]++;
+    }
+
+    private void RemoveRow(int index)
+    {
+        var row = Rows[index];
+
+        Rows.RemoveAt(index);
+        _bandCounts[(int)row.Band]--;
+        _byPath.Remove(row.LocalPath);
+    }
+
     /// <summary>Forgets rows that finished cleanly, keeping anything unresolved.</summary>
     [RelayCommand]
     private void ClearCompleted()
     {
         foreach (var path in _aggregator.ClearFinished())
         {
-            if (_byPath.Remove(path, out var row))
+            if (!_byPath.TryGetValue(path, out var row))
             {
-                Rows.Remove(row);
+                continue;
+            }
+
+            var index = Rows.IndexOf(row);
+
+            if (index >= 0)
+            {
+                RemoveRow(index);
             }
         }
 
@@ -195,12 +271,9 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
 
         for (var i = Rows.Count - 1; i >= 0 && Rows.Count > MaxRows; i--)
         {
-            var row = Rows[i];
-
-            if (row.State is TransferState.Verified or TransferState.Skipped)
+            if (Rows[i].State is TransferState.Verified or TransferState.Skipped)
             {
-                Rows.RemoveAt(i);
-                _byPath.Remove(row.LocalPath);
+                RemoveRow(i);
             }
         }
     }

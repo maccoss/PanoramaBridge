@@ -24,6 +24,10 @@ public static partial class LoggingSetup
     /// <summary>In-memory tail that backs the Activity Log pane.</summary>
     public static RingBufferSink Buffer { get; } = new(capacity: 2000);
 
+    /// <summary>Applies the "Verbose logging" setting. Takes effect immediately.</summary>
+    public static void ApplyVerbosity(bool verbose) =>
+        LevelSwitch.MinimumLevel = verbose ? LogEventLevel.Debug : LogEventLevel.Information;
+
     public static ILogger Create(AppPaths paths)
     {
         ArgumentNullException.ThrowIfNull(paths);

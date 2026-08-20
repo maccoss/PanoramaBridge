@@ -60,6 +60,11 @@ public static class Program
 
             governor.ApplyPoliteDefaults(settings.YieldToInstrumentSoftware);
 
+            // The verbose-logging toggle had no effect at all: the level switch existed and
+            // nothing ever set it. Exactly the defect this codebase criticises the Python
+            // version for, and it hid a monitoring bug for an afternoon.
+            LoggingSetup.ApplyVerbosity(settings.VerboseLogging);
+
             var app = new App(services);
             app.InitializeComponent();
             return app.Run();
@@ -89,7 +94,14 @@ public static class Program
 
         services.AddSingleton(paths);
         services.AddSingleton(governor);
-        services.AddLogging(builder => builder.AddProvider(new SerilogLoggerProvider(dispose: false)));
+        services.AddLogging(builder =>
+        {
+            // Serilog's level switch is the only filter, so that the Verbose logging toggle takes
+            // effect without a restart. Left at its default, this pipeline drops everything below
+            // Information before Serilog ever sees it, and the toggle silently does nothing.
+            builder.SetMinimumLevel(LogLevel.Trace);
+            builder.AddProvider(new SerilogLoggerProvider(dispose: false));
+        });
 
         // -- Storage ---------------------------------------------------------------------------
         services.AddSingleton<ISettingsStore>(provider => new JsonSettingsStore(

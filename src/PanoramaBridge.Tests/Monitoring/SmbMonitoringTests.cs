@@ -349,6 +349,115 @@ public sealed class SmbMonitoringTests : IAsyncDisposable
         uploaded.ShouldBe(await File.ReadAllBytesAsync(path));
     }
 
+    // -- Continuous monitoring -----------------------------------------------------------------
+
+    [SkippableFact]
+    public async Task Monitoring_a_share_transfers_a_file_that_appears_on_it()
+    {
+        // The whole mechanism against a real file server: the sweep, the watcher, the readiness
+        // gate and the engine, with a file arriving while it all runs.
+        var root = Require();
+
+        await using var monitor = new ContinuousMonitor(
+            _store,
+            new MonitorOptions
+            {
+                Root = root,
+                DestinationRoot = Destination,
+                Filter = new CandidateFilter([".raw"]),
+                StabilityPeriod = TimeSpan.FromSeconds(1),
+                ReconcileInterval = TimeSpan.FromSeconds(5),
+                LockedFiles = LockedFilePolicy.None,
+            });
+
+        await using var coordinator = new TransferCoordinator(
+            _server,
+            _store,
+            new TransferEngineOptions
+            {
+                LocalBaseDirectory = root,
+                DestinationRoot = Destination,
+                MaxConcurrentTransfers = 2,
+            });
+
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+
+        var transfers = coordinator.RunAsync(CancellationToken.None);
+        var monitoring = monitor.RunAsync(path => coordinator.EnqueueAsync(path), stop.Token);
+
+        var content = new byte[256 * 1024];
+        Array.Fill(content, (byte)'M');
+        await File.WriteAllBytesAsync(Path.Combine(root, "monitored.raw"), content);
+
+        var remote = Destination.Append("monitored.raw");
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(60);
+
+        while (_server.Content(remote) is null && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(100);
+        }
+
+        // Sampled before stopping: the watch is torn down on the way out, so asking afterwards
+        // would always report that notifications were unavailable.
+        var watching = monitor.Status.WatchingForChanges;
+
+        await stop.CancelAsync();
+
+        try
+        {
+            await monitoring;
+        }
+        catch (OperationCanceledException)
+        {
+            // How a cancelled monitor is supposed to end.
+        }
+
+        coordinator.CompleteAdding();
+        await transfers;
+
+        _server.Content(remote).ShouldBe(content);
+
+        Console.WriteLine(
+            $"[smb] change notifications were {(watching ? "" : "not ")}available on this share");
+    }
+
+    [SkippableFact]
+    public async Task What_a_sweep_of_a_share_costs_is_recorded()
+    {
+        // Walking a network folder is a different cost from walking a local disk, and idle cost
+        // is the one thing this application has to be careful about. Recorded rather than
+        // asserted: the number depends entirely on the server and the size of the tree, so the
+        // point is to have it written down for whoever changes the reconciliation interval.
+        var root = Require();
+
+        for (var i = 0; i < 25; i++)
+        {
+            await File.WriteAllTextAsync(Path.Combine(root, $"swept{i:D2}.raw"), "acquisition");
+        }
+
+        var scanner = new ReconciliationScanner(
+            _store,
+            new ReconciliationOptions
+            {
+                Root = root,
+                DestinationRoot = Destination,
+                Filter = new CandidateFilter([".raw"]),
+            });
+
+        // The first sweep pays for whatever the SMB client has not cached yet; the second is the
+        // one that repeats every quarter of an hour for the rest of the day.
+        var first = await scanner.SweepAsync((_, _) => Task.CompletedTask);
+        var second = await scanner.SweepAsync((_, _) => Task.CompletedTask);
+
+        first.Failed.ShouldBeFalse();
+        first.Examined.ShouldBeGreaterThanOrEqualTo(25);
+
+        Console.WriteLine(
+            $"[smb] sweep of {first.Examined} file(s): "
+            + $"{first.Elapsed.TotalMilliseconds:F0} ms cold, "
+            + $"{second.Elapsed.TotalMilliseconds:F0} ms warm");
+    }
+
     public async ValueTask DisposeAsync()
     {
         await _store.DisposeAsync();

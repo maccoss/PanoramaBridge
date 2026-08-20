@@ -64,7 +64,7 @@
 
             <DataGrid.Columns>
                 <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="2*" />
-                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="110" />
+                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="130" />
 
                 <DataGridTemplateColumn Header="Progress" Width="150">
                     <DataGridTemplateColumn.CellTemplate>

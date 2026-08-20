@@ -6,6 +6,24 @@ using PanoramaBridge.Core.Transfer;
 namespace PanoramaBridge.App.ViewModels;
 
 /// <summary>
+/// The block of the transfer grid a row sits in. Declaration order is display order.
+/// </summary>
+public enum TransferBand
+{
+    /// <summary>Bytes are moving, or the server is being asked to confirm them.</summary>
+    Active = 0,
+
+    /// <summary>Somebody has to do something about it.</summary>
+    NeedsAttention = 1,
+
+    /// <summary>Done with, one way or the other.</summary>
+    Finished = 2,
+
+    /// <summary>Found, but not safe to read or not started yet.</summary>
+    Waiting = 3,
+}
+
+/// <summary>
 /// One row of the transfer grid.
 /// </summary>
 /// <remarks>
@@ -66,6 +84,37 @@ public sealed partial class TransferRowViewModel : ObservableObject
     [ObservableProperty]
     private long _totalBytes;
 
+    /// <summary>Which block of the grid this row belongs in. Lower sorts higher.</summary>
+    public TransferBand Band => BandFor(State);
+
+    /// <summary>
+    /// Groups a state into the block of the grid it belongs in.
+    /// </summary>
+    /// <remarks>
+    /// The order follows what a person watching a transfer is actually looking for: what is
+    /// moving now, then anything that went wrong, then what has finished, then what has not
+    /// started. Files therefore travel down the grid as they progress -- a row moves from the
+    /// top block to the middle one at the moment it is verified -- rather than staying wherever
+    /// it happened to be inserted.
+    /// </remarks>
+    public static TransferBand BandFor(TransferState state) => state switch
+    {
+        // Queued belongs here rather than with the waiting files: the engine has accepted it and
+        // is working on it, which includes the checks that run before any bytes move. Waiting is
+        // reserved for files that are not safe to read yet.
+        TransferState.Queued or TransferState.Uploading or TransferState.Uploaded =>
+            TransferBand.Active,
+
+        // Kept near the top rather than buried under a session's worth of finished rows: these
+        // are the only rows that need a person to do something.
+        TransferState.Failed or TransferState.Conflict or TransferState.Superseded =>
+            TransferBand.NeedsAttention,
+
+        TransferState.Verified or TransferState.Skipped => TransferBand.Finished,
+
+        _ => TransferBand.Waiting,
+    };
+
     /// <summary>Updates this row from a newer report.</summary>
     public void Apply(TransferProgress progress)
     {
@@ -73,7 +122,13 @@ public sealed partial class TransferRowViewModel : ObservableObject
 
         RemotePath = progress.RemotePath;
         State = progress.State;
-        Status = Describe(progress.State);
+
+        // The phase is what the engine is doing at this instant; the state is only where the
+        // file stands. Preferring the phase is what stops a row reading "Queued" while the
+        // server is spending half a minute hashing a folder on its behalf.
+        Status = string.IsNullOrWhiteSpace(progress.Phase)
+            ? Describe(progress.State)
+            : progress.Phase;
         Detail = progress.Message ?? string.Empty;
         TotalBytes = progress.TotalBytes;
 

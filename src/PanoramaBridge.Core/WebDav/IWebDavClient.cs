@@ -102,11 +102,34 @@ public interface IWebDavClient
     /// <param name="destination">Where it should land.</param>
     /// <param name="progress">Reports cumulative bytes handed to the socket.</param>
     /// <param name="cancellationToken">Cancels the transfer.</param>
+    /// <param name="lastModified">
+    /// The time to stamp the stored file with, normally when the instrument wrote it. Null lets
+    /// the server stamp it with the time it arrived, which loses the acquisition date.
+    /// </param>
     Task<UploadResult> UploadAsync(
         string localFilePath,
         RemotePath destination,
         IProgress<long>? progress = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        DateTimeOffset? lastModified = null);
+
+    /// <summary>
+    /// Uploads a small piece of text, such as a checksum sidecar.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="UploadAsync"/> because none of what makes that method careful --
+    /// streaming from a file handle shared with an instrument, hashing in the same pass, a stall
+    /// watchdog -- applies to a few hundred bytes held in memory.
+    /// </remarks>
+    /// <param name="content">What to write.</param>
+    /// <param name="destination">Where it should land.</param>
+    /// <param name="cancellationToken">Cancels the request.</param>
+    /// <param name="lastModified">The time to stamp the stored file with.</param>
+    Task UploadTextAsync(
+        string content,
+        RemotePath destination,
+        CancellationToken cancellationToken = default,
+        DateTimeOffset? lastModified = null);
 
     /// <summary>Renames or moves a resource.</summary>
     Task MoveAsync(

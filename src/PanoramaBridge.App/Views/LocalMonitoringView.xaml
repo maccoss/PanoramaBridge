@@ -20,8 +20,12 @@
                     </DockPanel>
                     <CheckBox Content="Include subdirectories"
                               IsChecked="{Binding IncludeSubdirectories}" />
+                    <CheckBox Margin="0,6,0,0" Content="Start monitoring automatically when PanoramaBridge opens"
+                              IsChecked="{Binding StartMonitoringOnLaunch}" />
                     <TextBlock Style="{StaticResource Hint}"
-                               Text="A folder on a file server works too. Prefer the full network path over a mapped drive letter: drive letters belong to a single Windows sign-in, so a path like Y:\ will not resolve if PanoramaBridge is ever started as a service or scheduled task." />
+                               Text="A folder on a file server works too. Pick a mapped drive and PanoramaBridge records the full network path instead, because a drive letter belongs to a single Windows sign-in and would not resolve if PanoramaBridge were ever started as a service or scheduled task." />
+                    <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0"
+                               Text="Choose the folder your instrument writes into rather than the top of a shared drive. Every re-check walks the whole folder, and over the network that takes about half a minute for thirty thousand files." />
                 </StackPanel>
             </GroupBox>
 
@@ -71,7 +75,7 @@
             <GroupBox Header="Files held open by an instrument">
                 <StackPanel>
                     <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,10"
-                               Text="An instrument holds its output file for the whole of a run, so the first re-check waits a long time by default rather than burning requests on a file that cannot be read yet." />
+                               Text="An instrument holds its output file for the whole of a run. PanoramaBridge keeps looking at it, slowly, because the only way to find out that a file has been released is to try." />
 
                     <Grid Margin="{StaticResource RowMargin}">
                         <Grid.ColumnDefinitions>
@@ -80,19 +84,10 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}"
-                                   Text="First re-check after (minutes)" />
-                        <TextBox Grid.Column="1" Text="{Binding LockedFileInitialWaitMinutes}" />
-                    </Grid>
-
-                    <Grid Margin="{StaticResource RowMargin}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="220" />
-                            <ColumnDefinition Width="90" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}"
-                                   Text="Then every (seconds)" />
+                                   Text="Look again every (seconds)" />
                         <TextBox Grid.Column="1" Text="{Binding LockedFileRetryIntervalSeconds}" />
+                        <TextBlock Grid.Column="2" Style="{StaticResource Hint}" Margin="12,0,0,0"
+                                   Text="Also how long you may wait for a finished file to start transferring." />
                     </Grid>
 
                     <Grid>
@@ -102,8 +97,10 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}"
-                                   Text="Give up after (attempts)" />
+                                   Text="Stop watching closely after (checks)" />
                         <TextBox Grid.Column="1" Text="{Binding LockedFileMaxRetries}" />
+                        <TextBlock Grid.Column="2" Style="{StaticResource Hint}" Margin="12,0,0,0"
+                                   Text="The file is not forgotten. It goes back to the folder check above, which offers it again on its next pass." />
                     </Grid>
                 </StackPanel>
             </GroupBox>

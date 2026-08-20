@@ -172,6 +172,59 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             cancellationToken);
     }
 
+    /// <summary>
+    /// Largest number of paths asked about in one statement.
+    /// </summary>
+    /// <remarks>
+    /// Well inside SQLite's parameter limit, which is 999 on builds older than 3.32. Bigger
+    /// batches stop paying: the cost is dominated by the round trip, not by the parameter count.
+    /// </remarks>
+    private const int LookupBatchSize = 500;
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyDictionary<string, UploadRecord>> GetManyAsync(
+        IReadOnlyCollection<string> localPaths,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(localPaths);
+
+        // OrdinalIgnoreCase to match the column's NOCASE collation, so a caller that looks up
+        // the path it passed in finds the row whatever case the ledger recorded.
+        var found = new Dictionary<string, UploadRecord>(StringComparer.OrdinalIgnoreCase);
+
+        if (localPaths.Count == 0)
+        {
+            return found;
+        }
+
+        await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        foreach (var batch in localPaths.Chunk(LookupBatchSize))
+        {
+            await using var command = connection.CreateCommand();
+
+            var placeholders = string.Join(", ", batch.Select((_, i) => $"$p{i}"));
+            command.CommandText = $"{SelectColumns} FROM uploads WHERE local_path IN ({placeholders});";
+
+            for (var i = 0; i < batch.Length; i++)
+            {
+                command.Parameters.AddWithValue($"$p{i}", batch[i]);
+            }
+
+            await using var reader = await command
+                .ExecuteReaderAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var record = Read(reader);
+                found[record.LocalPath] = record;
+            }
+        }
+
+        return found;
+    }
+
     /// <inheritdoc />
     public async Task<UploadRecord?> FindByContentAsync(
         long length,

@@ -58,11 +58,22 @@ public sealed class UploadDecisionService
     /// Works out what to do with <paramref name="stamp"/> given its intended
     /// <paramref name="destination"/>.
     /// </summary>
+    /// <param name="stamp">The local file being decided about.</param>
+    /// <param name="destination">Where it would go.</param>
+    /// <param name="policy">What to do about a clash.</param>
+    /// <param name="cancellationToken">Stops the decision.</param>
+    /// <param name="onStep">
+    /// Told what the ladder is about to spend time on, so a file is never shown sitting idle
+    /// while something slow happens on its behalf. Both of the expensive tiers can take a
+    /// noticeable while: the server computes a folder's hashes on demand over every byte in it,
+    /// and hashing a seven-gigabyte acquisition locally is not instant either.
+    /// </param>
     public async Task<UploadDecision> DecideAsync(
         LocalFileStamp stamp,
         RemotePath destination,
         ConflictPolicy policy,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Action<string>? onStep = null)
     {
         ArgumentNullException.ThrowIfNull(destination);
 
@@ -71,9 +82,7 @@ public sealed class UploadDecisionService
         // -- Tier 0: the ledger already knows -------------------------------------------------
         var existing = await _store.GetAsync(stamp.Path, cancellationToken).ConfigureAwait(false);
 
-        if (existing is not null
-            && existing.IsSettled(stamp)
-            && string.Equals(existing.RemotePath, encodedDestination, StringComparison.Ordinal))
+        if (existing is not null && existing.IsSettledAt(stamp, encodedDestination))
         {
             return new UploadDecision(
                 UploadAction.Skip,
@@ -83,6 +92,8 @@ public sealed class UploadDecisionService
         }
 
         // -- Tier 1: what is actually in the destination folder -------------------------------
+        onStep?.Invoke("Checking server");
+
         var snapshot = await _snapshots
             .GetAsync(destination.Parent, cancellationToken)
             .ConfigureAwait(false);
@@ -150,6 +161,8 @@ public sealed class UploadDecisionService
         }
 
         // -- Tier 2: hash the local file, cache first -----------------------------------------
+        onStep?.Invoke("Checking file");
+
         var hashes = await GetHashesAsync(stamp, cancellationToken).ConfigureAwait(false);
 
         if (string.Equals(hashes.Md5, remoteHash, StringComparison.OrdinalIgnoreCase))
