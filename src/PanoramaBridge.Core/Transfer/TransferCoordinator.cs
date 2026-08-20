@@ -356,7 +356,10 @@ public sealed class TransferCoordinator : IAsyncDisposable
         var stopwatch = Stopwatch.StartNew();
         var lastReport = TimeSpan.Zero;
 
-        var progress = new Progress<long>(sent =>
+        // Inline, not Progress<long>: the framework type POSTS each report, so one could be
+        // delivered after the "verified" state that follows it and flip a finished row back to
+        // in-progress. The aggregator is latest-wins, so ordering is load-bearing.
+        var progress = new InlineProgress<long>(sent =>
         {
             // Throttled here as well as in the UI: a 1 MiB granularity on a 7 GB file is seven
             // thousand events, and the consumer should not have to defend against that.

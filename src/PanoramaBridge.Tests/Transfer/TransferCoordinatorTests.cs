@@ -99,6 +99,24 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
     }
 
     [Fact]
+    public void Progress_is_reported_inline_so_ordering_is_preserved()
+    {
+        // The framework's Progress<T> POSTS each report rather than invoking it, so a report can
+        // be delivered after the code that follows it. Because the aggregator is latest-wins,
+        // that would let a late "uploading" overwrite "verified" and leave a finished row stuck
+        // showing progress. This caught exactly that: the phase sequence passed locally and
+        // failed on CI, where the posted callback arrived after the run had finished.
+        var order = new List<string>();
+
+        IProgress<long> progress = new InlineProgress<long>(_ => order.Add("reported"));
+
+        progress.Report(1);
+        order.Add("after");
+
+        order.ShouldBe(["reported", "after"]);
+    }
+
+    [Fact]
     public async Task Progress_moves_through_uploading_verifying_and_verified()
     {
         var file = await WriteAsync("phases.raw", "some bytes here");
@@ -109,6 +127,9 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         phases.ShouldContain("Uploading");
         phases.ShouldContain("Verifying");
         phases[^1].ShouldBe("Verified");
+
+        // Ordering, not just presence: a row must never appear to go backwards.
+        phases.IndexOf("Uploading").ShouldBeLessThan(phases.IndexOf("Verifying"));
 
         // The gap between the last byte written and the server's answer is stated as its own
         // phase rather than papered over by holding the bar below 100%.
