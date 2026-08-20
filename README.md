@@ -133,6 +133,8 @@ for the architecture and the reasoning behind it.
 Install with `pip install panoramabridge`, then run `panoramabridge`. Requires Python 3.9 or
 later and PyQt6, watchdog, requests and keyring.
 
+The screenshots below show the Python interface. The .NET application looks different.
+
 ## Creating a Windows Executable (Optional)
 
 > **For detailed Windows build instructions, see [BUILD_WINDOWS.md](build_scripts/BUILD_WINDOWS.md)**
@@ -172,7 +174,7 @@ These scripts automatically handle virtual environment setup, dependency install
 - **Directory Structure**: Preserve local folder structure on remote server
 - **File Stability**: Configure how long to wait before considering a file complete
 
-![Local Monitoring](screenshots/localmonitoring.png)
+![Local Monitoring, in the retired Python application](screenshots/localmonitoring.png)
 
 ### Advanced Settings Tab
 
@@ -204,7 +206,7 @@ These scripts automatically handle virtual environment setup, dependency install
 - **Transfer Settings**: Configure upload verification for integrity checking
 - **Upload Verification**: Enable/disable post-upload integrity checking
 
-![Remote Settings](screenshots/remotesettings.png)
+![Remote Settings, in the retired Python application](screenshots/remotesettings.png)
 
 ### Transfer Status Tab
 
@@ -213,7 +215,7 @@ These scripts automatically handle virtual environment setup, dependency install
 - **Activity Log**: Timestamped events and error messages
 - **Log Access**: View → View Application Logs for detailed troubleshooting
 
-![Transfer Status](screenshots/transferstatus.png)
+![Transfer Status, in the retired Python application](screenshots/transferstatus.png)
 
 ## How PanoramaBridge Works: Step-by-Step Process
 

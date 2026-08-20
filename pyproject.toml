@@ -1,3 +1,7 @@
+# RETIRED: this packages the Python application, which has been superseded by the .NET 8
+# one. Publishing is manual-dispatch only (.github/workflows/publish-pypi.yml) and is
+# intended for one final deprecation release. See docs/PYTHON_REMOVAL_PLAN.md.
+
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -5,7 +9,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "panoramabridge"
 version = "0.1.9rc4"
-description = "A Python Qt6 application for monitoring local directories and automatically transferring files to Panorama WebDAV servers"
+description = "RETIRED - superseded by the .NET application at https://github.com/maccoss/PanoramaBridge/releases. Python Qt6 application for transferring files to Panorama WebDAV servers."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.9"

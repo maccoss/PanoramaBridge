@@ -1,5 +1,12 @@
 # Release Process Guide
 
+> [!WARNING]
+> **This describes the retired Python application, and it contradicts current practice.** The
+> release process for the .NET application is in [`release-notes/README.md`](../release-notes/README.md) and
+> summarised in [`CLAUDE.md`](../CLAUDE.md). `release.yml` no longer builds PyInstaller executables;
+> it packs a Velopack installer and publishes the matching release notes as the Release body.
+> Kept only for reference -- see the [removal plan](PYTHON_REMOVAL_PLAN.md).
+
 This document explains how to create releases for PanoramaBridge with multi-architecture support.
 
 ## Release Workflows

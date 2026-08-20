@@ -1,3 +1,7 @@
+# RETIRED: builds the Python application, which has been replaced by a .NET 8 one.
+# The .NET build is `dotnet build PanoramaBridge.sln -c Release`, and releases are packed by
+# .github/workflows/release.yml. See docs/PYTHON_REMOVAL_PLAN.md.
+#
 # PowerShell script to build PanoramaBridge executable for ARM64/Snapdragon
 # This script should be run on an ARM64 Windows system (Snapdragon laptop/PC)
 # Run this from the build_scripts directory with: .\build_windows_arm64.ps1

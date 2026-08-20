@@ -1,5 +1,11 @@
 # Build Scripts
 
+> [!NOTE]
+> **This describes the retired Python application.** PanoramaBridge is now a native Windows
+> application built on .NET 8 -- see the [README](../README.md) and the
+> [.NET port handoff](../docs/DOTNET_PORT_HANDOFF.md). This file is kept for reference while existing installations
+> are migrated, and will be removed: see the [removal plan](../docs/PYTHON_REMOVAL_PLAN.md).
+
 Scripts and configuration files for building PanoramaBridge executables.
 
 ## Quick Build

@@ -1,5 +1,11 @@
 # Remote Integrity Check System (Updated 2025)
 
+> [!NOTE]
+> **This describes the retired Python application.** PanoramaBridge is now a native Windows
+> application built on .NET 8 -- see the [README](../../README.md) and the
+> [.NET port handoff](../DOTNET_PORT_HANDOFF.md). This file is kept for reference while existing installations
+> are migrated, and will be removed: see the [removal plan](../PYTHON_REMOVAL_PLAN.md).
+
 ## Overview
 
 PanoramaBridge includes a comprehensive verification system to check that all local files are properly uploaded and intact on the remote server. The system has been recently enhanced with improved conflict resolution logic that no longer assumes corruption when files differ.

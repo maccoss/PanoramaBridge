@@ -1,3 +1,7 @@
+# RETIRED: builds the Python application, which has been replaced by a .NET 8 one.
+# The .NET build is `dotnet build PanoramaBridge.sln -c Release`, and releases are packed by
+# .github/workflows/release.yml. See docs/PYTHON_REMOVAL_PLAN.md.
+#
 # -*- mode: python ; coding: utf-8 -*-
 
 

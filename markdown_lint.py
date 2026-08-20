@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# RETIRED: builds the Python application, which has been replaced by a .NET 8 one.
+# The .NET build is `dotnet build PanoramaBridge.sln -c Release`, and releases are packed by
+# .github/workflows/release.yml. See docs/PYTHON_REMOVAL_PLAN.md.
+#
 """
 Simplified Markdown Linter for PanoramaBridge
 Only checks for the most important markdown issues without noise.

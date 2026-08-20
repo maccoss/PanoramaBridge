@@ -1,5 +1,11 @@
 # File Monitoring Robustness Improvements
 
+> [!NOTE]
+> **This describes the retired Python application.** PanoramaBridge is now a native Windows
+> application built on .NET 8 -- see the [README](../../README.md) and the
+> [.NET port handoff](../DOTNET_PORT_HANDOFF.md). This file is kept for reference while existing installations
+> are migrated, and will be removed: see the [removal plan](../PYTHON_REMOVAL_PLAN.md).
+
 ## Overview
 
 This document summarizes the robustness improvements made to PanoramaBridge's file monitoring system to prevent crashes during file copying operations and other error conditions.

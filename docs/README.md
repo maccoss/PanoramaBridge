@@ -1,6 +1,33 @@
 # PanoramaBridge Documentation
 
-Technical documentation and implementation guides for PanoramaBridge.
+## The current application (.NET 8)
+
+PanoramaBridge is a native Windows application built on .NET 8 and WPF.
+
+| Document | What it covers |
+|---|---|
+| **[.NET port handoff](DOTNET_PORT_HANDOFF.md)** | The one to read first. Architecture, verified server behaviour, measured costs, and the traps that cost real time to learn. |
+| **[AI development guide](../CLAUDE.md)** | House style, layout, build and release commands. |
+| **[Release process](../release-notes/README.md)** | Versioning, writing release notes, and how a release is actually published. |
+| **[Release notes](../release-notes/)** | One file per version; each becomes the GitHub Release body. |
+| **[Python removal plan](PYTHON_REMOVAL_PLAN.md)** | How and when the retired Python application goes. |
+
+Architecture questions -- how files are found, when a file counts as finished, how an upload is
+verified, what any of it costs -- are answered in the port handoff rather than in separate
+documents. It is kept current; the pages below are not.
+
+---
+
+## The retired Python application
+
+> [!NOTE]
+> Everything below documents the **retired** Python/PyQt6 implementation. It is kept for
+> reference while existing installations are migrated and will be removed -- see the
+> [removal plan](PYTHON_REMOVAL_PLAN.md). Where it disagrees with the port handoff, the handoff
+> is right.
+>
+> In particular, `RELEASE_PROCESS.md` describes a `release.yml` that no longer exists in that
+> form. **Do not follow it.**
 
 ## Core Documentation
 
@@ -67,11 +94,8 @@ The following files contain historical implementation details and have been cons
 
 </details>
 
-## Navigation
+## Navigation (retired application)
 
-- **[Main README](../README.md)** - Installation and usage instructions
-- **[Build Scripts](../build_scripts/README.md)** - Windows executable builds
-- **[Demo Scripts](../demo_scripts/README.md)** - Example scripts and diagnostics
-- **[AI Development Guide](../CLAUDE.md)** - Conventions for AI-assisted development
-- **[.NET Port Handoff](DOTNET_PORT_HANDOFF.md)** - Current state of the C# rewrite
+- **[Build scripts](../build_scripts/README.md)** - PyInstaller executable builds
+- **[Demo scripts](../demo_scripts/README.md)** - Example scripts and diagnostics
 

@@ -1,5 +1,11 @@
 # Integrity Check System Improvements (2025)
 
+> [!NOTE]
+> **This describes the retired Python application.** PanoramaBridge is now a native Windows
+> application built on .NET 8 -- see the [README](../../README.md) and the
+> [.NET port handoff](../DOTNET_PORT_HANDOFF.md). This file is kept for reference while existing installations
+> are migrated, and will be removed: see the [removal plan](../PYTHON_REMOVAL_PLAN.md).
+
 ## Overview
 
 The PanoramaBridge integrity check system has been significantly enhanced to provide better conflict resolution and more accurate file verification. These improvements address user feedback about confusing error messages and incorrect corruption assumptions.
