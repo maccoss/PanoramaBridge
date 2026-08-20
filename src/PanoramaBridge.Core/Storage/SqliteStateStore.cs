@@ -288,14 +288,18 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         command.Parameters.AddWithValue("$mtime", stamp.LastWriteUnixMs);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
-            || reader.IsDBNull(0)
-            || reader.IsDBNull(1))
+
+        // Only the MD5 is required. SHA-256 is optional, and treating its absence as a cache
+        // miss would mean never hitting the cache at all -- which is exactly the defect that
+        // made the previous implementation re-hash multi-gigabyte files on every pass.
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || reader.IsDBNull(0))
         {
             return null;
         }
 
-        return new ContentHashes(reader.GetString(0), reader.GetString(1));
+        return new ContentHashes(
+            reader.GetString(0),
+            reader.IsDBNull(1) ? null : reader.GetString(1));
     }
 
     /// <inheritdoc />
@@ -315,7 +319,10 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                 command.Parameters.AddWithValue("$size", stamp.Length);
                 command.Parameters.AddWithValue("$mtime", stamp.LastWriteUnixMs);
                 command.Parameters.AddWithValue("$md5", hashes.Md5);
-                command.Parameters.AddWithValue("$sha256", hashes.Sha256);
+
+                // DBNull, not a CLR null: ADO.NET rejects the latter, and with SHA-256 now
+                // optional this parameter is null on every ordinary transfer.
+                command.Parameters.AddWithValue("$sha256", hashes.Sha256 ?? (object)DBNull.Value);
             },
             cancellationToken);
 

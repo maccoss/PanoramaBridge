@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net.Http;
 using Microsoft.Extensions.Logging;
+using PanoramaBridge.Core.Infrastructure;
 using PanoramaBridge.Core.Security;
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Core.Transfer;
@@ -34,6 +35,7 @@ public sealed class TransferService : IAsyncDisposable
 {
     private readonly IStateStore _store;
     private readonly ICredentialStore _credentials;
+    private readonly ResourceGovernor _governor;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<TransferService> _log;
 
@@ -45,10 +47,12 @@ public sealed class TransferService : IAsyncDisposable
     public TransferService(
         IStateStore store,
         ICredentialStore credentials,
+        ResourceGovernor governor,
         ILoggerFactory loggerFactory)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
+        _governor = governor ?? throw new ArgumentNullException(nameof(governor));
         _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
         _log = loggerFactory.CreateLogger<TransferService>();
     }
@@ -205,6 +209,10 @@ public sealed class TransferService : IAsyncDisposable
             _run.Dispose();
             _run = null;
             RunStateChanged?.Invoke();
+
+            // Hand back what the transfer needed. An idle monitor on an instrument computer
+            // should not sit on memory the acquisition software may want.
+            _governor.ReleaseIdleMemory();
         }
     }
 
@@ -294,6 +302,7 @@ public sealed class TransferService : IAsyncDisposable
             Credential = credential,
             MaxConcurrentTransfers = settings.MaxConcurrentTransfers,
             TrustedRootCertificatePath = settings.TrustedRootCertificatePath,
+            RecordSha256 = settings.RecordSha256,
         };
 
         _http = options.CreateHttpClient();

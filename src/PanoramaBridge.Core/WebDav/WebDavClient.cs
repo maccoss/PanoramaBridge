@@ -240,7 +240,8 @@ public sealed class WebDavClient : IWebDavClient
                 bufferSize: 1,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
 
-            await using var hashing = new HashingReadStream(file, leaveOpen: true);
+            await using var hashing = new HashingReadStream(
+                file, leaveOpen: true, alsoSha256: _options.RecordSha256);
 
             var content = new StreamingFileContent(
                 hashing,

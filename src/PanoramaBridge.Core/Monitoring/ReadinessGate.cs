@@ -35,6 +35,15 @@ public sealed class ReadinessGate
     private readonly TimeSpan _pollInterval;
     private readonly ILogger<ReadinessGate> _log;
 
+    /// <summary>
+    /// Slowest cadence the gate backs off to while nothing is changing.
+    /// </summary>
+    /// <remarks>
+    /// Thirty seconds against an acquisition that runs for half an hour is two checks a minute
+    /// rather than sixty, and costs at most thirty seconds of latency once it finally finishes.
+    /// </remarks>
+    private static readonly TimeSpan MaximumPollInterval = TimeSpan.FromSeconds(30);
+
     public ReadinessGate(
         FileStabilityTracker tracker,
         TimeSpan? pollInterval = null,
@@ -43,6 +52,13 @@ public sealed class ReadinessGate
         _tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
         _pollInterval = pollInterval ?? TimeSpan.FromSeconds(1);
         _log = log ?? NullLogger<ReadinessGate>.Instance;
+    }
+
+    /// <summary>Doubles the wait, up to the ceiling.</summary>
+    private static TimeSpan Slower(TimeSpan current)
+    {
+        var doubled = current * 2;
+        return doubled > MaximumPollInterval ? MaximumPollInterval : doubled;
     }
 
     /// <summary>
@@ -79,6 +95,8 @@ public sealed class ReadinessGate
             ? DateTimeOffset.UtcNow + limit
             : DateTimeOffset.MaxValue;
 
+        var delay = _pollInterval;
+
         while (pending.Count > 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -92,6 +110,10 @@ public sealed class ReadinessGate
                     pending.Remove(path);
                     waiting.Remove(path);
                     released.Add(path);
+
+                    // Something moved, so go back to checking briskly: files usually finish in
+                    // batches, and the next one is probably close behind.
+                    delay = _pollInterval;
 
                     await onReady(path).ConfigureAwait(false);
                     continue;
@@ -126,7 +148,13 @@ public sealed class ReadinessGate
                 break;
             }
 
-            await Task.Delay(_pollInterval, cancellationToken).ConfigureAwait(false);
+            // Back off while nothing is changing. An instrument holds its output open for an
+            // entire run, so polling every second for half an hour means thousands of pointless
+            // file opens on the disk the instrument is writing to. Backing off to a slower
+            // cadence costs a few seconds of latency on a transfer that has already waited
+            // minutes, and spares the machine the churn.
+            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            delay = Slower(delay);
         }
 
         return new GateOutcome(released, abandoned, waiting);

@@ -51,6 +51,9 @@ public sealed class FakeWebDavClient : IWebDavClient
     /// <summary>When true, collection hash requests report nothing, as a locked-down server might.</summary>
     public bool WithholdHashes { get; set; }
 
+    /// <summary>Mirrors the client option, so a test can opt into SHA-256 as the app would.</summary>
+    public bool RecordSha256 { get; set; }
+
     public void Reset()
     {
         Volatile.Write(ref _listCalls, 0);
@@ -230,7 +233,8 @@ public sealed class FakeWebDavClient : IWebDavClient
         return new UploadResult(
             destination,
             content.Length,
-            new ContentHashes(Md5Of(content), Sha256Of(content)),
+            // Matches the real client's default: SHA-256 is opt-in.
+            new ContentHashes(Md5Of(content), RecordSha256 ? Sha256Of(content) : null),
             TimeSpan.FromMilliseconds(1));
     }
 

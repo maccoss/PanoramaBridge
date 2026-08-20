@@ -271,6 +271,31 @@ public sealed class WebDavClientTests : IDisposable
         result.BytesUploaded.ShouldBe(payload.Length);
         result.Hashes.Md5.ShouldBe(Convert.ToHexString(
             System.Security.Cryptography.MD5.HashData(payload)).ToLowerInvariant());
+
+        // SHA-256 is off by default. Only the MD5 can be checked against what the server stored,
+        // so a second digest is processor time spent on a value nothing verifies -- and this runs
+        // on the computer driving the instrument.
+        result.Hashes.Sha256.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Sha256_is_computed_when_it_is_asked_for()
+    {
+        var payload = "provenance matters here"u8.ToArray();
+        await File.WriteAllBytesAsync(_tempFile, payload);
+
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(Status(HttpStatusCode.Created)));
+        var client = new WebDavClient(
+            handler.CreateClient(),
+            new WebDavClientOptions
+            {
+                BaseAddress = new Uri("https://panoramaweb.org"),
+                Credential = PanoramaCredential.ApiKey("k"),
+                RecordSha256 = true,
+            });
+
+        var result = await client.UploadAsync(_tempFile, Files.Append("sha.raw"));
+
         result.Hashes.Sha256.ShouldBe(Convert.ToHexString(
             System.Security.Cryptography.SHA256.HashData(payload)).ToLowerInvariant());
     }

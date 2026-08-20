@@ -91,6 +91,28 @@ public sealed record AppSettings
     /// <summary>Whether to confirm every upload against the server's own hash.</summary>
     public bool VerifyUploads { get; init; } = true;
 
+    /// <summary>
+    /// Whether to stay out of the way of instrument software.
+    /// </summary>
+    /// <remarks>
+    /// On by default, because the usual home for this application is the computer attached to a
+    /// mass spectrometer. Lowers processor and disk priority so an acquisition always wins;
+    /// transfers then take longer on a busy machine, which is the correct trade. Turn it off on a
+    /// workstation being used for bulk uploads, where nothing else needs the machine.
+    /// </remarks>
+    public bool YieldToInstrumentSoftware { get; init; } = true;
+
+    /// <summary>
+    /// Whether to record a SHA-256 alongside the MD5.
+    /// </summary>
+    /// <remarks>
+    /// Off by default. MD5 is what Panorama reports, so it is the only hash that can be checked
+    /// against what the server actually stored; a second digest doubles the processor cost of
+    /// every transfer for a value nothing verifies. Worth enabling only where a stronger
+    /// provenance record is specifically wanted.
+    /// </remarks>
+    public bool RecordSha256 { get; init; }
+
     // -- Remote -------------------------------------------------------------------------------
 
     /// <summary>Panorama server address.</summary>
@@ -166,6 +188,8 @@ public sealed record AppSettings
             && MaxConcurrentTransfers == other.MaxConcurrentTransfers
             && ConflictPolicy == other.ConflictPolicy
             && VerifyUploads == other.VerifyUploads
+            && YieldToInstrumentSoftware == other.YieldToInstrumentSoftware
+            && RecordSha256 == other.RecordSha256
             && ServerUrl == other.ServerUrl
             && AuthMode == other.AuthMode
             && UserName == other.UserName
@@ -192,6 +216,8 @@ public sealed record AppSettings
         hash.Add(MaxConcurrentTransfers);
         hash.Add(ConflictPolicy);
         hash.Add(VerifyUploads);
+        hash.Add(YieldToInstrumentSoftware);
+        hash.Add(RecordSha256);
         hash.Add(ServerUrl);
         hash.Add(AuthMode);
         hash.Add(UserName);

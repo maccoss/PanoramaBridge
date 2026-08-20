@@ -52,6 +52,15 @@ public sealed class WebDavClientOptions
     /// </remarks>
     public TimeSpan UploadStallTimeout { get; init; } = TimeSpan.FromMinutes(2);
 
+    /// <summary>
+    /// Whether to compute a SHA-256 alongside the MD5 during upload.
+    /// </summary>
+    /// <remarks>
+    /// Off by default. Only the MD5 can be checked against what the server stored, so a second
+    /// digest is processor time spent on a value nothing verifies.
+    /// </remarks>
+    public bool RecordSha256 { get; init; }
+
     /// <summary>Total attempts for a retryable failure, including the first.</summary>
     public int MaxAttempts { get; init; } = 5;
 

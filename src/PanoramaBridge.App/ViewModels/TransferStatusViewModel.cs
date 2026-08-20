@@ -1,6 +1,7 @@
 using System.IO;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Windows;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -39,6 +40,17 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
 
     private readonly DispatcherTimer _timer;
 
+    /// <summary>
+    /// Consecutive quiet ticks tolerated before the timer stops.
+    /// </summary>
+    /// <remarks>
+    /// A couple of ticks of grace avoids stopping and restarting the timer between two files in
+    /// a batch, which would be more work than leaving it running.
+    /// </remarks>
+    private const int QuietTicksBeforeStopping = 5;
+
+    private int _quietTicks;
+
     public TransferStatusViewModel(TransferProgressAggregator aggregator)
     {
         _aggregator = aggregator ?? throw new ArgumentNullException(nameof(aggregator));
@@ -48,7 +60,34 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
             Interval = RefreshInterval,
         };
         _timer.Tick += (_, _) => Refresh();
-        _timer.Start();
+
+        // Deliberately not started. This application spends nearly all of its life on an
+        // instrument computer with nothing to display, and a timer ticking five times a second
+        // forever keeps the processor out of its deep idle states for no benefit. The aggregator
+        // wakes us when there is actually something to draw.
+        _aggregator.WorkAppeared += Wake;
+    }
+
+    /// <summary>
+    /// Starts refreshing because work has appeared. Safe to call from a worker thread.
+    /// </summary>
+    private void Wake()
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            dispatcher.InvokeAsync(Wake, DispatcherPriority.Background);
+            return;
+        }
+
+        _quietTicks = 0;
+
+        if (!_timer.IsEnabled)
+        {
+            _timer.Start();
+            Refresh();
+        }
     }
 
     /// <summary>Rows bound to the grid. Only ever mutated on the UI thread.</summary>
@@ -96,6 +135,17 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
         Summary = totals.Describe();
         OverallProgress = totals.Fraction;
         AttentionCount = totals.NeedsAttention;
+
+        // Stop once there is nothing moving and nothing left to draw. Anything new restarts us
+        // through WorkAppeared, so no polling is needed to notice.
+        var busy = totals.Active > 0 || totals.Queued > 0 || _aggregator.HasPendingChanges;
+
+        _quietTicks = busy ? 0 : _quietTicks + 1;
+
+        if (_quietTicks >= QuietTicksBeforeStopping && _timer.IsEnabled)
+        {
+            _timer.Stop();
+        }
     }
 
     /// <summary>Forgets rows that finished cleanly, keeping anything unresolved.</summary>
@@ -156,5 +206,9 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
     }
 
     /// <inheritdoc />
-    public void Dispose() => _timer.Stop();
+    public void Dispose()
+    {
+        _aggregator.WorkAppeared -= Wake;
+        _timer.Stop();
+    }
 }

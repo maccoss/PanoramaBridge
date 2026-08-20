@@ -5,9 +5,10 @@ namespace PanoramaBridge.Core.Hashing;
 /// <summary>The hashes computed over a file's bytes.</summary>
 /// <param name="Md5">Lower-case hex MD5. Compared against the server's own hash.</param>
 /// <param name="Sha256">
-/// Lower-case hex SHA-256, kept as the provenance record and change-detection key.
+/// Lower-case hex SHA-256, or null when it was not requested. Optional because MD5 is the hash
+/// the server reports, so SHA-256 is a provenance record rather than something anything verifies.
 /// </param>
-public readonly record struct ContentHashes(string Md5, string Sha256);
+public readonly record struct ContentHashes(string Md5, string? Sha256);
 
 /// <summary>
 /// A read-only pass-through stream that hashes every byte that flows through it.
@@ -20,11 +21,11 @@ public readonly record struct ContentHashes(string Md5, string Sha256);
 /// happens. Wrapping the upload stream folds the hash into the transfer for free.
 /// </para>
 /// <para>
-/// Both MD5 and SHA-256 are computed in the same pass. MD5 is the one that matters, because it
-/// is what Panorama reports back and therefore the only hash that can be compared against the
-/// bytes the server actually stored; SHA-256 costs almost nothing extra on any modern CPU and
-/// is the better long-term record. Neither is a security boundary here -- they detect
-/// corruption, not tampering.
+/// MD5 is always computed, because it is what Panorama reports back and therefore the only hash
+/// that can be compared against the bytes the server actually stored. SHA-256 is optional and off
+/// by default: it is a provenance record rather than something anything verifies, and on an
+/// instrument computer a second digest per transfer costs processor time that the acquisition
+/// wants. Neither is a security boundary here -- they detect corruption, not tampering.
 /// </para>
 /// </remarks>
 public sealed class HashingReadStream : Stream
@@ -32,11 +33,20 @@ public sealed class HashingReadStream : Stream
     private readonly Stream _inner;
     private readonly bool _leaveOpen;
     private readonly IncrementalHash _md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
-    private readonly IncrementalHash _sha256 = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+    private readonly IncrementalHash? _sha256;
 
     private ContentHashes? _finished;
 
-    public HashingReadStream(Stream inner, bool leaveOpen = false)
+    /// <param name="inner">The stream to read through.</param>
+    /// <param name="leaveOpen">Whether to leave <paramref name="inner"/> open on dispose.</param>
+    /// <param name="alsoSha256">
+    /// Whether to compute SHA-256 as well. Off by default: MD5 is the hash Panorama reports, so
+    /// it is the only one that can be compared against what the server actually stored, and
+    /// computing a second digest doubles the processor cost of every transfer. On an instrument
+    /// computer that cost competes with the acquisition, which is a poor trade for a value
+    /// nothing checks. Turn it on where a stronger provenance record is wanted.
+    /// </param>
+    public HashingReadStream(Stream inner, bool leaveOpen = false, bool alsoSha256 = false)
     {
         ArgumentNullException.ThrowIfNull(inner);
 
@@ -47,6 +57,11 @@ public sealed class HashingReadStream : Stream
 
         _inner = inner;
         _leaveOpen = leaveOpen;
+
+        if (alsoSha256)
+        {
+            _sha256 = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        }
     }
 
     /// <summary>Bytes read so far.</summary>
@@ -82,7 +97,9 @@ public sealed class HashingReadStream : Stream
     {
         return _finished ??= new ContentHashes(
             Convert.ToHexString(_md5.GetHashAndReset()).ToLowerInvariant(),
-            Convert.ToHexString(_sha256.GetHashAndReset()).ToLowerInvariant());
+            _sha256 is null
+                ? null
+                : Convert.ToHexString(_sha256.GetHashAndReset()).ToLowerInvariant());
     }
 
     /// <inheritdoc />
@@ -129,7 +146,7 @@ public sealed class HashingReadStream : Stream
         }
 
         _md5.AppendData(chunk);
-        _sha256.AppendData(chunk);
+        _sha256?.AppendData(chunk);
         BytesRead += chunk.Length;
     }
 
@@ -153,7 +170,7 @@ public sealed class HashingReadStream : Stream
         if (disposing)
         {
             _md5.Dispose();
-            _sha256.Dispose();
+            _sha256?.Dispose();
 
             if (!_leaveOpen)
             {

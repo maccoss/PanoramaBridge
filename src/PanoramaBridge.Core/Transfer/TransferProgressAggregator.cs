@@ -110,15 +110,36 @@ public sealed class TransferProgressAggregator
     private readonly ConcurrentDictionary<string, byte> _dirty =
         new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Raised when a report arrives and nothing was pending.
+    /// </summary>
+    /// <remarks>
+    /// Lets the UI keep its refresh timer stopped while idle and start it only when there is
+    /// something to draw. On an instrument computer this matters: a timer ticking several times a
+    /// second forever keeps the processor out of its deep idle states for no benefit, and this
+    /// application spends almost all of its life with nothing to show.
+    /// </remarks>
+    public event Action? WorkAppeared;
+
+    /// <summary>True when a drain would return something.</summary>
+    public bool HasPendingChanges => !_dirty.IsEmpty;
+
     /// <summary>Records the newest state of one transfer. Safe to call from any thread.</summary>
     public void Report(TransferProgress progress)
     {
         ArgumentNullException.ThrowIfNull(progress);
 
+        var wasQuiet = _dirty.IsEmpty;
+
         // Latest wins. An older update arriving late cannot resurrect a finished row, because
         // the engine reports strictly in order per file.
         _latest[progress.LocalPath] = progress;
         _dirty[progress.LocalPath] = 0;
+
+        if (wasQuiet)
+        {
+            WorkAppeared?.Invoke();
+        }
     }
 
     /// <summary>Everything currently known, in no particular order.</summary>

@@ -37,6 +37,13 @@ public static class Program
 
         Serilog.Log.Logger = LoggingSetup.Create(paths);
 
+        // Applied before anything else runs, so even startup work is polite. This lives on the
+        // computer attached to a mass spectrometer: losing an acquisition because a transfer
+        // utility was competing for the processor or the disk would be far worse than a transfer
+        // finishing later.
+        var governor = new ResourceGovernor(
+            new SerilogLoggerFactory(Serilog.Log.Logger).CreateLogger<ResourceGovernor>());
+
         try
         {
             Serilog.Log.Information(
@@ -46,7 +53,12 @@ public static class Program
                 AppInfo.RuntimeIdentifier,
                 paths.Root);
 
-            using var services = BuildServiceProvider(paths);
+            using var services = BuildServiceProvider(paths, governor);
+
+            var settings = services.GetRequiredService<ISettingsStore>()
+                .LoadAsync().GetAwaiter().GetResult();
+
+            governor.ApplyPoliteDefaults(settings.YieldToInstrumentSoftware);
 
             var app = new App(services);
             app.InitializeComponent();
@@ -71,11 +83,12 @@ public static class Program
         }
     }
 
-    private static ServiceProvider BuildServiceProvider(AppPaths paths)
+    private static ServiceProvider BuildServiceProvider(AppPaths paths, ResourceGovernor governor)
     {
         var services = new ServiceCollection();
 
         services.AddSingleton(paths);
+        services.AddSingleton(governor);
         services.AddLogging(builder => builder.AddProvider(new SerilogLoggerProvider(dispose: false)));
 
         // -- Storage ---------------------------------------------------------------------------
