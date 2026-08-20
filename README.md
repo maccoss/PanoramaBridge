@@ -76,6 +76,40 @@ A portable `.zip` is published as well, for machines where installing is not an 
 `pbctl`, a command-line harness, ships alongside for scripted transfers and for measuring what
 monitoring costs on a given machine.
 
+## What it looks like
+
+Four tabs. Settings on the first two, and what is happening on the last two.
+
+### Local Monitoring
+
+Where to watch and when a file counts as finished. The path shown is a UNC path because a mapped
+drive was chosen and resolved to the share it stands for.
+
+![The Local Monitoring tab](screenshots/localmonitoring.png)
+
+### Remote Settings
+
+Where to upload, and how to sign in. An API key is preferred over the account password: it can be
+revoked without changing the password, limited to a role, and expires on its own.
+
+![The Remote Settings tab](screenshots/remotesettings.png)
+
+### Transfer Status
+
+What is happening now. Rows are grouped by what they are doing rather than when they turned up:
+transfers in progress at the top, then anything needing a decision, then what has finished, then
+files still waiting. A file moves down the list as it progresses.
+
+![The Transfer Status tab](screenshots/transferstatus.png)
+
+### Uploads
+
+The durable record, read from the ledger rather than the transfer list, so it still answers next
+week or on a rebuilt machine. Note the Checked column: *Server MD5* and *Not verified* are
+deliberately not the same claim.
+
+![The Uploads tab](screenshots/uploads.png)
+
 ## Moving from the Python application
 
 Install the new application alongside the old one rather than over it. They keep entirely
@@ -133,7 +167,8 @@ for the architecture and the reasoning behind it.
 Install with `pip install panoramabridge`, then run `panoramabridge`. Requires Python 3.9 or
 later and PyQt6, watchdog, requests and keyring.
 
-The screenshots below show the Python interface. The .NET application looks different.
+Screenshots of the Python interface are in git history; `screenshots/` now holds the .NET
+application. The tab descriptions below still describe the Python UI.
 
 ## Creating a Windows Executable (Optional)
 
@@ -174,8 +209,6 @@ These scripts automatically handle virtual environment setup, dependency install
 - **Directory Structure**: Preserve local folder structure on remote server
 - **File Stability**: Configure how long to wait before considering a file complete
 
-![Local Monitoring, in the retired Python application](screenshots/localmonitoring.png)
-
 ### Advanced Settings Tab
 
 - **File Monitoring Optimization**:
@@ -206,16 +239,12 @@ These scripts automatically handle virtual environment setup, dependency install
 - **Transfer Settings**: Configure upload verification for integrity checking
 - **Upload Verification**: Enable/disable post-upload integrity checking
 
-![Remote Settings, in the retired Python application](screenshots/remotesettings.png)
-
 ### Transfer Status Tab
 
 - **Queue Monitor**: See how many files are waiting for transfer
 - **Progress Tracking**: Real-time progress bars for active uploads
 - **Activity Log**: Timestamped events and error messages
 - **Log Access**: View → View Application Logs for detailed troubleshooting
-
-![Transfer Status, in the retired Python application](screenshots/transferstatus.png)
 
 ## How PanoramaBridge Works: Step-by-Step Process
 
