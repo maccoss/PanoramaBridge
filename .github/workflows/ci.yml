@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dotnet-port]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore PanoramaBridge.sln
+
+      - name: Build
+        run: dotnet build PanoramaBridge.sln -c Release --no-restore
+
+      # Unlike the Python release workflow this replaces, a failing test fails the build.
+      # That workflow ran pytest with continue-on-error, so releases shipped regardless.
+      - name: Test
+        run: dotnet test PanoramaBridge.sln -c Release --no-build --logger "trx;LogFileName=results.trx" --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: TestResults/
+          retention-days: 14
+
+      # Smoke test the exact publish shape that vpk packs, so packaging breakage is caught
+      # on every push rather than at release time.
+      - name: Publish smoke test
+        run: >
+          dotnet publish src/PanoramaBridge.App/PanoramaBridge.App.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishReadyToRun=true
+          -o artifacts/publish
+
+      - name: Upload build
+        uses: actions/upload-artifact@v7
+        with:
+          name: PanoramaBridge-win-x64-${{ github.sha }}
+          path: artifacts/publish/
+          retention-days: 14

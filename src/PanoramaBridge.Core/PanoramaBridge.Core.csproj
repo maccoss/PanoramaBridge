@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>PanoramaBridge.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Internal helpers are tested directly rather than being made public just to reach them. -->
+    <InternalsVisibleTo Include="PanoramaBridge.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.30" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.3" />
+  </ItemGroup>
+
+</Project>

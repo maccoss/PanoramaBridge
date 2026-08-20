@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>PanoramaBridge.App</RootNamespace>
+    <AssemblyName>PanoramaBridge</AssemblyName>
+    <ApplicationIcon>Assets\panoramabridge.ico</ApplicationIcon>
+
+    <!--
+      Velopack requires VelopackApp.Build().Run() to be the FIRST thing that executes, so we
+      supply our own Program.Main instead of the XAML-generated entry point. Note the
+      DISABLE_XAML_GENERATED_MAIN constant is NOT sufficient on its own: the temporary
+      markup-compile project that the WPF targets generate does not inherit DefineConstants,
+      so the generated Main comes back and collides. Demoting App.xaml from
+      ApplicationDefinition to Page (see below) stops it being generated at all.
+    -->
+    <StartupObject>PanoramaBridge.App.Program</StartupObject>
+
+    <!--
+      Packaging is Velopack: publish to a FOLDER, then `vpk pack`.
+      PublishSingleFile would defeat delta updates; PublishTrimmed is unsupported for WPF.
+    -->
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Velopack" Version="1.2.0" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.1" />
+    <PackageReference Include="Serilog" Version="4.2.0" />
+    <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.Debug" Version="3.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PanoramaBridge.Core\PanoramaBridge.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Demoted from ApplicationDefinition so no entry point is generated; see above. -->
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml" SubType="Designer" Generator="MSBuild:Compile" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\panoramabridge.ico" />
+  </ItemGroup>
+
+</Project>

@@ -72,5 +72,6 @@ The following files contain historical implementation details and have been cons
 - **[Main README](../README.md)** - Installation and usage instructions
 - **[Build Scripts](../build_scripts/README.md)** - Windows executable builds
 - **[Demo Scripts](../demo_scripts/README.md)** - Example scripts and diagnostics
-- **[AI Agents Guide](../AGENTS.md)** - Guide for AI-assisted development
+- **[AI Development Guide](../CLAUDE.md)** - Conventions for AI-assisted development
+- **[.NET Port Handoff](DOTNET_PORT_HANDOFF.md)** - Current state of the C# rewrite
 

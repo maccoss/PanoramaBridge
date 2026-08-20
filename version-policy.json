@@ -1,0 +1,5 @@
+{
+  "$comment": "Minimum supported PanoramaBridge version. Builds older than this refuse to start new uploads and prompt the user to update. Leave minimumSupportedVersion null to impose no floor. Edited on its own, without shipping a build, to retire a bad release.",
+  "minimumSupportedVersion": null,
+  "message": null
+}

@@ -1,275 +1,194 @@
-name: Release Builder
+# Release - triggered by a v* tag.
+#
+# Pushing the tag both builds the artifacts and creates the GitHub Release. Do not hand-create
+# the Release. See release-notes/README.md for the full process.
+name: Release
 
-# Manual release workflow - creates official releases
 on:
-  # Manual trigger with options only
+  push:
+    tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      create_release:
-        description: 'Create a new release'
-        required: false
-        default: false
-        type: boolean
-      release_tag:
-        description: 'Release tag (e.g., v1.0.0)'
-        required: false
-        default: ''
-        type: string
-      release_name:
-        description: 'Release name'
-        required: false
-        default: ''
-        type: string
 
-# Required permissions for the GITHUB_TOKEN
 permissions:
-  contents: write  # Required to create releases and download artifacts
-  actions: read    # Required to read workflow artifacts
+  contents: write
 
 jobs:
-  build-and-release:
+  release:
+    name: Build, pack and publish
     runs-on: windows-latest
-    
+
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-      
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
-        architecture: x64
-        cache: 'pip'
-        
-    - name: Verify Python Architecture
-      run: |
-        python -c "import platform; print(f'Python platform: {platform.machine()} - {platform.architecture()[0]}')"
-        python -c "import sys; print(f'Python executable: {sys.executable}')"
-        Write-Host "Building for: x64 (Intel/AMD 64-bit)" -ForegroundColor Cyan
-      shell: powershell
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pyinstaller
-        pip install pytest
-        
-    - name: Verify PyQt6 Installation
-      run: |
-        python -c "import PyQt6.QtCore; print(f'PyQt6 Version: {PyQt6.QtCore.PYQT_VERSION_STR}')"
-      shell: powershell
-        
-    - name: Run tests
-      run: |
-        python -m pytest tests/ -v --tb=short
-      continue-on-error: true  # Don't fail build if tests fail
-      
-    - name: Build Windows executable
-      run: |
-        Write-Host "Building PanoramaBridge executable for x64..." -ForegroundColor Cyan
-        pyinstaller build_scripts/PanoramaBridge.spec
-        
-        if (Test-Path "dist/PanoramaBridge.exe") {
-          Write-Host "Build completed successfully!" -ForegroundColor Green
-          
-          # Get file info
-          $fileInfo = Get-Item "dist/PanoramaBridge.exe"
-          $sizeInMB = [math]::Round($fileInfo.Length / 1MB, 2)
-          $hash = (Get-FileHash "dist/PanoramaBridge.exe" -Algorithm SHA256).Hash
-          
-          Write-Host "File: PanoramaBridge.exe" -ForegroundColor Yellow
-          Write-Host "Size: $($fileInfo.Length) bytes ($sizeInMB MB)" -ForegroundColor Yellow
-          Write-Host "SHA256: $hash" -ForegroundColor Yellow
-          Write-Host "Architecture: x64 (Intel/AMD 64-bit)" -ForegroundColor Yellow
-          
-          # Try to get executable architecture info
-          try {
-            $archInfo = & dumpbin /headers "dist/PanoramaBridge.exe" 2>$null | Select-String "machine"
-            if ($archInfo) {
-              Write-Host "Executable target: $archInfo" -ForegroundColor Yellow
-            }
-          } catch {
-            Write-Host "Could not verify executable architecture (dumpbin not available)" -ForegroundColor Yellow
-          }
-          
-          # Save info for later steps
-          echo "EXECUTABLE_SIZE=$($fileInfo.Length)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "EXECUTABLE_SIZE_MB=$sizeInMB" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "EXECUTABLE_HASH=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        } else {
-          Write-Host "Build failed - executable not found!" -ForegroundColor Red
-          Get-ChildItem -Recurse dist/ -ErrorAction SilentlyContinue
-          exit 1
-        }
-      shell: powershell
-      
-    - name: Create build info
-      run: |
-        $buildInfo = @"
-        PanoramaBridge Windows Build (x64)
-        ===================================
-        
-        Architecture: x64 (Intel/AMD 64-bit)
-        Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')
-        Git Commit: ${{ github.sha }}
-        Git Ref: ${{ github.ref }}
-        
-        Executable Info:
-        - File: PanoramaBridge.exe
-        - Size: ${{ env.EXECUTABLE_SIZE }} bytes (${{ env.EXECUTABLE_SIZE_MB }} MB)
-        - SHA256: ${{ env.EXECUTABLE_HASH }}
-        
-        System Info:
-        - OS: Windows Latest (GitHub Actions)
-        - Runner: windows-latest
-        - Python: 3.12 (x64)
-        - PyInstaller: $(pip show pyinstaller | Select-String "Version:" | ForEach-Object { $_.ToString().Split(":")[1].Trim() })
-        
-        Installation:
-        1. Download PanoramaBridge.exe
-        2. Run the executable (Windows may show security warning for unsigned files)
-        3. Configure your WebDAV settings
-        
-        Compatibility:
-        - Intel/AMD 64-bit processors
-        - Windows 10/11
-        "@
-        
-        $buildInfo | Out-File -FilePath "dist/BUILD_INFO_x64.txt" -Encoding UTF8
-        Write-Host "Build info created"
-      shell: powershell
-      
-    - name: Upload Build Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: PanoramaBridge-Windows-x64-Build-${{ github.run_number }}
-        path: |
-          dist/PanoramaBridge.exe
-          dist/BUILD_INFO_x64.txt
-        retention-days: 90
-        
-  # Separate job to create the release after all builds complete
-  create-release:
-    needs: build-and-release
-    runs-on: ubuntu-latest
-    if: github.event.inputs.create_release == 'true'
-    
-    steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-    
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: ./artifacts
-        
-    - name: Prepare release assets
-      run: |
-        # Create release directory
-        mkdir -p release-assets
-        
-        # Find and copy all executables and build info files
-        find ./artifacts -name "*.exe" -exec cp {} ./release-assets/ \;
-        find ./artifacts -name "BUILD_INFO_*.txt" -exec cp {} ./release-assets/ \;
-        
-        # List what we found
-        echo "Release assets prepared:"
-        ls -la ./release-assets/
-        
-        # Get file sizes and hashes for release notes
-        cd ./release-assets
-        echo "## Build Information" > ../build-summary.md
-        echo "" >> ../build-summary.md
-        
-        for exe in *.exe; do
-          if [ -f "$exe" ]; then
-            size=$(stat -f%z "$exe" 2>/dev/null || stat -c%s "$exe")
-            size_mb=$(echo "scale=2; $size / 1048576" | bc -l 2>/dev/null || echo "$(($size / 1048576))")
-            hash=$(shasum -a 256 "$exe" | cut -d' ' -f1)
-            
-            echo "### $exe" >> ../build-summary.md
-            echo "- **Size:** $size bytes (${size_mb} MB)" >> ../build-summary.md
-            echo "- **SHA256:** \`$hash\`" >> ../build-summary.md
-            echo "" >> ../build-summary.md
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      # The version lives in exactly one place, Directory.Build.props. For a tagged build the
+      # tag must agree with it, so the assembly version, the package version and the release
+      # name can never drift apart.
+      #
+      # Channel and prerelease are independent, and the split matters:
+      #   channel     decides WHO receives the update. Stable installs read releases.win.json;
+      #               a beta tag publishes releases.win-beta.json for pilot machines only.
+      #   prerelease  decides only HOW the Release is presented on GitHub.
+      # The client sets GithubSource(prerelease: true) so the flag never silently gates
+      # delivery -- see UpdateService for why.
+      - name: Resolve and verify version
+        id: meta
+        shell: bash
+        run: |
+          PROPS=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | tr -d '[:space:]')
+          if [ -z "$PROPS" ]; then
+            echo "::error::Could not read <Version> from Directory.Build.props"
+            exit 1
           fi
-        done
-        
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ github.event.inputs.release_tag }}
-        name: ${{ github.event.inputs.release_name }}
-        draft: false
-        prerelease: false
-        generate_release_notes: true
-        files: |
-          ./release-assets/*
-        body: |
-          ## PanoramaBridge ${{ github.event.inputs.release_tag }}
-          
-          **Windows Desktop Application**
-          
-          ### Download
-          - **PanoramaBridge.exe** - For Intel/AMD Windows computers
-          - Compatible with Windows 10/11 systems
-          
-          ### Installation Options
 
-          **Option 1: Windows Standalone Executable (Recommended for most users)**
-          1. Download `PanoramaBridge.exe` from the assets below
-          2. Run the executable (Windows may show a security warning for unsigned applications - click "More info" then "Run anyway")
-          3. Configure your WebDAV server settings
-          4. Start monitoring your files!
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            if [ "$TAG" != "$PROPS" ]; then
+              echo "::error::Directory.Build.props Version ($PROPS) does not match tag ($TAG). Bump the property, commit, then re-tag."
+              exit 1
+            fi
+            VERSION="$TAG"
+          else
+            VERSION="$PROPS"
+          fi
 
-          **Option 2: Install from PyPI (For those comfortable with Python)**
+          case "$VERSION" in
+            *beta*) CHANNEL=win-beta ;;
+            *)      CHANNEL=win ;;
+          esac
 
-          PanoramaBridge is now available on PyPI! Install it using pip:
+          case "$VERSION" in
+            *alpha*|*beta*|*rc*) PRERELEASE=true ;;
+            *)                   PRERELEASE=false ;;
+          esac
 
-          ```bash
-          pip install panoramabridge
-          ```
+          {
+            echo "version=$VERSION"
+            echo "channel=$CHANNEL"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION channel=$CHANNEL prerelease=$PRERELEASE"
 
-          Then run it with:
-          ```bash
-          panoramabridge
-          ```
-          **Requirements for PyPI installation:**
-          - Python 3.12 or higher
-          - Windows, macOS, or Linux
-          - Dependencies automatically installed: PyQt6, requests, watchdog, lxml
-          
-          ### What's New in v0.1.9
+      # Resolved from the version so the path cannot drift from the tag. Failing here, before
+      # the long build, beats dying at the publish step or silently shipping an empty release.
+      - name: Locate the release notes
+        id: notes
+        shell: bash
+        run: |
+          NOTES="release-notes/RELEASE_NOTES_v${{ steps.meta.outputs.version }}.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "::error::Expected release notes at $NOTES. Rename the draft (release-notes/RELEASE_NOTES_next.md) to match the version before tagging - see release-notes/README.md."
+            exit 1
+          fi
+          echo "Using release notes: $NOTES ($(wc -l < "$NOTES") lines)"
+          echo "notes=$NOTES" >> "$GITHUB_OUTPUT"
 
-          **Major Improvements:**
-          - **Enhanced Upload Reliability**: Added comprehensive retry logic for transient server errors (HTTP 502/503/504) with exponential backoff
-          - **Better Error Reporting**: All HTTP errors now include status codes, reason phrases, and server response details
-          - **Improved Progress Tracking**: Real-time progress indicators now work accurately for large files using streaming uploads
-          - **Smarter Verification**: Added retry logic for file verification with automatic delays to handle server-side indexing
-          - **Timeout Protection**: All HTTP operations now have configurable timeouts to prevent infinite hangs
+      - name: Test
+        run: dotnet test PanoramaBridge.sln -c Release
 
-          **Bug Fixes:**
-          - Fixed TypeError in verification message checking that was causing uploads to fail
-          - Fixed progress bar jumping from 0% to 100% for large files by implementing true streaming uploads
-          - Fixed silent upload failures by ensuring all errors are properly reported to users
-          - Resolved 404 errors during verification by adding retry delays
+      - name: Publish
+        run: >
+          dotnet publish src/PanoramaBridge.App/PanoramaBridge.App.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishReadyToRun=true
+          -o artifacts/publish
 
-          **Technical Enhancements:**
-          - Streaming file uploads with 1MB chunks for better memory efficiency
-          - Content-Length headers for proper HTTP streaming support
-          - Comprehensive test suite with 22 tests covering all error scenarios
-          - Code quality improvements with ruff linter compliance
-                   
-          ### System Requirements
-          - **Windows 11** (recommended) or **Windows 10**
-          - **Intel/AMD 64-bit processor**
-          - No additional installations required - this is a standalone executable
-          
-          ### Build Details
-          See the `BUILD_INFO_x64.txt` file for detailed build information including checksums.
-          
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install vpk
+        run: dotnet tool install -g vpk
 
+      # vpk builds a delta by diffing against a previous full package sitting in the output
+      # directory. A CI runner starts empty, so without this step every release ships as a
+      # 66 MB full download and the delta mechanism silently does nothing. Both variants are
+      # attempted because --pre selects either the latest stable or the latest prerelease, and
+      # the previous release may be either -- notably at the seam where an rc line becomes
+      # stable. Failure is expected and ignored for the very first release on a channel.
+      - name: Download the previous release as a delta base
+        continue-on-error: true
+        shell: bash
+        run: |
+          for pre in false true; do
+            vpk download github               --repoUrl "https://github.com/${{ github.repository }}"               --token "${{ secrets.GITHUB_TOKEN }}"               --channel "${{ steps.meta.outputs.channel }}"               --outputDir artifacts/releases               --pre "$pre" || echo "No previous release found (pre=$pre); this is fine."
+          done
+          ls -la artifacts/releases 2>/dev/null || echo "(no previous releases)"
 
+      # Delta packages are why the publish output is a folder rather than a single file:
+      # a full package is ~66 MB, a delta between adjacent versions is a few hundred KB.
+      - name: Pack
+        shell: pwsh
+        run: |
+          $sign = @()
+          if ($env:SIGNING_CERT_BASE64) {
+            [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx", [Convert]::FromBase64String($env:SIGNING_CERT_BASE64))
+            $sign = @('--signParams', "/f $env:RUNNER_TEMP\cert.pfx /p $env:SIGNING_CERT_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256")
+          } else {
+            Write-Warning "No signing certificate configured; this build is unsigned and will trigger SmartScreen."
+          }
 
+          vpk pack `
+            --packId MacCossLab.PanoramaBridge `
+            --packVersion ${{ steps.meta.outputs.version }} `
+            --packDir artifacts/publish `
+            --mainExe PanoramaBridge.exe `
+            --packTitle "PanoramaBridge" `
+            --packAuthors "MacCoss Lab, University of Washington" `
+            --icon src/PanoramaBridge.App/Assets/panoramabridge.ico `
+            --releaseNotes ${{ steps.notes.outputs.notes }} `
+            --channel ${{ steps.meta.outputs.channel }} `
+            --outputDir artifacts/releases `
+            @sign
+        env:
+          SIGNING_CERT_BASE64: ${{ secrets.SIGNING_CERT_BASE64 }}
+          SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+
+      # Written outside artifacts/releases: vpk uploads only the assets it produced, and a
+      # stray file in its output directory is ignored. It is attached separately below.
+      #
+      # Packages from earlier releases are present as delta bases, so they are filtered out --
+      # only this version's assets belong in this release's checksum list.
+      - name: Checksums
+        shell: pwsh
+        run: |
+          $version = '${{ steps.meta.outputs.version }}'
+          Get-ChildItem artifacts/releases -File |
+            Where-Object { $_.Extension -ne '.nupkg' -or $_.Name -like "*-$version-*" } |
+            Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
+            Set-Content artifacts/SHA256SUMS.txt
+          Get-Content artifacts/SHA256SUMS.txt
+
+      # vpk creates the Release so that releases.<channel>.json and the packages land together;
+      # updates will not resolve if the feed and the assets are published separately.
+      # --merge allows a second channel to be added to an existing Release for the same tag.
+      - name: Upload to GitHub Releases
+        shell: pwsh
+        run: |
+          $arguments = @(
+            'upload', 'github',
+            '--repoUrl',     'https://github.com/${{ github.repository }}',
+            '--token',       '${{ secrets.GITHUB_TOKEN }}',
+            '--outputDir',   'artifacts/releases',
+            '--channel',     '${{ steps.meta.outputs.channel }}',
+            '--tag',         'v${{ steps.meta.outputs.version }}',
+            '--releaseName', 'PanoramaBridge ${{ steps.meta.outputs.version }}',
+            '--merge',
+            '--publish'
+          )
+          if ('${{ steps.meta.outputs.prerelease }}' -eq 'true') { $arguments += '--pre' }
+
+          vpk @arguments
+
+      # vpk does not take a release body, so the notes file is applied afterwards. It is
+      # published verbatim, which is why release-notes/README.md insists it be written for the
+      # people reading the Releases page.
+      - name: Attach checksums and set the release description
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload v${{ steps.meta.outputs.version }} artifacts/SHA256SUMS.txt --clobber
+          gh release edit v${{ steps.meta.outputs.version }} --notes-file ${{ steps.notes.outputs.notes }}
