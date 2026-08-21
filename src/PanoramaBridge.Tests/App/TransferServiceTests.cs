@@ -74,7 +74,7 @@ public sealed class TransferServiceTests : IAsyncDisposable
 
         // What the monitoring engine reports while bytes are moving. It never touches _run.
         service.Progress.Report(new TransferProgress(
-            LocalPath: @"C:\dataun.raw",
+            LocalPath: @"C:\data\run.raw",
             RemotePath: "/_webdav/MacCoss/maccoss/@files/uploads/run.raw",
             State: TransferState.Uploading,
             Phase: "Uploading",
