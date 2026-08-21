@@ -58,6 +58,63 @@ public sealed class TrayPolicyTests
     }
 
     [Fact]
+    public void An_icon_with_nowhere_to_sit_is_not_available()
+    {
+        // The bug that shipped in 26.1.1, stated as a test. IsAvailable reported whether
+        // constructing a NotifyIcon threw -- which it does not, because constructing one touches
+        // nothing outside the process -- so it answered true on every machine, and the guard
+        // that stops the window being hidden with nothing to click could never fire.
+        TrayPolicy.IsIconUsable(
+            iconCreated: true,
+            notificationAreaPresent: false,
+            disposed: false).ShouldBeFalse(
+            "an icon object exists, but there is no notification area drawing it");
+    }
+
+    [Fact]
+    public void An_icon_that_could_not_be_created_is_not_available()
+    {
+        TrayPolicy.IsIconUsable(
+            iconCreated: false,
+            notificationAreaPresent: true,
+            disposed: false).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void A_taken_down_icon_is_not_available()
+    {
+        // Reachable during shutdown: the window disposes the icon and the container disposes it
+        // again. Anything asking afterwards must not be told there is something to click.
+        TrayPolicy.IsIconUsable(
+            iconCreated: true,
+            notificationAreaPresent: true,
+            disposed: true).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void An_icon_in_a_running_shell_is_available()
+    {
+        TrayPolicy.IsIconUsable(
+            iconCreated: true,
+            notificationAreaPresent: true,
+            disposed: false).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Availability_is_what_decides_whether_the_window_may_hide()
+    {
+        // The two rules meeting, which is the pairing that actually protects the user: an icon
+        // that cannot be shown must leave the window closing normally.
+        var available = TrayPolicy.IsIconUsable(
+            iconCreated: true, notificationAreaPresent: false, disposed: false);
+
+        TrayPolicy.ShouldHideInsteadOfClosing(
+            keepRunningInTray: true,
+            trayAvailable: available,
+            exiting: false).ShouldBeFalse();
+    }
+
+    [Fact]
     public void A_tooltip_that_fits_is_left_exactly_as_it_is()
     {
         const string text = "PanoramaBridge - monitoring";

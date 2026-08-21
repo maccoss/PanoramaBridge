@@ -39,6 +39,27 @@ public static class TrayPolicy
         keepRunningInTray && trayAvailable && !exiting;
 
     /// <summary>
+    /// Whether there is an icon the user could actually click.
+    /// </summary>
+    /// <param name="iconCreated">An icon object was constructed.</param>
+    /// <param name="notificationAreaPresent">The shell is running somewhere to put it.</param>
+    /// <param name="disposed">The icon has already been taken down.</param>
+    /// <remarks>
+    /// Pulled out of <see cref="TrayIcon"/> so the answer can be tested without a shell, because
+    /// the version that shipped in 26.1.1 could not give the wrong one -- it could only ever say
+    /// true. It reported whether constructing a <c>NotifyIcon</c> threw, and constructing one
+    /// touches nothing outside the process: the shell is not called until the icon is made
+    /// visible, and <c>NotifyIcon</c> discards the result of <c>Shell_NotifyIcon</c> and cannot
+    /// report having been refused. So the guard that stops the window being hidden with nothing
+    /// to click never once fired, on any machine.
+    /// </remarks>
+    public static bool IsIconUsable(
+        bool iconCreated,
+        bool notificationAreaPresent,
+        bool disposed) =>
+        iconCreated && notificationAreaPresent && !disposed;
+
+    /// <summary>
     /// Truncates hover text to what the shell accepts, with an ellipsis when something was cut.
     /// </summary>
     /// <remarks>

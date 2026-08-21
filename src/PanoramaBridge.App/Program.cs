@@ -32,19 +32,20 @@ public static class Program
         // Must be first. On an update or uninstall hook this call never returns.
         VelopackApp.Build().Run();
 
+        var paths = new AppPaths();
+        paths.EnsureCreated();
+
         // Before anything opens the ledger. A second copy would share one SQLite file, walk the
         // same folder and race PUTs of the same acquisition, and since the window now hides
-        // rather than exits, starting one by accident is easy and invisible.
-        using var instance = SingleInstance.Acquire("PanoramaBridge");
+        // rather than exits, starting one by accident is easy and invisible. The lock lives in
+        // the data directory so its scope is the ledger's: per user, across sessions.
+        using var instance = SingleInstance.Acquire("PanoramaBridge", paths.InstanceLockFile);
 
         if (!instance.IsFirst)
         {
             instance.SignalExisting();
             return 0;
         }
-
-        var paths = new AppPaths();
-        paths.EnsureCreated();
 
         Serilog.Log.Logger = LoggingSetup.Create(paths);
 

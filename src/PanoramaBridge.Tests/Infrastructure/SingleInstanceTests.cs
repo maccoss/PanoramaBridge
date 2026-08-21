@@ -17,10 +17,14 @@ public sealed class SingleInstanceTests
     /// <summary>A name of its own per test, so a parallel run cannot collide with another.</summary>
     private static string UniqueName() => "PanoramaBridgeTest-" + Guid.NewGuid().ToString("N");
 
+    /// <summary>A lock path of its own per test, in a directory that is cleaned up.</summary>
+    private static string UniqueLockFile() =>
+        Path.Combine(Path.GetTempPath(), UniqueName() + ".lock");
+
     [Fact]
     public void The_first_instance_gets_it()
     {
-        using var first = SingleInstance.Acquire(UniqueName());
+        using var first = SingleInstance.Acquire(UniqueName(), UniqueLockFile());
 
         first.IsFirst.ShouldBeTrue();
     }
@@ -29,9 +33,10 @@ public sealed class SingleInstanceTests
     public void A_second_instance_is_told_it_is_not_the_first()
     {
         var name = UniqueName();
+        var lockFile = UniqueLockFile();
 
-        using var first = SingleInstance.Acquire(name);
-        using var second = SingleInstance.Acquire(name);
+        using var first = SingleInstance.Acquire(name, lockFile);
+        using var second = SingleInstance.Acquire(name, lockFile);
 
         first.IsFirst.ShouldBeTrue();
         second.IsFirst.ShouldBeFalse();
@@ -43,12 +48,13 @@ public sealed class SingleInstanceTests
         // Exiting silently would look exactly like the shortcut being broken, which is the whole
         // reason the user is double-clicking it: they cannot see the hidden window.
         var name = UniqueName();
+        var lockFile = UniqueLockFile();
         using var shown = new ManualResetEventSlim(false);
 
-        using var first = SingleInstance.Acquire(name);
+        using var first = SingleInstance.Acquire(name, lockFile);
         first.ListenForSecondLaunch(() => shown.Set());
 
-        using var second = SingleInstance.Acquire(name);
+        using var second = SingleInstance.Acquire(name, lockFile);
         second.SignalExisting().ShouldBeTrue();
 
         shown.Wait(TimeSpan.FromSeconds(5)).ShouldBeTrue(
@@ -61,12 +67,13 @@ public sealed class SingleInstanceTests
         // Otherwise a crash would leave the application unable to start until the user signed
         // out, which is a far worse failure than the one being prevented.
         var name = UniqueName();
+        var lockFile = UniqueLockFile();
 
-        var first = SingleInstance.Acquire(name);
+        var first = SingleInstance.Acquire(name, lockFile);
         first.IsFirst.ShouldBeTrue();
         first.Dispose();
 
-        using var next = SingleInstance.Acquire(name);
+        using var next = SingleInstance.Acquire(name, lockFile);
         next.IsFirst.ShouldBeTrue();
     }
 
@@ -74,7 +81,7 @@ public sealed class SingleInstanceTests
     public void Disposing_twice_is_harmless()
     {
         // Disposed by the using in Main and, on some paths, again on the way out.
-        var instance = SingleInstance.Acquire(UniqueName());
+        var instance = SingleInstance.Acquire(UniqueName(), UniqueLockFile());
 
         instance.Dispose();
 
@@ -82,9 +89,25 @@ public sealed class SingleInstanceTests
     }
 
     [Fact]
+    public void Exclusion_follows_the_data_directory_rather_than_the_session()
+    {
+        // The kernel's Local\ namespace is scoped to the terminal session; the ledger under
+        // %LOCALAPPDATA% is shared by the account across all of them. A named mutex would
+        // therefore have let one user run two copies over one ledger, which is the collision
+        // being prevented. Two different names over one lock file must still exclude.
+        var lockFile = UniqueLockFile();
+
+        using var first = SingleInstance.Acquire(UniqueName(), lockFile);
+        using var second = SingleInstance.Acquire(UniqueName(), lockFile);
+
+        first.IsFirst.ShouldBeTrue();
+        second.IsFirst.ShouldBeFalse("the lock file is what excludes, not the handle name");
+    }
+
+    [Fact]
     public void Signalling_from_the_instance_that_holds_it_does_nothing()
     {
-        using var only = SingleInstance.Acquire(UniqueName());
+        using var only = SingleInstance.Acquire(UniqueName(), UniqueLockFile());
 
         only.SignalExisting().ShouldBeFalse("there is no other instance to wake");
     }
@@ -95,9 +118,10 @@ public sealed class SingleInstanceTests
         // The second instance's job is to signal and exit. If it also listened it would sit
         // waiting on a handle it is about to close.
         var name = UniqueName();
+        var lockFile = UniqueLockFile();
 
-        using var first = SingleInstance.Acquire(name);
-        using var second = SingleInstance.Acquire(name);
+        using var first = SingleInstance.Acquire(name, lockFile);
+        using var second = SingleInstance.Acquire(name, lockFile);
 
         Should.NotThrow(() => second.ListenForSecondLaunch(() => { }));
     }

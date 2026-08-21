@@ -346,9 +346,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(IsUpdateReady))]
     private void ApplyUpdate()
     {
-        if (_transfers.IsRunning)
+        if (_transfers.IsRunning || _transfers.HasTransferInFlight)
         {
-            // Restarting mid-transfer would be worse than staying a version behind.
+            // Restarting mid-transfer would be worse than staying a version behind. IsRunning
+            // alone was not enough: it only covers a manual scan, so an update applied while
+            // monitoring was uploading restarted straight through it.
             StatusLine = "Waiting for the current transfer to finish before updating.";
             return;
         }
