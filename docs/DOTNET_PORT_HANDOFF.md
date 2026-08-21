@@ -147,6 +147,30 @@ implicit usings, so the test project puts them back explicitly. See §6.
 - **Folder acquisitions** (`.d`, Waters `.raw` directories) will become atomic transfer items.
 - **Verification means the server's own MD5.** Nothing weaker may be reported as verified.
 
+### The Python package is retired, and how
+
+Done, not pending. All four PyPI releases -- `0.1.7rc1`, `0.1.9rc1`, `0.1.9rc3`, `0.1.9rc4` -- are
+**yanked**, with the reason `Retired. Replaced by the .NET application:
+https://github.com/maccoss/PanoramaBridge/releases`, and the project is **archived**.
+
+Yanked as well as archived because archiving is a banner on a web page and `pip install` never
+shows it. Yanking is what makes `pip install panoramabridge` fail rather than quietly install a
+retired application that uploads data, while an exact pin still resolves for anyone who has one.
+Both are reversible from the project's PyPI pages.
+
+Two things to know if this ever comes up again:
+
+- **Every release on PyPI was a pre-release.** There was no stable version, despite a `v0.1.8`
+  git tag -- it was never published. With no stable release available pip falls back to the
+  newest pre-release, so `pip install panoramabridge` did resolve, to `0.1.9rc4`.
+- **No final deprecation release was published**, though an earlier plan called for one. Its
+  purpose was to tell strangers where the project went, and there were none: the only two users
+  were the project owner and one colleague. Publishing one would have meant restoring the
+  packaging files from the tag and building, and archiving blocks uploads afterwards, so it would
+  have had to come first.
+
+The source itself remains fetchable from `v0.1.9rc4`.
+
 ---
 
 ## 5. Verified server facts — do not re-discover these
@@ -501,7 +525,6 @@ from the ledger, and asks the server nothing at all.
 | Code signing | Azure Trusted Signing (~$10/mo) preferred, then SignPath Foundation (free for OSS). Needs a decision and possibly UW paperwork. |
 | Vendor completion sentinels | Bruker `analysis.tdf`, Agilent `AcqData\`, Waters `_HEADER.TXT` — validate against real acquisitions. |
 | Concurrency ceiling panoramaweb tolerates | Start at 3; nothing has been pushed hard enough to find a limit. |
-| Retiring the `panoramabridge` PyPI package | The source, the tests, the build scripts and `publish-pypi.yml` were deleted after v26.1.0 shipped; `v0.1.9rc4` is the last tag containing them. The PyPI project itself still lists 0.1.9rc4 as installable and has to be marked deprecated by hand on pypi.org -- that is the one remaining step, and it needs the project owner's account. |
 | SQLite connection-per-operation | Fine at current scale; a warm run of 38 files took ~1.4 s of fixed overhead. The sweep no longer reads per file — `GetManyAsync` batches five hundred paths per statement — so the 200k case is much less alarming than it was, but it has still never been run. |
 | Retrying a failed upload | The sweep re-offers a failed file until `MaxUploadAttempts`, five, and then leaves it until the file changes or someone asks. Deliberately not a user setting yet: nobody has hit the case in anger, and one more box on that tab needs to earn its place. |
 | A sweep of a very large share | 35,000 files takes tens of seconds (§7). Nothing adapts the interval to how long the last sweep took, and perhaps it should. |
