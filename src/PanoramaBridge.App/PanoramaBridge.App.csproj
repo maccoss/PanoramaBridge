@@ -4,6 +4,15 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+
+    <!--
+      WinForms is enabled for exactly one type: System.Windows.Forms.NotifyIcon, the tray icon.
+      Shell_NotifyIcon by hand would avoid the reference, but NotifyIcon also re-adds itself
+      when Explorer restarts, and this application is expected to run for weeks at a time on an
+      instrument PC, where an Explorer restart is not rare. Losing the only way back to a hidden
+      window is not an acceptable failure.
+    -->
+    <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>PanoramaBridge.App</RootNamespace>
     <AssemblyName>PanoramaBridge</AssemblyName>
     <ApplicationIcon>Assets\panoramabridge.ico</ApplicationIcon>
@@ -35,6 +44,18 @@
     <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
     <PackageReference Include="Serilog.Sinks.Debug" Version="3.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      UseWindowsForms adds System.Windows.Forms to the implicit usings, which makes Application,
+      UserControl and MessageBox ambiguous in every WPF file: five errors, none of them in code
+      that wants WinForms. The tray icon names its types in full instead.
+    -->
+    <Using Remove="System.Windows.Forms" />
+
+    <!-- Likewise System.Drawing, whose Point, Color and Size all collide with WPF's. -->
+    <Using Remove="System.Drawing" />
   </ItemGroup>
 
   <ItemGroup>

@@ -140,6 +140,9 @@ public static class Program
         // -- Transfers -------------------------------------------------------------------------
         services.AddSingleton<TransferService>();
 
+        // -- Shell -----------------------------------------------------------------------------
+        services.AddSingleton<TrayIcon>();
+
         // -- View models -----------------------------------------------------------------------
         //
         // Settings are read synchronously here on purpose: the shell cannot be built without

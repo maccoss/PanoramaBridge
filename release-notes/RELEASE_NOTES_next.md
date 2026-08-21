@@ -5,6 +5,18 @@ time and update the heading; see `README.md` in this directory for the process.
 
 ## New Features
 
+- **Closing the window now keeps PanoramaBridge running in the notification area.** The setting
+  for this has been in Remote Settings since 26.1.0 and did nothing: the checkbox saved and
+  reloaded correctly, but no tray icon was ever created, so closing the window closed the
+  application regardless. It is on by default.
+
+  Click the icon to bring the window back, or right-click it for Open and Exit. The first time
+  the window is hidden it says so, because Windows files a new icon under hidden icons and a
+  window that simply vanishes looks like one that exited.
+
+  If the icon cannot be created -- a shell with no notification area, or policy blocking it --
+  closing the window closes the application as before, rather than hiding it with no way back.
+
 ## Bug Fixes
 
 ## Performance
