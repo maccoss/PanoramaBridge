@@ -2,58 +2,27 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug Current Test",
-            "type": "debugpy",
+            "name": "PanoramaBridge (WPF)",
+            "type": "coreclr",
             "request": "launch",
-            "module": "pytest",
-            "args": [
-                "${file}",
-                "-v",
-                "--tb=short"
-            ],
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}",
-            "python": "${workspaceFolder}/.venv/bin/python",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}"
-            },
-            "justMyCode": false
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/src/PanoramaBridge.App/bin/Debug/net8.0-windows/PanoramaBridge.exe",
+            "cwd": "${workspaceFolder}/src/PanoramaBridge.App",
+            "console": "internalConsole",
+            "stopAtEntry": false
         },
         {
-            "name": "Debug All Tests",
-            "type": "debugpy",
+            // pbctl needs a real server. Credentials come from the environment or Windows
+            // Credential Manager -- never put one in this file, it is committed.
+            "name": "pbctl",
+            "type": "coreclr",
             "request": "launch",
-            "module": "pytest",
-            "args": [
-                "tests/",
-                "-v",
-                "--tb=short"
-            ],
-            "console": "integratedTerminal",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/src/PanoramaBridge.Cli/bin/Debug/net8.0/pbctl.dll",
+            "args": ["caps"],
             "cwd": "${workspaceFolder}",
-            "python": "${workspaceFolder}/.venv/bin/python",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}"
-            },
-            "justMyCode": false
-        },
-        {
-            "name": "Debug WebDAV Tests Only",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "pytest",
-            "args": [
-                "tests/test_webdav_client.py",
-                "-v",
-                "--tb=short"
-            ],
             "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}",
-            "python": "${workspaceFolder}/.venv/bin/python",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}"
-            },
-            "justMyCode": false
+            "stopAtEntry": false
         }
     ]
 }

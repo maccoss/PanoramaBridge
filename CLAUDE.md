@@ -10,7 +10,9 @@ Panorama (LabKey) server over WebDAV. It is a Windows desktop application writte
 
 A Python/PyQt6 implementation preceded this one. It was never put into production and is not a
 reference: **do not benchmark against it, and do not treat its behaviour as a specification.**
-It still sits on `main` and in git history, and is being retired rather than maintained.
+Agreement with it proves nothing and disagreement is not evidence of a regression. It was
+removed from the repository after v26.1.0 shipped and survives only in git history, under the
+`v0.1.9rc4` tag. Do not restore any part of it.
 
 ---
 

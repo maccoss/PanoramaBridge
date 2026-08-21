@@ -147,6 +147,30 @@ implicit usings, so the test project puts them back explicitly. See §6.
 - **Folder acquisitions** (`.d`, Waters `.raw` directories) will become atomic transfer items.
 - **Verification means the server's own MD5.** Nothing weaker may be reported as verified.
 
+### The Python package is retired, and how
+
+Done, not pending. All four PyPI releases -- `0.1.7rc1`, `0.1.9rc1`, `0.1.9rc3`, `0.1.9rc4` -- are
+**yanked**, with the reason `Retired. Replaced by the .NET application:
+https://github.com/maccoss/PanoramaBridge/releases`, and the project is **archived**.
+
+Yanked as well as archived because archiving is a banner on a web page and `pip install` never
+shows it. Yanking is what makes `pip install panoramabridge` fail rather than quietly install a
+retired application that uploads data, while an exact pin still resolves for anyone who has one.
+Both are reversible from the project's PyPI pages.
+
+Two things to know if this ever comes up again:
+
+- **Every release on PyPI was a pre-release.** There was no stable version, despite a `v0.1.8`
+  git tag -- it was never published. With no stable release available pip falls back to the
+  newest pre-release, so `pip install panoramabridge` did resolve, to `0.1.9rc4`.
+- **No final deprecation release was published**, though an earlier plan called for one. Its
+  purpose was to tell strangers where the project went, and there were none: the only two users
+  were the project owner and one colleague. Publishing one would have meant restoring the
+  packaging files from the tag and building, and archiving blocks uploads afterwards, so it would
+  have had to come first.
+
+The source itself remains fetchable from `v0.1.9rc4`.
+
 ---
 
 ## 5. Verified server facts — do not re-discover these
@@ -343,6 +367,19 @@ Transferring 128 MB costs 6.9% of one core. Those numbers are from a **32-core**
 - **WPF omits `System.IO` from implicit usings on purpose**, because `System.IO.Path` collides
   with `System.Windows.Shapes.Path`. Import it per file; adding it project-wide reintroduces the
   ambiguity.
+
+- **`UseWindowsForms` on a WPF project is the same trap from the other side.** Adding it for the
+  tray icon puts `System.Windows.Forms` into the implicit usings, and `Application`,
+  `UserControl` and `MessageBox` immediately become ambiguous: five errors in five files, none of
+  which want WinForms. The fix is `<Using Remove="System.Windows.Forms" />` (and `System.Drawing`
+  alongside it, whose `Point`, `Color` and `Size` collide the same way), then naming the two
+  WinForms types in full in the one file that uses them. Reach for `Shell_NotifyIcon` interop
+  instead only if you are prepared to handle the `TaskbarCreated` message yourself -- Explorer
+  restarting destroys every tray icon, and NotifyIcon is what puts ours back.
+
+- **An XML comment cannot contain `--`.** Writing the note above into the `.csproj` failed the
+  build with `MSB4025` before it failed anything else. House style uses `--` as a dash in prose,
+  which makes this easy to hit in exactly the files where a comment is most needed.
 - **`DISABLE_XAML_GENERATED_MAIN` does not work on its own.** The temporary markup-compile project
   WPF generates does not inherit `DefineConstants`, so the generated entry point returns and
   collides. `App.xaml` is demoted from `ApplicationDefinition` to `Page` instead.
@@ -488,7 +525,6 @@ from the ledger, and asks the server nothing at all.
 | Code signing | Azure Trusted Signing (~$10/mo) preferred, then SignPath Foundation (free for OSS). Needs a decision and possibly UW paperwork. |
 | Vendor completion sentinels | Bruker `analysis.tdf`, Agilent `AcqData\`, Waters `_HEADER.TXT` — validate against real acquisitions. |
 | Concurrency ceiling panoramaweb tolerates | Start at 3; nothing has been pushed hard enough to find a limit. |
-| Python removal | Staged, and written down: [`docs/PYTHON_REMOVAL_PLAN.md`](PYTHON_REMOVAL_PLAN.md). Nothing is deleted until every instrument has run the .NET application for a month. `publish-pypi.yml` is already reduced to manual trigger so a .NET release cannot publish the Python package. |
 | SQLite connection-per-operation | Fine at current scale; a warm run of 38 files took ~1.4 s of fixed overhead. The sweep no longer reads per file — `GetManyAsync` batches five hundred paths per statement — so the 200k case is much less alarming than it was, but it has still never been run. |
 | Retrying a failed upload | The sweep re-offers a failed file until `MaxUploadAttempts`, five, and then leaves it until the file changes or someone asks. Deliberately not a user setting yet: nobody has hit the case in anger, and one more box on that tab needs to earn its place. |
 | A sweep of a very large share | 35,000 files takes tens of seconds (§7). Nothing adapts the interval to how long the last sweep took, and perhaps it should. |

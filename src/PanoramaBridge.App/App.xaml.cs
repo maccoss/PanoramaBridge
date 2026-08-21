@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
+using PanoramaBridge.App.Services;
+using PanoramaBridge.Core.Infrastructure;
 using Serilog;
 
 namespace PanoramaBridge.App;
@@ -12,10 +14,12 @@ namespace PanoramaBridge.App;
 public partial class App : Application
 {
     private readonly IServiceProvider _services;
+    private readonly SingleInstance _instance;
 
-    public App(IServiceProvider services)
+    public App(IServiceProvider services, SingleInstance instance)
     {
         _services = services ?? throw new ArgumentNullException(nameof(services));
+        _instance = instance ?? throw new ArgumentNullException(nameof(instance));
     }
 
     protected override void OnStartup(StartupEventArgs e)
@@ -31,6 +35,31 @@ public partial class App : Application
 
         var window = _services.GetRequiredService<MainWindow>();
         MainWindow = window;
+
+        // Velopack applies an update by calling Environment.Exit, which runs no container
+        // disposal and no Closed handler. Without this the tray icon is never removed and the
+        // shell keeps drawing a dead one until the pointer next crosses it -- while the
+        // restarted instance adds a second, so an updated machine shows two. ProcessExit is
+        // raised by Environment.Exit, which is what makes it the right hook rather than the
+        // window's.
+        var tray = _services.GetRequiredService<TrayIcon>();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => tray.Dispose();
+
+        // Starting it again is what a user does when the window is hidden and they cannot tell
+        // it is running. That second launch exits immediately; this is what makes it feel like
+        // it simply reopened the window rather than doing nothing at all.
+        _instance.ListenForSecondLaunch(() => Dispatcher.Invoke(() =>
+        {
+            window.Show();
+
+            if (window.WindowState == WindowState.Minimized)
+            {
+                window.WindowState = WindowState.Normal;
+            }
+
+            window.Activate();
+        }));
+
         window.Show();
     }
 

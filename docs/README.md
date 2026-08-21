@@ -1,7 +1,5 @@
 # PanoramaBridge Documentation
 
-## The current application (.NET 8)
-
 PanoramaBridge is a native Windows application built on .NET 8 and WPF.
 
 | Document | What it covers |
@@ -10,92 +8,21 @@ PanoramaBridge is a native Windows application built on .NET 8 and WPF.
 | **[AI development guide](../CLAUDE.md)** | House style, layout, build and release commands. |
 | **[Release process](../release-notes/README.md)** | Versioning, writing release notes, and how a release is actually published. |
 | **[Release notes](../release-notes/)** | One file per version; each becomes the GitHub Release body. |
-| **[Python removal plan](PYTHON_REMOVAL_PLAN.md)** | How and when the retired Python application goes. |
 
 Architecture questions -- how files are found, when a file counts as finished, how an upload is
 verified, what any of it costs -- are answered in the port handoff rather than in separate
-documents. It is kept current; the pages below are not.
-
----
+documents. Keeping one page current is what stopped the previous set of a dozen topic documents
+from quietly disagreeing with the code and with each other.
 
 ## The retired Python application
 
-> [!NOTE]
-> Everything below documents the **retired** Python/PyQt6 implementation. It is kept for
-> reference while existing installations are migrated and will be removed -- see the
-> [removal plan](PYTHON_REMOVAL_PLAN.md). Where it disagrees with the port handoff, the handoff
-> is right.
->
-> In particular, `RELEASE_PROCESS.md` describes a `release.yml` that no longer exists in that
-> form. **Do not follow it.**
+A Python/PyQt6 implementation preceded this one. It was removed from the repository after
+v26.1.0 shipped and is not a reference: it was never put into production, so agreement with it
+proves nothing and disagreement is not evidence of a regression.
 
-## Core Documentation
+Its source and its documentation remain fetchable from the `v0.1.9rc4` tag:
 
-### System Architecture
-
-- **[File Monitoring](FILE_MONITORING.md)** - File detection, OS events, locked file handling, and Windows optimization
-- **[Verification System](VERIFICATION_SYSTEM.md)** - Upload verification, ETag support, integrity checks, and conflict resolution
-- **[Caching System](CACHING_SYSTEM.md)** - Checksum caching, queue management, and performance optimization
-
-### Development
-
-- **[Testing Guide](TESTING.md)** - Comprehensive test suite documentation, running tests, and Qt testing approaches
-- **[Release Process](RELEASE_PROCESS.md)** - Version management and release procedures
-
-### Build & Deployment
-
-- **[Multi-Architecture Build](MULTI_ARCHITECTURE_BUILD.md)** - Building for x64 and ARM64 architectures
-
-## Quick Links
-
-| Topic | Document |
-|-------|----------|
-| Running tests | [TESTING.md](TESTING.md#quick-start) |
-| File monitoring setup | [FILE_MONITORING.md](FILE_MONITORING.md#configuration) |
-| Upload verification | [VERIFICATION_SYSTEM.md](VERIFICATION_SYSTEM.md#verification-hierarchy) |
-| Performance tuning | [CACHING_SYSTEM.md](CACHING_SYSTEM.md#performance-improvements) |
-| Windows builds | [../build_scripts/BUILD_WINDOWS.md](../build_scripts/BUILD_WINDOWS.md) |
-| GitHub Actions | [../build_scripts/GITHUB_ACTIONS.md](../build_scripts/GITHUB_ACTIONS.md) |
-
-## Archived Documentation
-
-The following files contain historical implementation details and have been consolidated into the core documentation above:
-
-<details>
-<summary>Click to expand archived files</summary>
-
-### Verification & Integrity (consolidated into VERIFICATION_SYSTEM.md)
-
-- `ENHANCED_ETAG_VERIFICATION_SUMMARY.md` - ETag verification implementation history
-- `REMOTE_INTEGRITY_CHECK_IMPLEMENTATION.md` - Remote integrity check implementation details
-- `INTEGRITY_CHECK_IMPROVEMENTS_2025.md` - 2025 integrity improvements
-- `UPLOAD_VERIFICATION_IMPROVEMENTS.md` - Upload verification enhancements
-
-### File Monitoring (consolidated into FILE_MONITORING.md)
-
-- `FILE_MONITORING_OPTIMIZATION.md` - Monitoring optimization details
-- `FILE_MONITORING_ROBUSTNESS_IMPROVEMENTS.md` - Robustness improvements
-
-### Caching (consolidated into CACHING_SYSTEM.md)
-
-- `CHECKSUM_CACHING_SUMMARY.md` - Checksum caching implementation
-- `QUEUE_CACHE_IMPLEMENTATION_SUMMARY.md` - Queue and cache features
-
-### Testing (consolidated into TESTING.md)
-
-- `TEST_SETUP.md` - Original test setup guide
-- `TEST_SUITE_SUMMARY.md` - Test suite overview
-- `QT_TESTING_GUIDE.md` - Qt-specific testing
-- `UPLOAD_HISTORY_TESTS_FIXED.md` - Upload history test fixes
-
-### Maintenance
-
-- `LINTING_FIXES_SUMMARY.md` - Code quality improvements (August 2025)
-
-</details>
-
-## Navigation (retired application)
-
-- **[Build scripts](../build_scripts/README.md)** - PyInstaller executable builds
-- **[Demo scripts](../demo_scripts/README.md)** - Example scripts and diagnostics
-
+```bash
+git show v0.1.9rc4:panoramabridge.py
+git show v0.1.9rc4:docs/README.md      # index of the documentation as it stood
+```

@@ -13,9 +13,6 @@ indent_size = 4
 [*.{json,yml,yaml,xaml,md}]
 indent_size = 2
 
-[*.py]
-indent_size = 4
-
 [*.cs]
 dotnet_diagnostic.CA1416.severity = none
 # Prefer file-scoped namespaces
