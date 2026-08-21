@@ -11,7 +11,8 @@ Installed copies update themselves. Nothing needs reinstalling, and no setting c
   reloaded correctly, so it looked like it worked, but no tray icon was ever created and closing
   the window always closed the application.
 
-  Closing now leaves PanoramaBridge running and watching. Click the icon to bring the window
+  Closing now leaves PanoramaBridge running, and still monitoring if monitoring was already on.
+  Click the icon to bring the window
   back, or right-click it for **Open** and **Exit**. Because Windows files a new icon under
   hidden icons, the first time the window is hidden it says so — otherwise the window appears to
   simply vanish, which looks exactly like having exited.
@@ -25,6 +26,10 @@ Installed copies update themselves. Nothing needs reinstalling, and no setting c
 
 - **Exit asks before abandoning a transfer.** Choosing **Exit** while an upload is in progress now
   confirms first, rather than stopping it part-way without comment.
+
+  > **Corrected in 26.1.2.** As shipped in 26.1.1 this only recognised uploads started by hand
+  > with **Upload now**; a transfer started by monitoring was not counted and was still cancelled
+  > without a prompt.
 
 - **Updating no longer leaves a dead icon behind.** Applying an update removed the application but
   not its icon, so the notification area kept drawing a stale one and the restarted copy added a
@@ -41,8 +46,9 @@ Installed copies update themselves. Nothing needs reinstalling, and no setting c
 
 ## Breaking Changes
 
-Nothing changes for the installed Windows application. This affects only the retired Python
-package.
+Nothing here breaks an installed Windows application, and nothing needs doing to it. The close
+button's behaviour does change, which is the subject of this release. What follows affects only
+the retired Python package.
 
 - **The Python application has been retired completely.** It was superseded in 26.1.0, and its
   source, tests and build scripts have now been removed from the repository.
@@ -64,7 +70,7 @@ Unchanged from 26.1.0, and repeated because they still apply.
 - **Folder acquisitions are not yet handled as single items.** Bruker `.d` and Waters `.raw`
   directories transfer as the individual files inside them rather than as one atomic unit, so a
   folder that is still being written can transfer partially. Set **Unchanged for (seconds)**
-  generously if you acquire into folders, and prefer to watch a folder these are moved into once
+  generously if you acquire into folders, and prefer to watch the folder they are moved into once
   complete.
 - **Conflicts are recorded, not resolved.** If a file this application did not upload already
   occupies a destination, the transfer is held and marked *Needs a decision* in the Uploads tab.

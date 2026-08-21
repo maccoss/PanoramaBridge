@@ -97,10 +97,14 @@ public partial class MainWindow : Window
     /// to restart for an update while a transfer runs, for exactly this reason; this path is more
     /// reachable and had no equivalent. The window is brought back first, because a modal dialog
     /// owned by a hidden window is a dialog nobody can find.
+    ///
+    /// Both conditions are needed. <c>IsRunning</c> covers a manual scan; a file being uploaded
+    /// by monitoring leaves it false, which is the ordinary case for an unattended machine and
+    /// exactly the transfer worth asking about.
     /// </remarks>
     private void OnTrayExitRequested(object? sender, EventArgs e)
     {
-        if (_transfers.IsRunning)
+        if (_transfers.IsRunning || _transfers.HasTransferInFlight)
         {
             RestoreFromTray();
 

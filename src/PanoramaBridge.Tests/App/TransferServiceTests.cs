@@ -3,6 +3,7 @@ using PanoramaBridge.App.Services;
 using PanoramaBridge.Core.Infrastructure;
 using PanoramaBridge.Core.Security;
 using PanoramaBridge.Core.Storage;
+using PanoramaBridge.Core.Transfer;
 
 namespace PanoramaBridge.Tests.App;
 
@@ -51,6 +52,66 @@ public sealed class TransferServiceTests : IAsyncDisposable
         // the folder is not as empty as it should be.
         ReconcileMinutes = 60,
     };
+
+    /// <summary>
+    /// A file uploaded by monitoring must count as a transfer in progress.
+    /// </summary>
+    /// <remarks>
+    /// This is the bug it was written for. The tray menu's Exit and the update-and-restart path
+    /// both asked <c>IsRunning</c>, which tracks only the cancellation source a manual scan
+    /// creates. A file being uploaded by monitoring leaves that null, so both answered "nothing
+    /// in progress" for the ordinary case -- an unattended machine part-way through an
+    /// acquisition -- and cancelled the upload without asking. The shipped 26.1.1 notes claimed
+    /// the confirmation worked.
+    /// </remarks>
+    [Fact]
+    public void An_upload_started_by_monitoring_counts_as_in_flight()
+    {
+        using var service = NewService();
+
+        service.IsRunning.ShouldBeFalse();
+        service.HasTransferInFlight.ShouldBeFalse();
+
+        // What the monitoring engine reports while bytes are moving. It never touches _run.
+        service.Progress.Report(new TransferProgress(
+            LocalPath: @"C:\dataun.raw",
+            RemotePath: "/_webdav/MacCoss/maccoss/@files/uploads/run.raw",
+            State: TransferState.Uploading,
+            Phase: "Uploading",
+            BytesTransferred: 5_000_000,
+            TotalBytes: 20_000_000));
+
+        service.HasTransferInFlight.ShouldBeTrue(
+            "Exit and the updater both ask this before abandoning a transfer");
+
+        service.IsRunning.ShouldBeFalse(
+            "and IsRunning still says no, which is precisely why it could not be the question");
+    }
+
+    [Fact]
+    public void A_finished_transfer_does_not_hold_the_application_open()
+    {
+        // Uploaded-but-unverified is deliberately not counted: with verification turned off a
+        // file can rest in that state, and counting it would leave Exit prompting forever.
+        using var service = NewService();
+
+        foreach (var state in new[]
+                 {
+                     TransferState.Verified, TransferState.Uploaded, TransferState.Skipped,
+                     TransferState.Queued, TransferState.Failed,
+                 })
+        {
+            service.Progress.Report(new TransferProgress(
+                LocalPath: $@"C:\data\{state}.raw",
+                RemotePath: $"/_webdav/x/{state}.raw",
+                State: state,
+                Phase: state.ToString(),
+                BytesTransferred: 10,
+                TotalBytes: 10));
+        }
+
+        service.HasTransferInFlight.ShouldBeFalse();
+    }
 
     [Fact]
     public async Task Monitoring_starts_and_stops()

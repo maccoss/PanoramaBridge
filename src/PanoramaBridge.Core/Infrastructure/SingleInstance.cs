@@ -16,24 +16,33 @@ namespace PanoramaBridge.Core.Infrastructure;
 /// it. That is the one thing this application is not allowed to get wrong.
 /// </para>
 /// <para>
-/// The <c>Local\</c> namespace scopes both handles to the signed-in session, which matches a
-/// per-user install: two people using the same machine each get their own instance, as they each
-/// have their own settings and their own ledger.
+/// Exclusion is a locked file in the per-user data directory, not a named mutex. The kernel's
+/// <c>Local\</c> namespace is scoped to the terminal <em>session</em>, while the ledger under
+/// <c>%LOCALAPPDATA%</c> is shared by the account across all of them -- so a mutex there would
+/// have let the same user run two copies from two sessions, over one ledger, which is the exact
+/// collision being prevented. A file lock matches the thing being protected, because it lives
+/// beside it. It is also released by the operating system when the process dies, so a crash
+/// cannot leave a stale lock that blocks every future start.
+/// </para>
+/// <para>
+/// Waking the running copy stays session-scoped, and correctly so: a window belonging to another
+/// session cannot be shown to whoever is looking at this one. Across sessions the second launch
+/// simply exits.
 /// </para>
 /// </remarks>
 public sealed class SingleInstance : IDisposable
 {
-    private readonly Mutex? _mutex;
+    private readonly FileStream? _lock;
     private readonly EventWaitHandle? _wakeExisting;
     private readonly ManualResetEventSlim _stopping = new(false);
 
     private Thread? _listener;
     private bool _disposed;
 
-    private SingleInstance(bool isFirst, Mutex? mutex, EventWaitHandle? wakeExisting)
+    private SingleInstance(bool isFirst, FileStream? heldLock, EventWaitHandle? wakeExisting)
     {
         IsFirst = isFirst;
-        _mutex = mutex;
+        _lock = heldLock;
         _wakeExisting = wakeExisting;
     }
 
@@ -43,28 +52,55 @@ public sealed class SingleInstance : IDisposable
     /// <summary>
     /// Claims the instance for this process.
     /// </summary>
-    /// <param name="name">Distinguishes the application, and lets tests use their own.</param>
+    /// <param name="name">Names the wake handle, and lets tests use their own.</param>
+    /// <param name="lockFile">
+    /// A path in the per-user data directory. Held open for the life of the process.
+    /// </param>
     /// <remarks>
     /// A failure to create either handle reports <see cref="IsFirst"/> true. Refusing to start
     /// because the check itself could not be made would turn a locked-down machine into one that
     /// cannot transfer at all, which is far worse than the duplicate this guards against.
     /// </remarks>
-    public static SingleInstance Acquire(string name)
+    public static SingleInstance Acquire(string name, string lockFile)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(lockFile);
+
+        EventWaitHandle? wake = null;
 
         try
         {
-            var mutex = new Mutex(initiallyOwned: true, $@"Local\{name}.instance", out var isFirst);
-            var wake = new EventWaitHandle(false, EventResetMode.AutoReset, $@"Local\{name}.wake");
-
-            return new SingleInstance(isFirst, mutex, wake);
+            wake = new EventWaitHandle(false, EventResetMode.AutoReset, $@"Local\{name}.wake");
         }
         catch (Exception)
         {
-            // Includes UnauthorizedAccessException, seen when a handle of the same name exists
-            // with an ACL this account cannot open.
-            return new SingleInstance(isFirst: true, mutex: null, wakeExisting: null);
+            // Only costs the ability to raise the running window; exclusion does not depend on it.
+        }
+
+        try
+        {
+            var held = new FileStream(
+                lockFile,
+                FileMode.OpenOrCreate,
+                FileAccess.ReadWrite,
+                FileShare.None,
+                bufferSize: 1,
+                FileOptions.DeleteOnClose);
+
+            return new SingleInstance(isFirst: true, held, wake);
+        }
+        catch (IOException)
+        {
+            // Another copy holds it. The one case this exists for.
+            return new SingleInstance(isFirst: false, heldLock: null, wake);
+        }
+        catch (Exception)
+        {
+            // Anything else -- an unwritable directory, a policy denying the open -- reports
+            // first. Refusing to start because the check could not be made would turn a
+            // locked-down machine into one that cannot transfer at all, which is far worse than
+            // the duplicate this guards against.
+            return new SingleInstance(isFirst: true, heldLock: null, wake);
         }
     }
 
@@ -143,20 +179,16 @@ public sealed class SingleInstance : IDisposable
         // under a wait. It is blocked on an event that has just been set, so this returns at once.
         _listener?.Join(TimeSpan.FromSeconds(1));
 
-        if (IsFirst)
+        try
         {
-            try
-            {
-                _mutex?.ReleaseMutex();
-            }
-            catch (ApplicationException)
-            {
-                // Not owned, which is only reachable if Dispose runs on another thread. Nothing
-                // to do about it, and nothing that depends on it.
-            }
+            // DeleteOnClose removes the file as the handle closes, so nothing is left behind.
+            _lock?.Dispose();
+        }
+        catch (IOException)
+        {
+            // The lock is released by the handle closing either way.
         }
 
-        _mutex?.Dispose();
         _wakeExisting?.Dispose();
         _stopping.Dispose();
     }

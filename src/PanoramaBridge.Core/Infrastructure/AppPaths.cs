@@ -43,6 +43,15 @@ public sealed class AppPaths
     /// <summary>Upload ledger, hash cache and queue state.</summary>
     public string StateDatabase { get; }
 
+    /// <summary>
+    /// Held open while the application runs, so a second copy can tell there is one.
+    /// </summary>
+    /// <remarks>
+    /// Beside the ledger on purpose. What must not happen is two copies writing one ledger, and
+    /// this directory is exactly the scope that shares it: per user, across every session.
+    /// </remarks>
+    public string InstanceLockFile => Path.Combine(Root, "instance.lock");
+
     /// <summary>Creates the directories that must exist before anything else runs.</summary>
     public void EnsureCreated()
     {

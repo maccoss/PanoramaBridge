@@ -74,6 +74,24 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// <summary>True while the monitored folder is being watched.</summary>
     public bool IsMonitoring => _monitoring is { IsCancellationRequested: false };
 
+    /// <summary>
+    /// True while any file has bytes moving, however that transfer was started.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="IsRunning"/> is not this. It tracks <c>_run</c>, which only a manual scan
+    /// creates; a file uploaded by monitoring leaves it null, so asking <see cref="IsRunning"/>
+    /// "is a transfer in progress" answers no for the ordinary case -- an unattended machine
+    /// uploading an acquisition. Both paths report into <see cref="Progress"/>, which is why
+    /// this asks that instead.
+    ///
+    /// Only <see cref="TransferState.Uploading"/> counts. Uploaded-but-unverified is deliberately
+    /// excluded: its bytes are already on the server and the next sweep will confirm them, and
+    /// with verification turned off a file can rest in that state, which would leave this stuck
+    /// true forever.
+    /// </remarks>
+    public bool HasTransferInFlight =>
+        Progress.Snapshot().Any(p => p.State == TransferState.Uploading);
+
     /// <summary>What monitoring is doing, or null when it is not running.</summary>
     public MonitorStatus? Monitor => _monitor?.Status;
 
