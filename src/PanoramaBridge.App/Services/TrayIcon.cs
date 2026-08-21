@@ -108,7 +108,8 @@ public sealed class TrayIcon : IDisposable
     /// once have fired. Asking whether a taskbar exists is the cheapest question that is actually
     /// about the notification area.
     /// </remarks>
-    public bool IsAvailable => _icon is not null && !_disposed && NotificationAreaExists();
+    public bool IsAvailable =>
+        TrayPolicy.IsIconUsable(_icon is not null, NotificationAreaExists(), _disposed);
 
     /// <summary>Whether the icon is currently shown.</summary>
     public bool Visible
