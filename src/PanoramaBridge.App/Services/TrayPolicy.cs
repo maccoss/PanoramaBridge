@@ -42,7 +42,8 @@ public static class TrayPolicy
     /// Truncates hover text to what the shell accepts, with an ellipsis when something was cut.
     /// </summary>
     /// <remarks>
-    /// The tooltip carries a status string, and a status string can carry a folder name. Letting
+    /// The tooltip carries the status line, and the status line carries folder names: "Monitoring
+    /// \\fileserver\instruments\QE\data" passes 63 characters without trying. Letting
     /// that reach <c>NotifyIcon.Text</c> unchecked turns a long path into an exception on a
     /// machine nobody is watching.
     /// </remarks>
@@ -50,8 +51,21 @@ public static class TrayPolicy
     {
         ArgumentNullException.ThrowIfNull(text);
 
-        return text.Length <= MaxTooltipLength
-            ? text
-            : string.Concat(text.AsSpan(0, MaxTooltipLength - 1), "…");
+        if (text.Length <= MaxTooltipLength)
+        {
+            return text;
+        }
+
+        var keep = MaxTooltipLength - 1;
+
+        // Cutting at a fixed index can land between the halves of a surrogate pair and emit a
+        // lone surrogate, which the shell draws as a replacement box. One astral-plane character
+        // in a folder name is enough; stepping back one unit costs nothing.
+        if (char.IsHighSurrogate(text[keep - 1]) && char.IsLowSurrogate(text[keep]))
+        {
+            keep--;
+        }
+
+        return string.Concat(text.AsSpan(0, keep), "…");
     }
 }

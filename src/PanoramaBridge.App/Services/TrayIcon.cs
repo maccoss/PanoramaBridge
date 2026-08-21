@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using Microsoft.Extensions.Logging;
 
@@ -15,7 +16,7 @@ namespace PanoramaBridge.App.Services;
 /// appear days into a run and be near-impossible to attribute.
 /// </para>
 /// <para>
-/// Every failure here is non-fatal. An icon that cannot be created is reported through
+/// Every failure here is non-fatal. An icon that cannot be shown is reported through
 /// <see cref="IsAvailable"/>, which keeps the window closing normally, because an application
 /// that cannot show its window is worse than one that does not sit in the tray.
 /// </para>
@@ -23,6 +24,8 @@ namespace PanoramaBridge.App.Services;
 public sealed class TrayIcon : IDisposable
 {
     private readonly System.Windows.Forms.NotifyIcon? _icon;
+    private readonly System.Windows.Forms.ContextMenuStrip? _menu;
+    private readonly System.Drawing.Font? _defaultItemFont;
     private readonly ILogger<TrayIcon> _log;
 
     private bool _disposed;
@@ -34,24 +37,27 @@ public sealed class TrayIcon : IDisposable
 
         try
         {
-            var menu = new System.Windows.Forms.ContextMenuStrip();
+            _menu = new System.Windows.Forms.ContextMenuStrip();
 
-            var open = menu.Items.Add("Open PanoramaBridge");
+            var open = _menu.Items.Add("Open PanoramaBridge");
             open.Click += (_, _) => OpenRequested?.Invoke(this, EventArgs.Empty);
 
-            // Bold, so a double-click and the menu's default item visibly agree.
-            open.Font = new System.Drawing.Font(menu.Font, System.Drawing.FontStyle.Bold);
+            // Bold, so a double-click and the menu's default item visibly agree. Held in a field
+            // because ToolStripItem does not own a font assigned to it, so nothing else would
+            // ever release the handle.
+            _defaultItemFont = new System.Drawing.Font(_menu.Font, System.Drawing.FontStyle.Bold);
+            open.Font = _defaultItemFont;
 
-            menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+            _menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
 
-            var exit = menu.Items.Add("Exit");
+            var exit = _menu.Items.Add("Exit");
             exit.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
             _icon = new System.Windows.Forms.NotifyIcon
             {
                 Icon = LoadIcon(),
                 Text = Core.Infrastructure.AppInfo.ProductName,
-                ContextMenuStrip = menu,
+                ContextMenuStrip = _menu,
                 Visible = false,
             };
 
@@ -71,10 +77,15 @@ public sealed class TrayIcon : IDisposable
         }
         catch (Exception ex)
         {
-            // Seen when the shell is not running the notification area at all, which happens on
-            // stripped-down server images. Not a reason to fail startup.
             _log.LogWarning(ex, "The notification area icon could not be created.");
+
+            // Nothing else holds these once the constructor gives up, so they would leak.
+            _defaultItemFont?.Dispose();
+            _menu?.Dispose();
+
             _icon = null;
+            _menu = null;
+            _defaultItemFont = null;
         }
     }
 
@@ -85,9 +96,19 @@ public sealed class TrayIcon : IDisposable
     public event EventHandler? ExitRequested;
 
     /// <summary>
-    /// Whether an icon exists. False means the window must never be hidden.
+    /// Whether there is an icon the user could actually click. False means never hide the window.
     /// </summary>
-    public bool IsAvailable => _icon is not null;
+    /// <remarks>
+    /// This deliberately asks the shell rather than reporting whether the constructor threw.
+    /// Constructing a <c>NotifyIcon</c> touches nothing outside the process: the shell is not
+    /// called until <see cref="Visible"/> is set, and <c>NotifyIcon</c> discards the result of
+    /// <c>Shell_NotifyIcon</c> and cannot report having been refused. Reporting availability from
+    /// the constructor therefore answered "did allocating an object succeed", which is always
+    /// yes -- so the guard that stops the window being hidden with nothing to click could never
+    /// once have fired. Asking whether a taskbar exists is the cheapest question that is actually
+    /// about the notification area.
+    /// </remarks>
+    public bool IsAvailable => _icon is not null && !_disposed && NotificationAreaExists();
 
     /// <summary>Whether the icon is currently shown.</summary>
     public bool Visible
@@ -95,9 +116,20 @@ public sealed class TrayIcon : IDisposable
         get => _icon?.Visible == true;
         set
         {
-            if (_icon is not null && !_disposed)
+            if (_icon is null || _disposed)
+            {
+                return;
+            }
+
+            try
             {
                 _icon.Visible = value;
+            }
+            catch (Exception ex)
+            {
+                // Setting this is the point at which the shell is involved at all, so it is the
+                // first place a shell problem can surface.
+                _log.LogWarning(ex, "The notification area icon could not be shown.");
             }
         }
     }
@@ -116,29 +148,58 @@ public sealed class TrayIcon : IDisposable
     /// <summary>
     /// Says the application is still running, the first time the window is hidden.
     /// </summary>
+    /// <param name="monitoring">Whether the folder is actually being watched.</param>
     /// <remarks>
     /// Windows puts a new icon in the hidden overflow by default, so without this the window
     /// simply vanishes and the obvious conclusion is that it exited -- at which point somebody
     /// starts it again and wonders why nothing is transferring. Shown once per run: repeating it
     /// on every close would be worse than not showing it at all.
     /// </remarks>
-    public void AnnounceStillRunning()
+    public void AnnounceStillRunning(bool monitoring)
     {
-        if (_icon is null || _disposed || _announced)
+        if (_announced)
         {
             return;
         }
 
         _announced = true;
 
+        // "Still watching for new files" is true only when it is. Monitoring does not start on
+        // its own by default, and closing the window is among the first things anyone does, so
+        // saying it unconditionally would reassure exactly the person who most needs telling
+        // that nothing is running.
+        Notify(
+            Core.Infrastructure.AppInfo.ProductName,
+            monitoring
+                ? "Still running and still watching for new files. Click this icon to reopen it."
+                : "Still running, but not monitoring. Click this icon to reopen it and start.",
+            warning: false);
+    }
+
+    /// <summary>
+    /// Raises a notification from the icon.
+    /// </summary>
+    /// <remarks>
+    /// The only way a hidden window can say anything at all. A failure reported solely into the
+    /// status line is invisible for as long as the window stays closed, which on an instrument
+    /// computer can be weeks.
+    /// </remarks>
+    public void Notify(string title, string message, bool warning)
+    {
+        if (_icon is null || _disposed || !_icon.Visible)
+        {
+            return;
+        }
+
         try
         {
             _icon.ShowBalloonTip(
-                5000,
-                Core.Infrastructure.AppInfo.ProductName,
-                "Still running, and still watching for new files. "
-                + "Double-click this icon to reopen it.",
-                System.Windows.Forms.ToolTipIcon.Info);
+                warning ? 15000 : 5000,
+                title,
+                message,
+                warning
+                    ? System.Windows.Forms.ToolTipIcon.Warning
+                    : System.Windows.Forms.ToolTipIcon.Info);
         }
         catch (Exception ex)
         {
@@ -151,10 +212,11 @@ public sealed class TrayIcon : IDisposable
     /// Removes the icon.
     /// </summary>
     /// <remarks>
-    /// Safe to call more than once: the window disposes this when it closes so the icon goes
-    /// immediately rather than lingering until the pointer next passes over it, and the service
-    /// container disposes it again on the way out. The same double-dispose that once turned
-    /// closing the application into a "could not start" dialog.
+    /// Safe to call more than once, and called from three places: the window when it closes, so
+    /// the icon goes at once rather than lingering until the pointer next crosses it; the service
+    /// container on the way out; and the process-exit handler, which is the only one of the three
+    /// that runs when Velopack restarts the application for an update. The same double-dispose
+    /// that once turned closing the application into a "could not start" dialog.
     /// </remarks>
     public void Dispose()
     {
@@ -168,10 +230,26 @@ public sealed class TrayIcon : IDisposable
         if (_icon is not null)
         {
             _icon.Visible = false;
-            _icon.ContextMenuStrip?.Dispose();
             _icon.Dispose();
         }
+
+        _menu?.Dispose();
+        _defaultItemFont?.Dispose();
     }
+
+    /// <summary>
+    /// Whether the shell is running a taskbar to put an icon in.
+    /// </summary>
+    /// <remarks>
+    /// Absent on a Server Core installation, and briefly absent while Explorer restarts. The
+    /// transient case is harmless: it makes closing the window close the application for as long
+    /// as it lasts, which is the safe direction to be wrong in.
+    /// </remarks>
+    private static bool NotificationAreaExists() =>
+        FindWindow("Shell_TrayWnd", null) != IntPtr.Zero;
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = false)]
+    private static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
 
     /// <summary>
     /// Loads the application icon at the size the notification area actually draws.

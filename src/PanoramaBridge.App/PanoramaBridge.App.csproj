@@ -11,6 +11,11 @@
       when Explorer restarts, and this application is expected to run for weeks at a time on an
       instrument PC, where an Explorer restart is not rare. Losing the only way back to a hidden
       window is not an acceptable failure.
+
+      It is not free. Measured on a self-contained win-x64 publish, it adds 22.8 MB uncompressed:
+      System.Windows.Forms.dll 12.9, Design 5.3, Primitives 2.9, and the System.Drawing set 1.6.
+      PublishTrimmed would remove most of that and is unsupported for WPF. The cost is one larger
+      delta the first time each machine updates, then nothing.
     -->
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>PanoramaBridge.App</RootNamespace>

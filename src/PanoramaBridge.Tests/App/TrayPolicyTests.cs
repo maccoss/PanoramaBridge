@@ -92,4 +92,32 @@ public sealed class TrayPolicyTests
     {
         Should.Throw<ArgumentNullException>(() => TrayPolicy.TruncateTooltip(null!));
     }
+
+    [Fact]
+    public void A_cut_never_splits_a_character_in_half()
+    {
+        // Cutting at a fixed index can land between the halves of a surrogate pair, and a lone
+        // surrogate draws as a replacement box. One emoji in a folder name is enough to reach it.
+        // Built so a pair straddles the cut: 62 filler characters, then the pair at 62 and 63.
+        var text = new string('x', TrayPolicy.MaxTooltipLength - 1) + "😀" + "tail";
+
+        var result = TrayPolicy.TruncateTooltip(text);
+
+        char.IsLowSurrogate(result[^2]).ShouldBeFalse("the ellipsis must not follow half a pair");
+
+        foreach (var (c, i) in result.Select((c, i) => (c, i)))
+        {
+            if (char.IsHighSurrogate(c))
+            {
+                (i + 1 < result.Length && char.IsLowSurrogate(result[i + 1])).ShouldBeTrue(
+                    "every high surrogate must keep its partner");
+            }
+
+            if (char.IsLowSurrogate(c))
+            {
+                (i > 0 && char.IsHighSurrogate(result[i - 1])).ShouldBeTrue(
+                    "every low surrogate must keep its partner");
+            }
+        }
+    }
 }

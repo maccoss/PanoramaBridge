@@ -14,8 +14,18 @@ time and update the heading; see `README.md` in this directory for the process.
   the window is hidden it says so, because Windows files a new icon under hidden icons and a
   window that simply vanishes looks like one that exited.
 
-  If the icon cannot be created -- a shell with no notification area, or policy blocking it --
-  closing the window closes the application as before, rather than hiding it with no way back.
+  If there is no notification area to put an icon in -- a Server Core installation, or policy
+  blocking it -- closing the window closes the application as before, rather than hiding it with
+  no way back.
+
+  While the window is hidden the icon carries the current status as its hover text, and a
+  connection or monitoring failure raises a notification rather than changing only a status line
+  nobody can see.
+
+- **Only one copy runs per signed-in user.** Starting PanoramaBridge again brings the running
+  copy's window back instead of starting a second one. This matters more now that the window can
+  be hidden: two copies would share one upload ledger, walk the same folder, and race each other
+  uploading the same file.
 
 ## Bug Fixes
 
