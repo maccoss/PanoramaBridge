@@ -101,7 +101,10 @@ public sealed record ThermoRawHeader(
     /// <summary>Converts a Windows FILETIME to UTC, or null when absent or nonsensical.</summary>
     public static DateTimeOffset? ToTimestamp(ulong? fileTime)
     {
-        if (fileTime is not > 0)
+        // Above long.MaxValue the cast wraps to a negative number, which is not a rejected value
+        // but a plausible-looking wrong date. Garbage in this field is not worth failing a check
+        // over, but it is not worth reporting a timestamp for either.
+        if (fileTime is not > 0 || fileTime > long.MaxValue)
         {
             return null;
         }
@@ -112,7 +115,6 @@ public sealed record ThermoRawHeader(
         }
         catch (ArgumentOutOfRangeException)
         {
-            // Garbage in that field is not worth failing a check over.
             return null;
         }
     }

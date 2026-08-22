@@ -28,9 +28,10 @@ public static class ThermoRawValidator
     /// Whether a name is one this can examine.
     /// </summary>
     /// <remarks>
-    /// Extension only, and deliberately cheap: the caller uses it to avoid opening files it has
-    /// no business opening. Waters also writes <c>.raw</c>, as a directory, which is why the
-    /// answer for anything that is not a file is no.
+    /// Extension only, and deliberately cheap: it touches no disk, because the caller uses it to
+    /// decide whether opening the file is worth it at all. It therefore says yes to a
+    /// <em>directory</em> named <c>something.raw</c>, which is how Waters writes an acquisition.
+    /// Sorting that out belongs to <see cref="Validate(string)"/>, which has to look anyway.
     /// </remarks>
     public static bool IsCandidate(string path) =>
         !string.IsNullOrWhiteSpace(path)
@@ -71,7 +72,10 @@ public static class ThermoRawValidator
                 bufferSize: 4096,
                 FileOptions.SequentialScan);
 
-            return Validate(stream, info.Length, path);
+            // The handle's length, not FileInfo's. Windows leaves the directory entry stale
+            // while a write handle is open, and a stale length is exactly what makes a growing
+            // file look truncated.
+            return Validate(stream, stream.Length, path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

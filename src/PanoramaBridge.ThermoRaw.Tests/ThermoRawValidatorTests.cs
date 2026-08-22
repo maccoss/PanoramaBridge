@@ -224,6 +224,19 @@ public sealed class ThermoRawValidatorTests
     }
 
     [Theory]
+    [InlineData(0UL, false)]
+    [InlineData(ulong.MaxValue, false)]
+    [InlineData((ulong)long.MaxValue + 1, false)]
+    [InlineData(133_000_000_000_000_000UL, true)]
+    public void A_nonsensical_filetime_is_no_timestamp_rather_than_a_wrong_one(
+        ulong fileTime, bool expected)
+    {
+        // Above long.MaxValue the cast to long wraps to a negative number, which is not rejected
+        // as garbage -- it becomes a plausible-looking wrong date, which is worse than none.
+        (ThermoRawHeader.ToTimestamp(fileTime) is not null).ShouldBe(expected);
+    }
+
+    [Theory]
     [InlineData("run.raw", true)]
     [InlineData("run.RAW", true)]
     [InlineData("run.Raw", true)]

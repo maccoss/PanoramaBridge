@@ -112,8 +112,12 @@ public static class Program
         {
             if (Directory.Exists(path))
             {
+                // Enumerated unfiltered and matched by extension, because a "*.raw" pattern is
+                // case-sensitive on Linux and would silently skip .RAW and .Raw -- on the
+                // platform this tool exists to run on as much as Windows.
                 foreach (var file in Directory
-                             .EnumerateFiles(path, "*.raw", SearchOption.TopDirectoryOnly)
+                             .EnumerateFiles(path, "*", SearchOption.TopDirectoryOnly)
+                             .Where(ThermoRawValidator.IsCandidate)
                              .OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
                 {
                     yield return file;
