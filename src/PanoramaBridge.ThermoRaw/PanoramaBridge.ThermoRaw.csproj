@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      net8.0, not net8.0-windows, and no package references at all. This has to build and run on
+      Linux: the point of splitting it out is that it is useful without PanoramaBridge, and the
+      people most likely to want it are not on Windows.
+    -->
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>PanoramaBridge.ThermoRaw</RootNamespace>
+    <Description>Checks whether a Thermo RAW file has been truncated, without Thermo libraries.</Description>
+  </PropertyGroup>
+
+</Project>

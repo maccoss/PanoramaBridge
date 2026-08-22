@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      net8.0, not net8.0-windows like the main suite. This is what lets CI run these on Ubuntu as
+      well as Windows, which is the only way the cross-platform claim means anything.
+    -->
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>PanoramaBridge.ThermoRaw.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="Shouldly" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PanoramaBridge.ThermoRaw\PanoramaBridge.ThermoRaw.csproj" />
+  </ItemGroup>
+
+</Project>

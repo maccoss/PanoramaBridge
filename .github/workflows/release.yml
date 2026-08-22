@@ -186,9 +186,28 @@ jobs:
       # vpk does not take a release body, so the notes file is applied afterwards. It is
       # published verbatim, which is why release-notes/README.md insists it be written for the
       # people reading the Releases page.
+      # Built here rather than reused from CI so a release is reproducible from its tag alone.
+      # Trimmed and self-contained: one file, no .NET install, for anyone who wants to check a
+      # RAW file without installing PanoramaBridge.
+      - name: Publish thermoraw-check for both platforms
+        shell: pwsh
+        run: |
+          $project = 'src/PanoramaBridge.ThermoRawCheck/PanoramaBridge.ThermoRawCheck.csproj'
+          foreach ($rid in @('win-x64', 'linux-x64')) {
+            dotnet publish $project -c Release -r $rid -o "artifacts/thermoraw-check/$rid"
+            if ($LASTEXITCODE -ne 0) { throw "publishing thermoraw-check for $rid failed" }
+          }
+          New-Item -ItemType Directory -Force artifacts/tools | Out-Null
+          Copy-Item artifacts/thermoraw-check/win-x64/thermoraw-check.exe `
+                    artifacts/tools/thermoraw-check-win-x64.exe
+          Copy-Item artifacts/thermoraw-check/linux-x64/thermoraw-check `
+                    artifacts/tools/thermoraw-check-linux-x64
+          Get-ChildItem artifacts/tools | Format-Table Name, Length
+
       - name: Attach checksums and set the release description
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload v${{ steps.meta.outputs.version }} artifacts/SHA256SUMS.txt --clobber
+          gh release upload v${{ steps.meta.outputs.version }} artifacts/tools/thermoraw-check-win-x64.exe artifacts/tools/thermoraw-check-linux-x64 --clobber
           gh release edit v${{ steps.meta.outputs.version }} --notes-file ${{ steps.notes.outputs.notes }}

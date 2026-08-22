@@ -66,6 +66,123 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
 
     // -- The date the instrument wrote the file ---------------------------------------------------
 
+    /// <summary>
+    /// Writes a file that opens with a valid Thermo RAW header and nothing coherent after it.
+    /// </summary>
+    /// <remarks>
+    /// A header and no body is what a copy that died early looks like, and it is the case the
+    /// ordinary readiness signals cannot see: nothing holds it and its size is perfectly stable.
+    /// </remarks>
+    private async Task<string> WriteRawHeaderAsync(string name, int formatVersion, int padding)
+    {
+        var bytes = new byte[1356 + padding];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(bytes, 0xA101);
+        System.Text.Encoding.Unicode.GetBytes("Finnigan").CopyTo(bytes, 2);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(
+            bytes.AsSpan(0x24), (uint)formatVersion);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(
+            bytes.AsSpan(0x28), 133_000_000_000_000_000UL);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(
+            bytes.AsSpan(0x98), 133_000_000_100_000_000UL);
+
+        var path = Path.Combine(_local, name);
+        await File.WriteAllBytesAsync(path, bytes);
+        return path;
+    }
+
+    [Fact]
+    public async Task Checking_a_raw_file_never_modifies_it()
+    {
+        // An acquisition is not ours to touch. A validator that could alter what it validates
+        // would be worse than no validator at all.
+        var file = await WriteRawHeaderAsync("untouched.raw", formatVersion: 66, padding: 4096);
+
+        var before = await File.ReadAllBytesAsync(file);
+        var writtenAt = File.GetLastWriteTimeUtc(file);
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        File.ReadAllBytes(file).ShouldBe(before, "not one byte may change");
+        File.GetLastWriteTimeUtc(file).ShouldBe(writtenAt, "and neither may the timestamp");
+    }
+
+    [Fact]
+    public async Task A_raw_file_still_held_open_for_writing_is_not_examined()
+    {
+        // What an instrument mid-acquisition looks like. The check must decline rather than read
+        // a file that is still growing, and declining must not stop the transfer machinery.
+        var file = await WriteRawHeaderAsync("acquiring.raw", formatVersion: 66, padding: 0);
+
+        using (var held = new FileStream(
+                   file, FileMode.Open, FileAccess.Write, FileShare.Read))
+        {
+            await RunWithAsync(NewCoordinator(), file);
+
+            var during = await _store.GetAsync(file);
+            during?.RawCheck.ShouldBeNull(
+                "a file held open for writing must not be given a verdict");
+        }
+
+        // The same file, once released, is examined and found short.
+        await RunWithAsync(NewCoordinator(), file);
+
+        var after = await _store.GetAsync(file);
+        after!.RawCheck.ShouldNotBeNullOrEmpty();
+        after.State.ShouldBe(TransferState.Conflict);
+    }
+
+    [Fact]
+    public async Task A_truncated_thermo_raw_file_is_not_uploaded()
+    {
+        // The reason the check exists. Uploading a short acquisition is worse than uploading
+        // nothing, because the copy looks complete and verifies against its own truncated
+        // content -- and the two ordinary readiness signals cannot tell this from a finished
+        // file, since nothing holds it and its size has stopped changing.
+        var file = await WriteRawHeaderAsync("cut-short.raw", formatVersion: 66, padding: 0);
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        _server.Content(Destination.Append("cut-short.raw")).ShouldBeNull(
+            "a file proven short must never reach the server");
+
+        var record = await _store.GetAsync(file);
+        record.ShouldNotBeNull();
+        record!.State.ShouldBe(TransferState.Conflict, "and it must be visible, not silently dropped");
+        record.RawCheck.ShouldNotBeNullOrEmpty();
+        record.LastError!.ShouldContain("Truncated");
+    }
+
+    [Fact]
+    public async Task A_raw_revision_we_do_not_understand_is_still_uploaded()
+    {
+        // The property that keeps a checker from becoming an outage. Thermo ships new format
+        // revisions; refusing an unfamiliar one would turn a firmware update into an instrument
+        // that has silently stopped transferring.
+        var file = await WriteRawHeaderAsync("future.raw", formatVersion: 70, padding: 4096);
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        _server.Content(Destination.Append("future.raw")).ShouldNotBeNull(
+            "an unrecognised revision is not a reason to hold a file back");
+
+        var record = await _store.GetAsync(file);
+        record!.RawCheck!.ShouldContain("70", customMessage:
+            "and the record must name the revision, so the gap can be closed");
+    }
+
+    [Fact]
+    public async Task A_file_that_is_not_a_raw_file_is_left_alone_by_the_check()
+    {
+        var file = await WriteAsync("notes.txt", "nothing to do with Thermo");
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        _server.Content(Destination.Append("notes.txt")).ShouldNotBeNull();
+
+        var record = await _store.GetAsync(file);
+        record!.RawCheck.ShouldBeNull("nothing was asked of it, so nothing should be claimed");
+    }
+
     [Fact]
     public async Task An_upload_keeps_the_date_the_instrument_wrote_it()
     {
@@ -527,6 +644,14 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
 
         // And the local file changes too, so the ledger's fast path cannot short-circuit.
         await File.WriteAllTextAsync(file, "our newer content");
+
+        // Stamped explicitly rather than relying on the write having reached the directory entry.
+        // Windows updates that entry lazily, so a length and time read immediately after a write
+        // can still be the previous ones -- and the fast path, seeing a file it believes
+        // unchanged, would skip it. In the application a file has been quiet for ten seconds
+        // before it is ever offered, so the window cannot arise; here it is pure timing, and it
+        // made this test fail about one run in six.
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddSeconds(5));
 
         var summary = await RunWithAsync(NewCoordinator(policy: ConflictPolicy.Ask), file);
 

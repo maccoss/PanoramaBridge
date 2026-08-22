@@ -4,6 +4,7 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PanoramaBridge.Core.Storage;
+using PanoramaBridge.ThermoRaw;
 using PanoramaBridge.Core.WebDav;
 
 namespace PanoramaBridge.Core.Transfer;
@@ -280,12 +281,48 @@ public sealed class TransferCoordinator : IAsyncDisposable
         var record = await _store.GetAsync(localPath, cancellationToken).ConfigureAwait(false)
             ?? UploadRecord.ForNewFile(stamp, encoded);
 
+        // What the file says about itself, which is a different question from what the file
+        // system says about it. The readiness gate has already established that nothing holds it
+        // and its size has stopped changing, and neither of those can tell a finished
+        // acquisition from an abandoned one.
+        var rawCheck = InspectRawFile(localPath, stamp.Length);
+
         record = record with
         {
             RemotePath = encoded,
             Length = stamp.Length,
             LastWriteUnixMs = stamp.LastWriteUnixMs,
+            RawCheck = rawCheck?.Summary ?? record.RawCheck,
         };
+
+        if (rawCheck is { IsProvenTruncated: true })
+        {
+            Interlocked.Increment(ref _conflicts);
+
+            // Held rather than failed, and saved rather than updated, for the same reason a
+            // conflict is: a file refused with no row is a file nobody can see was refused.
+            // Uploading it is the one thing that must not happen -- a short copy on the server
+            // looks complete and verifies against its own truncated content.
+            await _store
+                .SaveAsync(
+                    record with
+                    {
+                        State = TransferState.Conflict,
+                        LastError = rawCheck.Summary,
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            _log.LogWarning(
+                "{Path}: not uploaded. {Summary}. {Evidence}",
+                localPath,
+                rawCheck.Summary,
+                string.Join("; ", rawCheck.Evidence));
+
+            Report(localPath, encoded, TransferState.Conflict, "Incomplete file",
+                0, stamp.Length, message: rawCheck.Summary);
+            return;
+        }
 
         _log.LogDebug(
             "{Path}: {Action} (decided at tier {Tier}) - {Reason}",
@@ -584,6 +621,68 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 ex,
                 "{Path} was uploaded and verified, but its checksum file could not be written.",
                 sidecar);
+        }
+    }
+
+    /// <summary>
+    /// Asks a Thermo RAW file whether it is short, on a handle nothing else holds.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Nothing here writes to the file.</b> <see cref="FileMode.Open"/> and
+    /// <see cref="FileAccess.Read"/>, never Create, Append or Write. An acquisition is not ours
+    /// to modify, and a validator that could alter what it validates would be worse than no
+    /// validator.
+    /// </para>
+    /// <para>
+    /// Shared as <see cref="FileShare.Read"/> rather than <see cref="FileShare.None"/>. Both
+    /// detect the case that matters identically -- Windows refuses either open while another
+    /// handle holds the file for writing, which is how "the instrument is still acquiring" is
+    /// detected -- but None additionally locks every other reader out for as long as we hold it.
+    /// That is the wrong thing to do on an instrument computer: it would make this the reason
+    /// somebody else's read failed. Read also stops a concurrent reader, a backup or a virus
+    /// scanner, from being mistaken for a writer.
+    /// </para>
+    /// <para>
+    /// If the open fails the answer is simply no opinion, and the next sweep asks again.
+    /// </para>
+    /// <para>
+    /// The length comes from the open handle rather than the directory entry, which Windows
+    /// leaves stale while a write handle is open -- a stale length is exactly what would make a
+    /// growing file look truncated.
+    /// </para>
+    /// </remarks>
+    private ThermoRawResult? InspectRawFile(string localPath, long length)
+    {
+        if (!ThermoRawValidator.IsCandidate(localPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var reading = new FileStream(
+                localPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+            var result = ThermoRawValidator.Validate(reading, reading.Length, localPath);
+
+            if (result.Verdict is ThermoRawVerdict.Unknown or ThermoRawVerdict.NotFinalised)
+            {
+                // Recorded rather than acted on. These are the files that say the checker needs
+                // to learn something, and they are worth nothing if they are invisible.
+                _log.LogInformation("{Path}: {Summary}", localPath, result.Summary);
+            }
+
+            return result;
+        }
+        catch (IOException)
+        {
+            // Something grabbed it between the gate and here. No opinion; the sweep will return.
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 

@@ -28,6 +28,7 @@
                         <ComboBoxItem Content="Everything" Tag="{x:Static vm:UploadFilter.All}" />
                         <ComboBoxItem Content="On the server" Tag="{x:Static vm:UploadFilter.Verified}" />
                         <ComboBoxItem Content="Needs attention" Tag="{x:Static vm:UploadFilter.NeedsAttention}" />
+                        <ComboBoxItem Content="Not checked" Tag="{x:Static vm:UploadFilter.NotChecked}" />
                     </ComboBox>
 
                     <TextBox Width="220" Margin="8,0,0,0" VerticalAlignment="Center"
@@ -85,6 +86,10 @@
                         </Style>
                     </DataGridTextColumn.CellStyle>
                 </DataGridTextColumn>
+
+                <!-- What reading the file itself established. Blank for formats with nothing
+                     to ask, which is most of them. -->
+                <DataGridTextColumn Header="File check" Binding="{Binding RawCheck}" Width="170" />
 
                 <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="90" />
                 <DataGridTextColumn Header="Verified" Binding="{Binding VerifiedAt}" Width="130" />

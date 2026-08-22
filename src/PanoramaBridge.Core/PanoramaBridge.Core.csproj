@@ -15,4 +15,12 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      The RAW check. Core depends on it and not the other way round: ThermoRaw has to stay
+      buildable and shippable on its own.
+    -->
+    <ProjectReference Include="..\PanoramaBridge.ThermoRaw\PanoramaBridge.ThermoRaw.csproj" />
+  </ItemGroup>
+
 </Project>
