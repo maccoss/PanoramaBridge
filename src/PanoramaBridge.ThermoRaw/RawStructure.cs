@@ -21,11 +21,22 @@ internal static class RawStructure
 {
     /// <summary>What the walk found.</summary>
     /// <param name="Run">The run header, when one was located.</param>
-    /// <param name="Problems">Pointers that do not fit inside the file.</param>
+    /// <param name="TruncationProof">
+    /// Structures that require bytes the file does not have. Only these prove it is short.
+    /// </param>
+    /// <param name="Anomalies">
+    /// Fields that are not as expected without being evidence of anything missing.
+    /// </param>
     /// <param name="RequiredBytes">The highest byte any structure refers to.</param>
+    /// <remarks>
+    /// The two lists are kept apart because they must lead to different verdicts, and collapsing
+    /// them is a mistake with a direction: a malformed field reported as truncation blocks a file
+    /// that is perfectly whole.
+    /// </remarks>
     internal sealed record Result(
         RunHeader? Run,
-        IReadOnlyList<string> Problems,
+        IReadOnlyList<string> TruncationProof,
+        IReadOnlyList<string> Anomalies,
         long? RequiredBytes);
 
     /// <summary>
@@ -40,7 +51,8 @@ internal static class RawStructure
         var (dataAddress, controllers) = LocateRunHeaders(reader, version);
 
         var run = SelectMsRunHeader(reader, version, dataAddress, controllers);
-        var problems = new List<string>();
+        var truncation = new List<string>();
+        var anomalies = new List<string>();
         long required = 0;
 
         void Require(string what, long pointer, bool mayBeZero = false)
@@ -50,9 +62,20 @@ internal static class RawStructure
                 return;
             }
 
-            if (pointer <= 0 || pointer >= size)
+            // Past the end is the file being short. Zero or negative is a field that is not what
+            // was expected, which says nothing about whether bytes are missing -- and must not,
+            // because the caller stops transfers on the first and not on the second.
+            if (pointer >= size)
             {
-                problems.Add($"the {what} pointer is {pointer}, outside a file of {size} bytes");
+                truncation.Add(
+                    $"the {what} pointer is {pointer:N0}, past the end of a {size:N0} byte file");
+                required = Math.Max(required, pointer);
+                return;
+            }
+
+            if (pointer <= 0)
+            {
+                anomalies.Add($"the {what} pointer is {pointer}, which is not a position in a file");
                 return;
             }
 
@@ -69,7 +92,10 @@ internal static class RawStructure
 
         if (run.ScanCount <= 0)
         {
-            problems.Add("the scan range does not describe any scans");
+            // An empty or reversed scan range is a run header that does not make sense. Nothing
+            // about it says the file was cut short.
+            anomalies.Add(
+                $"the scan range {run.FirstScan} to {run.LastScan} does not describe any scans");
         }
         else
         {
@@ -78,7 +104,7 @@ internal static class RawStructure
 
             if (indexEnd > size)
             {
-                problems.Add(
+                truncation.Add(
                     $"the scan index needs {indexEnd:N0} bytes for {run.ScanCount:N0} scans, "
                     + $"and the file is {size:N0}");
             }
@@ -93,7 +119,7 @@ internal static class RawStructure
                 provesTruncation: false);
         }
 
-        return new Result(run, problems, required == 0 ? null : required);
+        return new Result(run, truncation, anomalies, required == 0 ? null : required);
     }
 
     /// <summary>

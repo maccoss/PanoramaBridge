@@ -49,6 +49,15 @@ public static class ThermoRawValidator
         {
             var info = new FileInfo(path);
 
+            if (Directory.Exists(path))
+            {
+                // Waters writes .raw as a directory. Saying "the file is not there" about one
+                // sends somebody looking for a missing file that was never missing.
+                return Failed(
+                    path, 0, ThermoRawVerdict.NotThermoRaw,
+                    "this is a directory, not a file; Waters writes .raw as a folder");
+            }
+
             if (!info.Exists)
             {
                 return Failed(path, 0, ThermoRawVerdict.Error, "the file is not there");
@@ -154,14 +163,27 @@ public static class ThermoRawValidator
                     "the layout did not parse, and truncation is not the proven explanation");
             }
 
-            evidence.AddRange(structure.Problems);
+            evidence.AddRange(structure.TruncationProof);
+            evidence.AddRange(structure.Anomalies);
 
-            if (structure.Problems.Count > 0)
+            // Order matters, and so does the separation. Only a structure that needs bytes the
+            // file does not have proves it is short; a field that is merely not what was expected
+            // means the layout was misread, and reporting that as truncation would hold back a
+            // file that is perfectly whole.
+            if (structure.TruncationProof.Count > 0)
             {
                 return new ThermoRawResult(
                     path, ThermoRawVerdict.Truncated, ThermoRawUnknownReason.None,
                     header.FormatVersion, size, structure.RequiredBytes,
                     header.AcquisitionFinished, evidence);
+            }
+
+            if (structure.Anomalies.Count > 0)
+            {
+                return Unchecked(
+                    path, header, size, evidence,
+                    ThermoRawUnknownReason.LayoutNotUnderstood,
+                    "the run header is not as expected, and nothing is proven missing");
             }
 
             evidence.Add("every pointer in the run header lands inside the file");

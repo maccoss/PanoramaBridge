@@ -38,6 +38,14 @@ internal sealed class SyntheticRawFile
     /// <summary>Bytes of padding after the structures, standing in for scan data.</summary>
     public int TrailingBytes { get; init; } = 4096;
 
+    /// <summary>
+    /// Writes a zero scan-index pointer: a field that makes no sense, in a file missing nothing.
+    /// </summary>
+    public bool ZeroScanIndexPointer { get; init; }
+
+    /// <summary>Writes a reversed scan range, which describes no scans.</summary>
+    public bool ReversedScanRange { get; init; }
+
     public static byte[] Valid() => new SyntheticRawFile().Build();
 
     /// <summary>Writes the file and returns it.</summary>
@@ -156,7 +164,7 @@ internal sealed class SyntheticRawFile
     {
         // Laid out after it, so the pointers land somewhere real.
         var afterHeader = address + RunHeaderLength();
-        var scanIndex = ScanIndexAddressOverride ?? afterHeader;
+        var scanIndex = ZeroScanIndexPointer ? 0 : ScanIndexAddressOverride ?? afterHeader;
         var data = afterHeader + 8;
         var instrumentLog = afterHeader + 16;
         var errorLog = afterHeader + 24;
@@ -164,8 +172,8 @@ internal sealed class SyntheticRawFile
         var scanParameters = afterHeader + 40;
 
         Pad(8);
-        U32(1);                       // first scan
-        U32(ScanCount);               // last scan
+        U32(ReversedScanRange ? 100u : 1u);            // first scan
+        U32(ReversedScanRange ? 1u : ScanCount);       // last scan
         U32(0);                       // instrument log length
         U32(0);                       // error log length
         Pad(4);

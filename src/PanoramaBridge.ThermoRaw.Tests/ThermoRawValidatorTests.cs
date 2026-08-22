@@ -82,6 +82,62 @@ public sealed class ThermoRawValidatorTests
     }
 
     [Fact]
+    public void A_nonsensical_pointer_is_not_called_truncation()
+    {
+        // Found reviewing this code against the reference it is ported from. Every structural
+        // problem was being reported as Truncated, including ones that say nothing about missing
+        // bytes. That matters more here than in a reporting tool: this one gates transfers, so a
+        // malformed field mistaken for truncation holds back a file that is perfectly whole --
+        // the exact failure the "unknown never blocks" rule exists to prevent, arrived at from
+        // the other direction.
+        var bytes = new SyntheticRawFile { ZeroScanIndexPointer = true }.Build();
+
+        var result = Check(bytes);
+
+        result.Verdict.ShouldBe(ThermoRawVerdict.Unknown);
+        result.Reason.ShouldBe(ThermoRawUnknownReason.LayoutNotUnderstood);
+        result.IsProvenTruncated.ShouldBeFalse("nothing here shows a single byte is missing");
+    }
+
+    [Fact]
+    public void A_scan_range_that_describes_no_scans_is_not_called_truncation()
+    {
+        var bytes = new SyntheticRawFile { ReversedScanRange = true }.Build();
+
+        var result = Check(bytes);
+
+        result.Verdict.ShouldBe(ThermoRawVerdict.Unknown);
+        result.Reason.ShouldBe(ThermoRawUnknownReason.LayoutNotUnderstood);
+    }
+
+    [Fact]
+    public void A_waters_raw_directory_is_not_reported_as_a_missing_file()
+    {
+        // Waters writes .raw as a folder, and this lab has both vendors. "The file is not there"
+        // would send somebody looking for something that was never missing.
+        var directory = Directory.CreateTempSubdirectory("pb-waters-").FullName;
+        var asRaw = Path.Combine(Path.GetDirectoryName(directory)!, $"{Guid.NewGuid():N}.raw");
+
+        try
+        {
+            Directory.Move(directory, asRaw);
+
+            var result = ThermoRawValidator.Validate(asRaw);
+
+            result.Verdict.ShouldBe(ThermoRawVerdict.NotThermoRaw);
+            result.Evidence.ShouldContain(e => e.Contains("directory"));
+            result.IsProvenTruncated.ShouldBeFalse();
+        }
+        finally
+        {
+            if (Directory.Exists(asRaw))
+            {
+                Directory.Delete(asRaw, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void An_unfinished_acquisition_is_reported_separately_from_truncation()
     {
         // A run that was aborted can be perfectly well-formed for as far as it goes. Calling that
