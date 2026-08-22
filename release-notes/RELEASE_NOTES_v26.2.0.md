@@ -69,7 +69,7 @@ want a positive completeness verdict or embedded-checksum validation, his tool d
 more than this one.
 
 Full detail, including seven stated limitations, is in
-[`docs/THERMO_RAW_VALIDATION.md`](https://github.com/maccoss/PanoramaBridge/blob/main/docs/THERMO_RAW_VALIDATION.md).
+[`docs/THERMO_RAW_VALIDATION.md`](https://github.com/maccoss/PanoramaBridge/blob/v26.2.0/docs/THERMO_RAW_VALIDATION.md).
 
 ## Under the hood
 
