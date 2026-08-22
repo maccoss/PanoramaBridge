@@ -50,6 +50,20 @@ public sealed class UploadRowViewModel
         _ => "Not verified",
     };
 
+    /// <summary>
+    /// What reading the file itself established, for the formats that can be asked.
+    /// </summary>
+    /// <remarks>
+    /// Blank for anything not checked, which is most things. The values worth looking for are the
+    /// unchecked ones: they name a gap in the checker, and a gap nobody can see does not get
+    /// closed.
+    /// </remarks>
+    public string RawCheck => Record.RawCheck ?? string.Empty;
+
+    /// <summary>True when the file was examined and nothing could be established.</summary>
+    public bool RawCheckInconclusive =>
+        Record.RawCheck?.StartsWith("Unchecked", StringComparison.Ordinal) == true;
+
     /// <summary>True when the row can be relied on: hash-checked and unchanged since.</summary>
     public bool IsTrustworthy => Record.VerifyMethod == VerifyMethod.ServerMd5;
 
@@ -85,6 +99,14 @@ public enum UploadFilter
     All,
     Verified,
     NeedsAttention,
+
+    /// <summary>Files the content check could not reach a conclusion about.</summary>
+    /// <remarks>
+    /// Its own filter because these are a work list rather than a problem: each one is a format
+    /// revision or a layout the checker does not yet understand, and finding them should be a
+    /// click rather than a search through logs.
+    /// </remarks>
+    NotChecked,
 }
 
 /// <summary>
@@ -147,10 +169,21 @@ public sealed partial class UploadsViewModel : ObservableObject
             {
                 UploadFilter.Verified => [TransferState.Verified, TransferState.Skipped],
                 UploadFilter.NeedsAttention => AttentionStates,
+                UploadFilter.NotChecked => AllStates,
                 _ => AllStates,
             };
 
             var records = await _store.GetByStateAsync(states, limit: 5000).ConfigureAwait(true);
+
+            if (Filter == UploadFilter.NotChecked)
+            {
+                // Filtered here rather than in SQL because it is a property of the recorded text
+                // and not of the state, and because this list is short by definition: if it is
+                // long, the checker has a gap worth closing rather than paging through.
+                records = records
+                    .Where(r => r.RawCheck?.StartsWith("Unchecked", StringComparison.Ordinal) == true)
+                    .ToArray();
+            }
 
             var needle = Search.Trim();
             if (needle.Length > 0)
@@ -200,7 +233,7 @@ public sealed partial class UploadsViewModel : ObservableObject
         }
 
         var csv = new StringBuilder();
-        csv.AppendLine("Local path,Remote path,State,Verification,Size (bytes),MD5,Verified (UTC),Detail");
+        csv.AppendLine("Local path,Remote path,State,Verification,File check,Size (bytes),MD5,Verified (UTC),Detail");
 
         foreach (var row in Rows)
         {
@@ -210,6 +243,7 @@ public sealed partial class UploadsViewModel : ObservableObject
                 .Append(Escape(record.RemotePath)).Append(',')
                 .Append(Escape(row.State)).Append(',')
                 .Append(Escape(row.Verification)).Append(',')
+                .Append(Escape(row.RawCheck)).Append(',')
                 .Append(record.Length.ToString(CultureInfo.InvariantCulture)).Append(',')
                 .Append(Escape(record.Md5 ?? string.Empty)).Append(',')
                 .Append(Escape(record.VerifiedUtc?.ToString("O", CultureInfo.InvariantCulture) ?? string.Empty))

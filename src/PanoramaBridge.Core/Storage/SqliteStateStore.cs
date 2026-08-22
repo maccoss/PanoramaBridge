@@ -22,7 +22,7 @@ namespace PanoramaBridge.Core.Storage;
 /// </remarks>
 public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposable
 {
-    private const int CurrentSchemaVersion = 1;
+    private const int CurrentSchemaVersion = 2;
 
     private readonly string _connectionString;
 
@@ -87,15 +87,16 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             """
             INSERT INTO uploads
               (local_path, remote_path, size, mtime_utc, md5, sha256,
-               state, verify_method, verified_utc, attempts, last_error, is_dataset)
+               state, verify_method, verified_utc, attempts, last_error, is_dataset,
+               raw_check)
             VALUES
               ($path, $remote, $size, $mtime, $md5, $sha256,
-               $state, $verify, $verified, $attempts, $error, $dataset)
+               $state, $verify, $verified, $attempts, $error, $dataset, $rawcheck)
             ON CONFLICT(local_path) DO UPDATE SET
               remote_path = $remote, size = $size, mtime_utc = $mtime,
               md5 = $md5, sha256 = $sha256, state = $state, verify_method = $verify,
               verified_utc = $verified, attempts = $attempts, last_error = $error,
-              is_dataset = $dataset;
+              is_dataset = $dataset, raw_check = $rawcheck;
             """,
             command =>
             {
@@ -105,6 +106,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                 command.Parameters.AddWithValue("$mtime", record.LastWriteUnixMs);
                 command.Parameters.AddWithValue("$md5", record.Md5 ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue("$sha256", record.Sha256 ?? (object)DBNull.Value);
+                command.Parameters.AddWithValue(
+                    "$rawcheck", record.RawCheck ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue("$state", (int)record.State);
                 command.Parameters.AddWithValue("$verify", (int)record.VerifyMethod);
                 command.Parameters.AddWithValue(
@@ -382,7 +385,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     private const string SelectColumns =
         """
         SELECT local_path, remote_path, size, mtime_utc, md5, sha256,
-               state, verify_method, verified_utc, attempts, last_error, is_dataset
+               state, verify_method, verified_utc, attempts, last_error, is_dataset,
+               raw_check
         """;
 
     private static UploadRecord Read(SqliteDataReader reader) => new(
@@ -399,7 +403,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             : DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(8)),
         Attempts: reader.GetInt32(9),
         LastError: reader.IsDBNull(10) ? null : reader.GetString(10),
-        IsDataset: reader.GetInt32(11) != 0);
+        IsDataset: reader.GetInt32(11) != 0,
+        RawCheck: reader.IsDBNull(12) ? null : reader.GetString(12));
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {
@@ -451,7 +456,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
               verified_utc  INTEGER,
               attempts      INTEGER NOT NULL DEFAULT 0,
               last_error    TEXT,
-              is_dataset    INTEGER NOT NULL DEFAULT 0
+              is_dataset    INTEGER NOT NULL DEFAULT 0,
+              raw_check     TEXT
             );
 
             CREATE INDEX IF NOT EXISTS ix_uploads_state   ON uploads(state);
@@ -476,10 +482,47 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
 
         if (version < CurrentSchemaVersion)
         {
+            // The statements above only create tables that are absent, so a database written by
+            // an older build keeps its old shape and a new column never arrives. Until now
+            // nothing needed one, and the version stamp was recorded without ever being acted
+            // on. Migrations are additive and each is guarded, so running twice is harmless.
+            Migrate(command, from: version);
+
             command.CommandText = "INSERT INTO schema_version (version) VALUES ($v);";
             command.Parameters.AddWithValue("$v", CurrentSchemaVersion);
             command.ExecuteNonQuery();
         }
+    }
+
+    /// <summary>Brings an existing database up to the current shape.</summary>
+    /// <remarks>
+    /// Additive only: no column is dropped or retyped, so a database stays readable by the build
+    /// that wrote it. That matters because an update can be rolled back, and a ledger the previous
+    /// version cannot open would take the upload history with it.
+    /// </remarks>
+    private static void Migrate(SqliteCommand command, int from)
+    {
+        if (from < 2 && !ColumnExists(command, "uploads", "raw_check"))
+        {
+            command.CommandText = "ALTER TABLE uploads ADD COLUMN raw_check TEXT;";
+            command.ExecuteNonQuery();
+        }
+    }
+
+    private static bool ColumnExists(SqliteCommand command, string table, string column)
+    {
+        command.CommandText = $"PRAGMA table_info({table});";
+        using var reader = command.ExecuteReader();
+
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <inheritdoc />

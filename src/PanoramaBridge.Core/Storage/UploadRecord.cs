@@ -129,7 +129,8 @@ public sealed record UploadRecord(
     DateTimeOffset? VerifiedUtc,
     int Attempts,
     string? LastError,
-    bool IsDataset)
+    bool IsDataset,
+    string? RawCheck = null)
 {
     /// <summary>
     /// True when this file is known to be safely on the server, unchanged since.

@@ -50,6 +50,11 @@ src/PanoramaBridge.ThermoRaw.Tests/ net8.0, so CI runs it on Linux too
 Linux, and it is published as its own binary with every release. Keep it free of any dependency,
 including `Core`.
 
+It reads acquisitions and must never write to one: `FileMode.Open` with `FileAccess.Read`, shared
+as `FileShare.Read` so it never locks another reader out of an instrument's file. See
+[`docs/THERMO_RAW_VALIDATION.md`](docs/THERMO_RAW_VALIDATION.md) for what the check establishes,
+what it cannot, and whose work the file layout comes from.
+
 `Core` must stay free of UI types. That is why the progress aggregator and the readiness gate live
 there and not in view models: their behaviour has to be testable without a dispatcher.
 

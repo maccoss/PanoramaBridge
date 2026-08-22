@@ -19,6 +19,11 @@ QE_20260822_02.raw: Truncated - needs 4,214,880 bytes, file is 1,048,576
 Exit codes: `0` nothing wrong, `1` at least one file is short, `2` bad arguments, `3` a file could
 not be read. `--json` for machine output, `--strict` to fail on anything less than a clean answer.
 
+Nothing here writes to a RAW file: every open is `FileMode.Open` with `FileAccess.Read`, and a
+test asserts a file is byte-for-byte unchanged after a check. See
+[the validation notes](../../docs/THERMO_RAW_VALIDATION.md) for the full reasoning, the limitations,
+and the provenance.
+
 ## Why it exists
 
 PanoramaBridge transfers acquisitions off instrument computers, and its central rule is that it
