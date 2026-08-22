@@ -137,5 +137,10 @@ dotnet publish src/PanoramaBridge.ThermoRawCheck/PanoramaBridge.ThermoRawCheck.c
 ```
 
 Targets `net8.0` with no package references, and CI builds and tests it on Ubuntu as well as
-Windows. The tests use synthetic files, which show the reader walks its layout consistently — they
-cannot show the layout matches what an instrument writes. Only real acquisitions can do that.
+Windows.
+
+The tests use synthetic files, which show the reader walks its layout consistently but cannot show
+the layout matches what an instrument writes. For that, it was run over **47 real acquisitions
+totalling 313 GB**, spanning 2020 to 2026 and up to 9.9 GB each: every one returned
+`NoTruncationDetected`, and all were format revision 66. Other revisions are inherited from the
+reference and have not been confirmed against real files here.

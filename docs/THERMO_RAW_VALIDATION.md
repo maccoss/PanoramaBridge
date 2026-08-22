@@ -226,12 +226,23 @@ Read these before trusting a green result.
    Bytes missing from the end of a region whose pointer still lands inside the file are invisible
    to it.
 
-2. **The port is validated against synthetic files, not real ones.** The 28 tests build RAW files
-   byte by byte and show the reader walks its layout consistently and reacts correctly when
-   pointers do not fit. They **cannot** show the layout matches what an instrument actually writes,
-   because the fixtures are generated from the same understanding the reader uses — they are not
-   independent. Only real acquisitions can confirm the port is faithful, and none are committed
-   here.
+2. **The automated tests use synthetic files; real ones were checked by hand.** The 28 tests build
+   RAW files byte by byte and show the reader walks its layout consistently and reacts correctly
+   when pointers do not fit. They cannot show the layout matches what an instrument writes, because
+   the fixtures are generated from the same understanding the reader uses — they are not
+   independent.
+
+   Before 26.2.0 shipped, the tool was run over **47 real MacCoss Lab acquisitions totalling
+   313 GB** — spanning 2020 to 2026, from a Q Exactive HF through to current instruments, the
+   largest 9.9 GB. **Every one returned `NoTruncationDetected`: no false positives.** All 47 were
+   format revision **66**.
+
+   Two things follow. The revision-66 path is exercised against real files and not just fixtures,
+   which is the case that matters most because it is what these instruments write. And **no other
+   revision has been confirmed the same way** — 47, 57, 60, 62, 63 and 64 are inherited from the
+   reference and remain unverified here. A file of one of those revisions is checked with rules
+   nobody in this lab has tested. The failure would be a false `Truncated`, which holds a good
+   file; it is recorded and visible, not lost.
 
 3. **A new format revision silently stops checking.** By design: it returns `Unknown` and the file
    transfers. The consequence is that validation can lapse without anything failing, which is what
