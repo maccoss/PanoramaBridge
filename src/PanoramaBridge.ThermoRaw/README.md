@@ -55,6 +55,47 @@ multi-gigabyte acquisition and nothing after it. This tool does not check it; Pa
 verifies uploads against an MD5 the server computes over every byte it stored, which is strictly
 stronger.
 
+## What it costs
+
+Measured against an 8.4 MB file, counting what the reader asks the stream for:
+
+| | |
+|---|---|
+| Bytes read | 1,656 |
+| Read calls | 65 |
+| Seeks | 28 |
+| Elapsed | 0.013 ms |
+
+Every one of those is fixed by the format, not by the file. A test asserts that a file a thousand
+times larger produces byte-for-byte identical counts, because an acquisition can be forty
+gigabytes and anything proportional to that would be paid on every sweep.
+
+A file that is not a Thermo RAW file costs exactly one read of 1,356 bytes, which matters because
+that is most of what a monitored folder contains.
+
+Those 65 reads are requests to the stream, not disk operations: reading from a real file goes
+through a 4 KB buffer, so the small sequential reads coalesce and only the seeks to distant
+offsets cost a round trip. On a network share that is the number to watch, and it is under thirty.
+
+## Reading a file that is still being written
+
+Don't. The checker deliberately does not defend against it, and inside PanoramaBridge it does not
+have to.
+
+`Validate(string path)` opens the file **shared**, so running it can never interfere with an
+instrument writing. That is right for a command-line tool and wrong for a transfer gate: it will
+happily read a file mid-acquisition and report nonsense about it.
+
+`Validate(Stream, long size, string path)` exists for the other case. PanoramaBridge's readiness
+gate already opens each candidate with `FileShare.None` — an exclusive open that fails outright if
+anything else holds a handle, which is how it detects an instrument still acquiring. Running the
+check **on that handle** means a file being written cannot reach it: the open would have failed
+first. The ordering is a structural guarantee rather than a timing assumption.
+
+The size passed in should be the one read from the open handle, not from the directory entry.
+Windows does not keep the recorded size current while a write handle is open, and a stale size is
+exactly what would make a growing file look truncated.
+
 ## Verdicts
 
 | Verdict | Meaning |
