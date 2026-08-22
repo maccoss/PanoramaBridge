@@ -41,7 +41,14 @@ src/PanoramaBridge.Core/     all logic, no UI dependency          net8.0
 src/PanoramaBridge.App/      WPF shell                            net8.0-windows
 src/PanoramaBridge.Cli/      pbctl, the headless harness           net8.0
 src/PanoramaBridge.Tests/    xUnit, net8.0-windows so the WPF shell can be tested
+src/PanoramaBridge.ThermoRaw/       Thermo RAW truncation check   net8.0, no dependencies
+src/PanoramaBridge.ThermoRawCheck/  thermoraw-check, standalone   net8.0, trimmed
+src/PanoramaBridge.ThermoRaw.Tests/ net8.0, so CI runs it on Linux too
 ```
+
+`ThermoRaw` is deliberately outside `Core`: it is useful without PanoramaBridge, it must build on
+Linux, and it is published as its own binary with every release. Keep it free of any dependency,
+including `Core`.
 
 `Core` must stay free of UI types. That is why the progress aggregator and the readiness gate live
 there and not in view models: their behaviour has to be testable without a dispatcher.

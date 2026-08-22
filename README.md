@@ -141,6 +141,7 @@ the set this replaces.
 | Driving the transport by hand, without the UI | [`pbctl`](docs/DOTNET_PORT_HANDOFF.md#pbctl-the-headless-harness) |
 | How a release is built and published | [`release-notes/README.md`](release-notes/README.md) |
 | Conventions to follow when changing this code | [`CLAUDE.md`](CLAUDE.md#house-style) |
+| Whether a Thermo `.raw` file has been truncated | [`thermoraw-check`](src/PanoramaBridge.ThermoRaw/README.md), a standalone tool published with each release |
 
 Builds and releases are produced by [`ci.yml`](.github/workflows/ci.yml) and
 [`release.yml`](.github/workflows/release.yml); pushing a `v*` tag is what creates a GitHub

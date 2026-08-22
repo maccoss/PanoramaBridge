@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>PanoramaBridge.ThermoRawCheck</RootNamespace>
+    <AssemblyName>thermoraw-check</AssemblyName>
+    <Description>Command-line check for truncated Thermo RAW files.</Description>
+
+    <!--
+      Published self-contained and single-file for win-x64 and linux-x64, so it can be handed to
+      someone as one file with no .NET install. Unlike the WPF application, nothing here needs
+      delta updates, so single-file costs nothing.
+    -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!--
+      Trimmed, unlike the WPF application, where it is unsupported. 64 MB for a tool whose job is
+      to read 1,356 bytes is not something to hand anybody; trimming takes it to roughly a fifth
+      of that. The analyzer is on so anything untrimmable fails the build rather than the user.
+    -->
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>full</TrimMode>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PanoramaBridge.ThermoRaw\PanoramaBridge.ThermoRaw.csproj" />
+  </ItemGroup>
+
+</Project>
