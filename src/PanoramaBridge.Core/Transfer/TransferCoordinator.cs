@@ -527,6 +527,17 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         var archivePath = DatasetArchive.StagingPathFor(folder);
 
+        // Logged at Information rather than Debug, and with the numbers rather than a summary.
+        // No instrument in this lab writes a directory acquisition, so every real one runs
+        // somewhere nobody here can reproduce -- and a report that says "it did not work" is
+        // worth very little next to one carrying what the folder actually measured.
+        _log.LogInformation(
+            "Packing {Path}: {Files} file(s), {Bytes:N0} bytes, newest write {Newest:u}.",
+            folder,
+            stampedFolder.FileCount,
+            stampedFolder.TotalBytes,
+            stampedFolder.NewestWriteUtc);
+
         Report(folder, encoded, TransferState.Uploading, "Packing",
             0, stampedFolder.TotalBytes,
             message: $"Packing {stampedFolder} into one archive before sending it.");
@@ -545,7 +556,13 @@ public sealed class TransferCoordinator : IAsyncDisposable
         if (!packed.Succeeded)
         {
             Interlocked.Increment(ref _failed);
-            _log.LogError("Could not pack {Path}: {Detail}", folder, packed.Detail);
+            _log.LogError(
+                "Could not pack {Path} ({Files} file(s), {Bytes:N0} bytes): {Reason} - {Detail}",
+                folder,
+                stampedFolder.FileCount,
+                stampedFolder.TotalBytes,
+                packed.Failure,
+                packed.Detail);
 
             await _store
                 .SaveAsync(

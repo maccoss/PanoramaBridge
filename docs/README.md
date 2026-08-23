@@ -9,6 +9,7 @@ PanoramaBridge is a native Windows application built on .NET 8 and WPF.
 | **[Release process](../release-notes/README.md)** | Versioning, writing release notes, and how a release is actually published. |
 | **[Release notes](../release-notes/)** | One file per version; each becomes the GitHub Release body. |
 | **[Thermo RAW validation](THERMO_RAW_VALIDATION.md)** | How a truncated `.raw` is detected, what that proves, its limitations, and its provenance. |
+| **[Vendor formats](VENDOR_FORMATS.md)** | Which instrument formats are verified against real acquisitions and which are reasoned from documentation, and what to report if you have the instruments this lab does not. |
 
 Architecture questions -- how files are found, when a file counts as finished, how an upload is
 verified, what any of it costs -- are answered in the port handoff rather than in separate

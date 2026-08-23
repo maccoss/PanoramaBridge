@@ -27,6 +27,22 @@ time and update the heading; see `README.md` in this directory for the process.
   acquisition, checked before anything is written — if there is not enough, the transfer is
   declined and says so rather than filling the disk.
 
+  **Please tell us how this goes.** The MacCoss Lab runs Thermo instruments only, so this has been
+  built and tested against acquisitions shaped like a Bruker `.d` rather than against a real one.
+  The logic that decides a folder has finished, and the assumption that one `.d.zip` is what you
+  want on Panorama, are both reasoned from how these formats are documented and stored — not from
+  watching a real instrument write one.
+
+  Nothing here modifies or deletes an acquisition, and a folder is only ever sent whole, so the
+  ways this can be wrong are: sending one too early, refusing to send one at all, or packing
+  something Panorama does not want. The log records what each folder measured — file count, total
+  bytes, newest timestamp — so a report of any of those can be acted on. **Help → Application
+  logs.**
+
+  The same mechanism covers a Waters `.raw` **directory**, which is a folder where Thermo's `.raw`
+  is a file; PanoramaBridge tells them apart and handles each correctly. That path is even less
+  exercised than the Bruker one.
+
 ## Bug Fixes
 
 - **"Restart now" could stop working for the rest of a session.** Reported from an instrument
