@@ -69,9 +69,6 @@ public sealed partial class SettingsViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
     private int _lockedFileMaxRetries = 20;
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
-    private bool _startMonitoringOnLaunch;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
@@ -169,7 +166,6 @@ public sealed partial class SettingsViewModel : ObservableObject
         ReconcileMinutes = ReconcileMinutes,
         LockedFileRetryIntervalSeconds = LockedFileRetryIntervalSeconds,
         LockedFileMaxRetries = LockedFileMaxRetries,
-        StartMonitoringOnLaunch = StartMonitoringOnLaunch,
         MaxConcurrentTransfers = MaxConcurrentTransfers,
         ConflictPolicy = ConflictPolicy,
         VerifyUploads = VerifyUploads,
@@ -269,7 +265,6 @@ public sealed partial class SettingsViewModel : ObservableObject
         ReconcileMinutes = settings.ReconcileMinutes;
         LockedFileRetryIntervalSeconds = settings.LockedFileRetryIntervalSeconds;
         LockedFileMaxRetries = settings.LockedFileMaxRetries;
-        StartMonitoringOnLaunch = settings.StartMonitoringOnLaunch;
         MaxConcurrentTransfers = settings.MaxConcurrentTransfers;
         ConflictPolicy = settings.ConflictPolicy;
         VerifyUploads = settings.VerifyUploads;

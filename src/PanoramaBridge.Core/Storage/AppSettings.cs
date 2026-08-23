@@ -167,8 +167,6 @@ public sealed record AppSettings
     /// <summary>Whether closing the window leaves the application running in the tray.</summary>
     public bool MinimizeToTray { get; init; } = true;
 
-    /// <summary>Whether monitoring resumes automatically at startup.</summary>
-    public bool StartMonitoringOnLaunch { get; init; }
 
     /// <summary>Schema marker, so a future format change can be recognised.</summary>
     [JsonPropertyName("$version")]
@@ -215,7 +213,6 @@ public sealed record AppSettings
             && TrustedRootCertificatePath == other.TrustedRootCertificatePath
             && VerboseLogging == other.VerboseLogging
             && MinimizeToTray == other.MinimizeToTray
-            && StartMonitoringOnLaunch == other.StartMonitoringOnLaunch
             && Version == other.Version
             && Extensions.SequenceEqual(other.Extensions, StringComparer.Ordinal)
             && RecentRemotePaths.SequenceEqual(other.RecentRemotePaths, StringComparer.Ordinal);

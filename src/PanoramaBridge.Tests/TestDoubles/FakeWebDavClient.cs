@@ -237,6 +237,12 @@ public sealed class FakeWebDavClient : IWebDavClient
     /// <summary>Blocks collection-hash requests until released, so races can be arranged.</summary>
     public SemaphoreSlim? HoldCollectionHash { get; set; }
 
+    /// <summary>Blocks uploads until released, so a transfer can be interrupted mid-flight.</summary>
+    public SemaphoreSlim? HoldUpload { get; set; }
+
+    /// <summary>Signalled as each held upload begins, so a test can wait for one to be in flight.</summary>
+    public SemaphoreSlim? UploadStarted { get; set; }
+
     public async Task<IReadOnlyDictionary<string, string>> GetCollectionHashesAsync(
         RemotePath collection,
         CancellationToken cancellationToken = default)
@@ -298,6 +304,20 @@ public sealed class FakeWebDavClient : IWebDavClient
         DateTimeOffset? lastModified = null)
     {
         Interlocked.Increment(ref _uploadCalls);
+
+        // Lets a test stop an upload part-way, which is the only way to arrange the state a
+        // cancelled transfer leaves behind.
+        if (HoldUpload is { } gate)
+        {
+            // Report every byte as sent before blocking. That is genuinely where a held upload
+            // is -- the bytes are out and the server has not answered -- and it is the only
+            // report the coordinator will not throttle away, since it throttles anything under
+            // 250 ms apart that is not the last byte.
+            progress?.Report(new FileInfo(localFilePath).Length);
+            UploadStarted?.Release();
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         Stamp(destination, lastModified);
 
         if (FailUploadsBeforeSucceeding > 0)

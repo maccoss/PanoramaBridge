@@ -20,8 +20,6 @@
                     </DockPanel>
                     <CheckBox Content="Include subdirectories"
                               IsChecked="{Binding IncludeSubdirectories}" />
-                    <CheckBox Margin="0,6,0,0" Content="Start monitoring automatically when PanoramaBridge opens"
-                              IsChecked="{Binding StartMonitoringOnLaunch}" />
                     <TextBlock Style="{StaticResource Hint}"
                                Text="A folder on a file server works too. Pick a mapped drive and PanoramaBridge records the full network path instead, because a drive letter belongs to a single Windows sign-in and would not resolve if PanoramaBridge were ever started as a service or scheduled task." />
                     <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0"

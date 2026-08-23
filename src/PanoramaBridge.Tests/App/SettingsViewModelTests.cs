@@ -43,7 +43,6 @@ public sealed class SettingsViewModelTests
         ReconcileMinutes = 7,
         LockedFileRetryIntervalSeconds = 11,
         LockedFileMaxRetries = 3,
-        StartMonitoringOnLaunch = true,
         MaxConcurrentTransfers = 6,
         ConflictPolicy = ConflictPolicy.Overwrite,
         VerifyUploads = false,
