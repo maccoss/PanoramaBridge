@@ -132,6 +132,53 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Cancelling_a_run_does_not_leave_a_file_reporting_that_it_is_uploading()
+    {
+        // The reported bug, at the level it actually happens. Stop a run while bytes are moving
+        // and the file's last progress report is "Uploading"; the aggregator keeps the latest per
+        // file, so anything asking "is a transfer in flight?" gets yes for the rest of the
+        // session -- which is what silently disabled Restart now.
+        var file = await WriteAsync("interrupted.raw", "an acquisition being sent");
+
+        using var hold = new SemaphoreSlim(0);
+        using var started = new SemaphoreSlim(0);
+        _server.HoldUpload = hold;
+        _server.UploadStarted = started;
+
+        await using var coordinator = NewCoordinator(concurrency: 1);
+        using var stopping = new CancellationTokenSource();
+
+        var run = coordinator.RunAsync(stopping.Token);
+        await coordinator.EnqueueAsync(file);
+
+        // Wait until it is genuinely mid-upload before pulling the rug.
+        (await started.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBeTrue();
+
+        _reported.Any(r => r.State == TransferState.Uploading).ShouldBeTrue("it is uploading now");
+
+        await stopping.CancelAsync();
+        hold.Release(4);
+
+        try
+        {
+            await run;
+        }
+        catch (OperationCanceledException)
+        {
+            // How a cancelled run is supposed to end.
+        }
+
+        // Latest report per file, which is what HasTransferInFlight reads.
+        var latest = _reported
+            .GroupBy(r => r.LocalPath, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.Last());
+
+        latest.ShouldNotContain(
+            r => r.State == TransferState.Uploading,
+            "a stranded Uploading row blocks the updater and Exit for the whole session");
+    }
+
+    [Fact]
     public async Task A_truncated_thermo_raw_file_is_not_uploaded()
     {
         // The reason the check exists. Uploading a short acquisition is worse than uploading

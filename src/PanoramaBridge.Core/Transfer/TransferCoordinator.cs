@@ -224,6 +224,24 @@ public sealed class TransferCoordinator : IAsyncDisposable
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                // Say that it stopped. Without this the file's last report stays "Uploading",
+                // and the aggregator keeps the latest report per file for the life of the
+                // service -- so "is a transfer in flight?" answers yes for the rest of the
+                // session. That silently disabled the updater's Restart now and the tray's Exit,
+                // which both refuse while something is in flight: the buttons looked dead, on
+                // whichever machine had once had a transfer interrupted.
+                //
+                // Queued rather than Failed: nothing failed. The file is still wanted and the
+                // next sweep offers it again.
+                Report(
+                    localPath,
+                    "?",
+                    TransferState.Queued,
+                    "Interrupted",
+                    0,
+                    0,
+                    message: "Stopped before it finished. It will be offered again.");
+
                 throw;
             }
             catch (Exception ex)

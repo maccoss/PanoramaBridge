@@ -89,6 +89,39 @@ public sealed class TransferServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public void An_interrupted_transfer_does_not_hold_the_application_open_forever()
+    {
+        // Reported from a machine where "Restart now" did nothing. A cancelled upload rethrows
+        // without reporting a terminal state, and the progress aggregator is latest-wins, so the
+        // file reads Uploading for the rest of the session. HasTransferInFlight then answers yes
+        // forever, and both the updater and the tray's Exit refuse silently -- the button looks
+        // dead. It worked on another machine only because nothing had been interrupted there.
+        using var service = NewService();
+
+        service.Progress.Report(new TransferProgress(
+            LocalPath: @"C:\data\interrupted.raw",
+            RemotePath: "/_webdav/x/interrupted.raw",
+            State: TransferState.Uploading,
+            Phase: "Uploading",
+            BytesTransferred: 1_000_000,
+            TotalBytes: 20_000_000));
+
+        service.HasTransferInFlight.ShouldBeTrue("bytes really are moving at this point");
+
+        // What the coordinator now reports when a run is cancelled part-way.
+        service.Progress.Report(new TransferProgress(
+            LocalPath: @"C:\data\interrupted.raw",
+            RemotePath: "/_webdav/x/interrupted.raw",
+            State: TransferState.Queued,
+            Phase: "Interrupted",
+            BytesTransferred: 0,
+            TotalBytes: 20_000_000));
+
+        service.HasTransferInFlight.ShouldBeFalse(
+            "nothing is in flight once the run has stopped, and the updater must not be blocked");
+    }
+
+    [Fact]
     public void A_finished_transfer_does_not_hold_the_application_open()
     {
         // Uploaded-but-unverified is deliberately not counted: with verification turned off a

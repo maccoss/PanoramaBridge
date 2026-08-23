@@ -152,12 +152,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _ = Uploads.RefreshAsync();
         _ = TrimAfterStartupAsync();
 
-        // Resuming monitoring is the whole point of the setting: an instrument computer is
-        // rebooted and nobody is there to press anything.
-        if (Settings.StartMonitoringOnLaunch)
-        {
-            _ = ToggleMonitoringCommand.ExecuteAsync(null);
-        }
     }
 
     /// <summary>
@@ -351,15 +345,37 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             // Restarting mid-transfer would be worse than staying a version behind. IsRunning
             // alone was not enough: it only covers a manual scan, so an update applied while
             // monitoring was uploading restarted straight through it.
+            //
+            // Said out loud, not only in the status line. A button that refuses quietly is
+            // indistinguishable from one that is broken, and this one was reported as broken.
+            Explain(
+                "Restart now",
+                "A transfer is still running, so PanoramaBridge has not restarted. The update is "
+                + "downloaded and will be applied the next time it restarts with nothing in "
+                + "flight.");
+
             StatusLine = "Waiting for the current transfer to finish before updating.";
             return;
         }
 
         if (!_updates.ApplyAndRestart())
         {
+            Explain(
+                "Restart now",
+                "There is no update staged to apply. If one was offered a moment ago, it may "
+                + "have failed to download; Help, then Check for updates, will try again.");
+
             StatusLine = "No update is staged.";
         }
     }
+
+    /// <summary>Tells the user why a button they pressed did not do what it says.</summary>
+    /// <remarks>
+    /// A separate seam so a test can observe it, and so nothing in this class opens a dialog
+    /// directly. The default shows a message box; the window replaces nothing.
+    /// </remarks>
+    public Action<string, string> Explain { get; set; } = (title, message) =>
+        MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Information);
 
     [RelayCommand]
     private async Task CheckForUpdatesAsync()

@@ -108,6 +108,27 @@ public sealed class MainViewModelTests : IAsyncDisposable
     };
 
     [Fact]
+    public void Restarting_for_an_update_says_why_when_it_will_not()
+    {
+        // Reported as "the Restart now button does nothing". It was refusing on purpose -- a
+        // transfer was in flight -- and saying so only in the status line, which is not where
+        // somebody who just pressed a button is looking. A refusal nobody sees is a broken
+        // button.
+        using var shell = NewShell();
+
+        var explained = new List<(string Title, string Message)>();
+        shell.Explain = (title, message) => explained.Add((title, message));
+
+        // Nothing is staged here, so this is the second of the two refusals. Either way the
+        // point is the same: pressing it must produce something the user can see.
+        shell.ApplyUpdateCommand.Execute(null);
+
+        explained.ShouldHaveSingleItem();
+        explained[0].Title.ShouldBe("Restart now");
+        explained[0].Message.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
     public void Disposing_twice_is_safe()
     {
         // What closing the application actually does: the window disposes the shell as it
