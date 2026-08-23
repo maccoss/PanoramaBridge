@@ -46,9 +46,12 @@ public sealed partial class SettingsBindingTests
 
         names.ShouldNotBeEmpty("the view should bind to something");
 
+        // Properties only. WPF resolves a binding path to a property, so accepting methods and
+        // events would let a binding pass here and still fail silently at run time -- which is
+        // the entire failure this test exists to catch.
         var available = typeof(SettingsViewModel)
-            .GetMembers(BindingFlags.Public | BindingFlags.Instance)
-            .Select(m => m.Name)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(p => p.Name)
             .ToHashSet(StringComparer.Ordinal);
 
         foreach (var name in names)

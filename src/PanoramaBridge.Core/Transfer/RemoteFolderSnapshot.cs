@@ -267,7 +267,6 @@ public sealed class RemoteSnapshotCache
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
         var key = snapshot.Folder.AsCollection();
-        var folder = snapshot.Folder;
 
         // Already known: recorded by an upload this session, or by an earlier fetch.
         if (snapshot.Hashes.TryGetValue(name, out var known))

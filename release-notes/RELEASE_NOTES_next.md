@@ -22,4 +22,7 @@ time and update the heading; see `README.md` in this directory for the process.
   folder. The status line distinguishes the two: **Checking server** is the quick listing,
   **Hashing the destination** is the slow part, and says why it is slow.
 
+  Confirmed against a real lab destination, not only against a fake server: much faster than the
+  previous build.
+
 ## Breaking Changes
