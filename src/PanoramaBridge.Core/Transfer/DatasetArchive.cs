@@ -61,6 +61,44 @@ public sealed record ArchiveResult(
 /// </remarks>
 public static class DatasetArchive
 {
+    /// <summary>
+    /// Where to build the archive for an acquisition: beside it, under a working name.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Beside the acquisition rather than in a scratch directory elsewhere, because that volume
+    /// already holds the data and so is the one most likely to have room for it, and because
+    /// writing there is a same-volume operation rather than a copy across two.
+    /// </para>
+    /// <para>
+    /// The name is tilde-prefixed, which is not decoration.
+    /// <see cref="Monitoring.CandidateFilter"/> already rejects dot- and tilde-prefixed names as
+    /// working files, so the archive cannot be mistaken for an acquisition and offered for
+    /// transfer in its own right. Without that, building it inside the monitored folder would
+    /// hand the sweep a six-gigabyte candidate that appears every time a dataset is packed.
+    /// </para>
+    /// <para>
+    /// One consequence worth knowing: when the acquisition lives on a network share, so does the
+    /// archive, and the bytes cross the wire three times -- read, written, read again -- before
+    /// the upload. Staging locally would halve that at the cost of needing the room on the system
+    /// drive. Beside the data is the simpler default and the one that cannot fail for want of
+    /// space somewhere the user did not choose.
+    /// </para>
+    /// </remarks>
+    public static string StagingPathFor(string folder)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folder);
+
+        var full = Path.GetFullPath(folder.TrimEnd(
+            Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+        var parent = Path.GetDirectoryName(full)
+            ?? throw new ArgumentException(
+                $"{folder} has no parent directory to build an archive in.", nameof(folder));
+
+        return Path.Combine(parent, "~" + Path.GetFileName(full) + ".zip");
+    }
+
     /// <summary>Room required beyond the acquisition's own size, as a safety margin.</summary>
     /// <remarks>
     /// Filling the disk on an instrument computer is a far worse outcome than declining to

@@ -45,6 +45,42 @@ public sealed class DatasetArchiveTests : IDisposable
     }
 
     [Fact]
+    public void The_archive_is_built_beside_the_acquisition()
+    {
+        DatasetArchive.StagingPathFor(@"C:\data\250314_HeLa_DIA_01.d")
+            .ShouldBe(@"C:\data\~250314_HeLa_DIA_01.d.zip");
+    }
+
+    [Fact]
+    public void The_working_archive_can_never_be_mistaken_for_an_acquisition()
+    {
+        // It is built inside the folder being monitored, so the sweep sees it. The tilde is what
+        // stops it being offered for transfer in its own right -- without it, packing a dataset
+        // would hand the monitor a six-gigabyte candidate every time.
+        var staging = DatasetArchive.StagingPathFor(Path.Combine(_root, "run.d"));
+
+        new PanoramaBridge.Core.Monitoring.CandidateFilter([".zip", ".d"])
+            .Accepts(staging)
+            .ShouldBeFalse("a working file is not data, however it is named");
+    }
+
+    [Fact]
+    public async Task The_archive_lands_beside_the_acquisition_and_is_removed_after()
+    {
+        var folder = Acquisition(("analysis.tdf", "the sqlite index"));
+        var staging = DatasetArchive.StagingPathFor(folder);
+
+        var result = await DatasetArchive.CreateAsync(folder, staging, expectedBytes: 100);
+
+        result.Succeeded.ShouldBeTrue(result.Detail);
+        result.Path.ShouldBe(staging);
+        Path.GetDirectoryName(staging).ShouldBe(Path.GetDirectoryName(folder));
+
+        DatasetArchive.Discard(staging);
+        File.Exists(staging).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task The_archive_holds_exactly_what_the_acquisition_held()
     {
         var folder = Acquisition(
