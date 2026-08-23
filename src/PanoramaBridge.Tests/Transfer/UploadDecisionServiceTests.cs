@@ -227,6 +227,98 @@ public sealed class UploadDecisionServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_failed_folder_hash_is_not_remembered()
+    {
+        // The one that matters most. Monitoring runs for days on one cache, so a cached failure
+        // is not one bad decision but every later decision about that folder: each file whose
+        // name is already there would fail, exhaust its attempts, and be abandoned. One 503 must
+        // cost one retry, not a session.
+        var service = NewService();
+        var stamp = await WriteLocalAsync("run.raw", "acquisition data");
+        _server.Seed(Destination.Append("run.raw"), "something else entirely"u8.ToArray());
+
+        _server.FailNextCollectionHash = true;
+
+        await Should.ThrowAsync<WebDavException>(() =>
+            service.DecideAsync(stamp, Destination.Append("run.raw"), ConflictPolicy.Ask));
+
+        // The very next attempt has to reach the server again rather than replay the failure.
+        var decision = await service.DecideAsync(
+            stamp, Destination.Append("run.raw"), ConflictPolicy.Ask);
+
+        decision.Action.ShouldBe(UploadAction.Conflict, "and reach a real answer this time");
+    }
+
+    [Fact]
+    public async Task A_folder_hash_does_not_outlive_the_listing_it_belongs_to()
+    {
+        // Without this the hashes have no expiry at all. The listing is refetched after its
+        // lifetime precisely so a change another client made shows up; answering from an
+        // hours-old hash would hide exactly that, and -- worse -- a same-size replacement would
+        // match the local file and be recorded "Verified (server MD5)" against content the
+        // server does not hold.
+        var now = DateTimeOffset.UtcNow;
+        var snapshots = new RemoteSnapshotCache(
+            _server, lifetime: TimeSpan.FromMinutes(5), clock: () => now);
+        var service = new UploadDecisionService(_store, snapshots, _hasher);
+
+        var stamp = await WriteLocalAsync("shared.raw", "our content...");
+        _server.Seed(Destination.Append("shared.raw"), "our content..."u8.ToArray());
+
+        await service.DecideAsync(stamp, Destination.Append("shared.raw"), ConflictPolicy.Ask);
+        _server.CollectionHashCalls.ShouldBe(1);
+
+        // A colleague replaces it on Panorama, same length, different content.
+        _server.Seed(Destination.Append("shared.raw"), "their content.."u8.ToArray());
+        now = now.AddMinutes(10);
+
+        var decision = await service.DecideAsync(
+            stamp, Destination.Append("shared.raw"), ConflictPolicy.Ask);
+
+        _server.CollectionHashCalls.ShouldBe(
+            2, "the listing expired, so the hashes that came with it must be gone too");
+
+        decision.Action.ShouldBe(
+            UploadAction.Conflict, "the copy on the server is no longer the one we know about");
+    }
+
+    [Fact]
+    public async Task Workers_arriving_together_do_not_each_hash_the_folder()
+    {
+        // A duplicate listing is a wasted cheap request; a duplicate collection hash is minutes
+        // of server-side reading. GetOrAdd's factory is not atomic, which is why this is a Lazy.
+        var service = NewService();
+
+        for (var i = 0; i < 4; i++)
+        {
+            var content = $"acquisition {i}";
+            await WriteLocalAsync($"same{i}.raw", content);
+            _server.Seed(
+                Destination.Append($"same{i}.raw"),
+                System.Text.Encoding.UTF8.GetBytes(content));
+        }
+
+        using var gate = new SemaphoreSlim(0);
+        _server.HoldCollectionHash = gate;
+        _server.Reset();
+
+        var decisions = Enumerable.Range(0, 4).Select(i => Task.Run(() =>
+        {
+            var stamp = LocalFileStamp.FromFile(Path.Combine(_directory, $"same{i}.raw"));
+            return service.DecideAsync(stamp, Destination.Append($"same{i}.raw"), ConflictPolicy.Ask);
+        })).ToArray();
+
+        // Let them all pile up on the hash before any of them completes.
+        await Task.Delay(150);
+        gate.Release(8);
+
+        await Task.WhenAll(decisions);
+
+        _server.CollectionHashCalls.ShouldBe(
+            1, "four workers wanting the same folder's hashes is one request, not four");
+    }
+
+    [Fact]
     public async Task A_different_size_on_the_server_is_a_conflict_without_hashing_either_side()
     {
         var stamp = await WriteLocalAsync("clash.raw", "the local version, which is longer");

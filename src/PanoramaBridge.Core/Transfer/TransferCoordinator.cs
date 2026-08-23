@@ -378,9 +378,17 @@ public sealed class TransferCoordinator : IAsyncDisposable
     /// </remarks>
     private static string Explain(string step) => step switch
     {
+        // Two steps, not one, because they now cost wildly different amounts. Listing a folder
+        // is a single cheap request; hashing one makes Panorama read every byte in it. While
+        // both were reported as "Checking server", the message had to describe the expensive
+        // case, so it explained a delay that most files never incur.
         "Checking server" =>
-            "Asking the server what is already in the destination folder. Panorama works this out "
-            + "over everything in the folder, so a folder holding a lot of data takes a moment.",
+            "Asking the server what is already in the destination folder.",
+
+        "Hashing the destination" =>
+            "A file of this name is already on the server, so Panorama is being asked for its "
+            + "checksum. It works that out over everything in the folder, which takes a while "
+            + "for a folder holding a lot of data. Paid once per folder.",
 
         "Checking file" =>
             "Reading this file to compare it with the copy already on the server.",

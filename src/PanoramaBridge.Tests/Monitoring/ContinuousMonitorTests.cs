@@ -142,9 +142,9 @@ public sealed class ContinuousMonitorTests : IAsyncDisposable
     /// claimed otherwise and failed under load.
     /// </remarks>
     [Fact]
-    public void Asking_for_a_check_repeatedly_never_throws()
+    public async Task Asking_for_a_check_repeatedly_never_throws()
     {
-        var monitor = new ContinuousMonitor(_store, NewOptions());
+        await using var monitor = new ContinuousMonitor(_store, NewOptions());
 
         Should.NotThrow(() =>
         {

@@ -121,6 +121,25 @@
                 </StackPanel>
             </GroupBox>
 
+            <!--
+                Neither of these is a remote setting, and both sat under Remote Settings /
+                Advanced next to a trusted-root certificate path because there was nowhere else.
+                They describe how the program behaves on this machine, which is what this tab is,
+                so they live here rather than beside a TLS option they have nothing to do with.
+            -->
+            <GroupBox Header="This application">
+                <StackPanel>
+                    <CheckBox Content="Keep running in the notification area when closed"
+                              IsChecked="{Binding MinimizeToTray}" />
+                    <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,10"
+                               Text="Closing the window leaves PanoramaBridge running and, if it was monitoring, still watching. Click its icon to bring the window back, or use Exit on the icon's menu to stop it." />
+
+                    <CheckBox Content="Verbose logging" IsChecked="{Binding VerboseLogging}" />
+                    <TextBlock Style="{StaticResource Hint}"
+                               Text="Records every decision rather than the important ones. Useful when reporting a problem; it takes effect immediately, without a restart." />
+                </StackPanel>
+            </GroupBox>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

@@ -119,8 +119,10 @@ public sealed class UploadDecisionService
         }
 
         // Only now, with a name that matches, is a hash worth what the server pays to compute it.
+        onStep?.Invoke("Hashing the destination");
+
         var remoteHash = await _snapshots
-            .HashOfAsync(destination.Parent, destination.Name, cancellationToken)
+            .HashOfAsync(snapshot, destination.Name, cancellationToken)
             .ConfigureAwait(false);
 
         // Is the remote copy the one this application put there? If the ledger's recorded hash
