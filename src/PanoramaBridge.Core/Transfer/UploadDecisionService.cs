@@ -118,7 +118,12 @@ public sealed class UploadDecisionService
                 $"A folder named '{destination.Name}' already occupies the destination.");
         }
 
-        var remoteHash = snapshot.HashOf(destination.Name);
+        // Only now, with a name that matches, is a hash worth what the server pays to compute it.
+        onStep?.Invoke("Hashing the destination");
+
+        var remoteHash = await _snapshots
+            .HashOfAsync(snapshot, destination.Name, cancellationToken)
+            .ConfigureAwait(false);
 
         // Is the remote copy the one this application put there? If the ledger's recorded hash
         // for this destination still matches what the server holds, then nobody else has

@@ -91,6 +91,70 @@ public sealed class ContinuousMonitorTests : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// What the Check now button does: bring the next sweep forward instead of waiting for it.
+    /// </summary>
+    /// <remarks>
+    /// The button's whole purpose is impatience -- somebody has put a file there and does not want
+    /// to wait a quarter of an hour to see it move.
+    ///
+    /// Counted through the Swept event rather than by watching for the file to arrive, because
+    /// change notifications would find a newly written file within milliseconds and the test would
+    /// pass whether or not the request did anything. The reconcile interval is half an hour, so a
+    /// second sweep inside the test's patience can only have come from the request.
+    /// </remarks>
+    [Fact]
+    public async Task Asking_for_a_check_sweeps_now_rather_than_at_the_next_turn()
+    {
+        var options = NewOptions() with { ReconcileInterval = TimeSpan.FromMinutes(30) };
+
+        await using var monitor = new ContinuousMonitor(_store, options);
+        await using var coordinator = NewCoordinator();
+
+        var sweeps = 0;
+        monitor.Swept += _ => Interlocked.Increment(ref sweeps);
+
+        await RunAsync(monitor, coordinator, async () =>
+        {
+            // The sweep every start performs.
+            (await WaitForAsync(() => Volatile.Read(ref sweeps) >= 1)).ShouldBeTrue();
+            var before = Volatile.Read(ref sweeps);
+
+            monitor.RequestSweep("the user pressed Check now");
+
+            (await WaitForAsync(() => Volatile.Read(ref sweeps) > before)).ShouldBeTrue(
+                "asking for a check has to actually cause one, not wait 30 minutes");
+        });
+    }
+
+    /// <summary>
+    /// Hammering the button is harmless.
+    /// </summary>
+    /// <remarks>
+    /// The pending-sweep signal holds one request at most, so every request beyond the first
+    /// throws <see cref="SemaphoreFullException"/> internally and is swallowed. That catch is the
+    /// thing under test: without it, a second click before the first sweep had started would put
+    /// an exception on the UI thread.
+    ///
+    /// Deliberately not asserting how many sweeps a burst produces. Requests coalesce only while
+    /// one is still pending, and on an idle folder a sweep can finish between two clicks, so the
+    /// count is a property of timing rather than of the design. An earlier version of this test
+    /// claimed otherwise and failed under load.
+    /// </remarks>
+    [Fact]
+    public async Task Asking_for_a_check_repeatedly_never_throws()
+    {
+        await using var monitor = new ContinuousMonitor(_store, NewOptions());
+
+        Should.NotThrow(() =>
+        {
+            for (var i = 0; i < 500; i++)
+            {
+                monitor.RequestSweep("impatience");
+            }
+        });
+    }
+
     [Fact]
     public async Task A_file_that_appears_in_the_watched_folder_is_uploaded_and_verified()
     {

@@ -281,8 +281,8 @@ not rediscover them the hard way.
 
 - **Invalidating the destination snapshot after every upload does not scale.** It looks obviously
   right -- the folder changed, so drop what we knew about it -- and it made a batch of uploads
-  quadratic in the size of the destination, because refetching includes a collection hash the
-  server computes over every byte in the folder. A hundred files into a folder that is filling up
+  quadratic in the size of the destination, because refetching discards the folder's hashes too,
+  and the next comparison makes the server recompute them over every byte in the folder. A hundred files into a folder that is filling up
   meant a hundred passes over an ever-larger directory. Nothing about it is visible in a test
   against an empty destination, which is why the cost test seeds one first.
   `RemoteSnapshotCache.Record` folds the upload into what is already cached instead: the name,
@@ -528,7 +528,7 @@ from the ledger, and asks the server nothing at all.
 | SQLite connection-per-operation | Fine at current scale; a warm run of 38 files took ~1.4 s of fixed overhead. The sweep no longer reads per file — `GetManyAsync` batches five hundred paths per statement — so the 200k case is much less alarming than it was, but it has still never been run. |
 | Retrying a failed upload | The sweep re-offers a failed file until `MaxUploadAttempts`, five, and then leaves it until the file changes or someone asks. Deliberately not a user setting yet: nobody has hit the case in anger, and one more box on that tab needs to earn its place. |
 | A sweep of a very large share | 35,000 files takes tens of seconds (§7). Nothing adapts the interval to how long the last sweep took, and perhaps it should. |
-| The first transfer into a big destination folder stalls for half a minute | Now measured and understood (§5): the server hashes the whole collection on demand. It is one request per folder per session and the answer is cached afterwards, but the user sees a file sit at "Waiting" with no explanation. Worth saying so in the UI, and worth asking whether a per-file hash is cheaper for a large destination. |
+| The first transfer into a big destination folder stalls | **Fixed, unreleased at the time of writing.** The collection hash was fetched alongside the listing, for every folder, before anything knew whether it would be read -- and it is read only when a destination name matches, which for new work is never. So a new acquisition into a populated folder made Panorama hash every byte in it, at roughly 600 MB/s, to answer a question the listing had already answered: 300 GB was minutes of "Checking server" before the first file moved. It is now fetched on demand, still once per folder so a batch that genuinely needs hashes pays one request. |
 | Monitoring while a manual scan runs | Refused rather than queued. **Upload now** turns into **Check now** while monitoring, which covers the case that actually comes up. |
 | A live-server test suite | `CLAUDE.md` documented one gated on `PANORAMABRIDGE_IT_*` and it never existed; those variables are read only by `pbctl`. It matters because every fact in §5 was established by a throwaway program and nothing re-checks any of them. If LabKey changes `?method=md5sum`, the semicolon behaviour, or `X-LABKEY-Last-Modified`, this document quietly becomes wrong. |
 | `pbctl` command bodies | 3.7% covered. The parsing is now extracted and fully tested; everything below it needs a server, which is the suite above. |

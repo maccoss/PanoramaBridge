@@ -315,10 +315,42 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         summary.Uploaded.ShouldBe(12);
 
         _server.ListCalls.ShouldBe(1, "one listing of the destination, however many files follow");
-        _server.CollectionHashCalls.ShouldBe(1, "and one collection hash, for the same reason");
+
+        _server.CollectionHashCalls.ShouldBe(
+            0,
+            "and no collection hash at all: none of these names is on the server, so nothing "
+            + "read a hash, and asking for one would have made the server read every byte in "
+            + "the destination to answer a question already answered by the listing");
 
         _server.UploadCalls.ShouldBe(12);
         _server.FileHashCalls.ShouldBe(12, "verification is per file and is meant to be");
+    }
+
+    [Fact]
+    public async Task A_batch_that_does_need_hashes_still_only_asks_once()
+    {
+        // The other half of the same property. When the names do match, the folder's hashes are
+        // worth fetching -- and they arrive together, so twelve files cost one request rather
+        // than twelve. Making the fetch lazy must not turn one round trip into a dozen.
+        var files = new List<string>();
+
+        for (var i = 0; i < 12; i++)
+        {
+            var content = $"acquisition {i}";
+            files.Add(await WriteAsync($"already{i:D2}.raw", content));
+            _server.Seed(
+                Destination.Append($"already{i:D2}.raw"),
+                System.Text.Encoding.UTF8.GetBytes(content));
+        }
+
+        _server.Reset();
+
+        var summary = await RunWithAsync(NewCoordinator(concurrency: 1), [.. files]);
+
+        summary.Skipped.ShouldBe(12, "every one is already there, byte for byte");
+        _server.ListCalls.ShouldBe(1);
+        _server.CollectionHashCalls.ShouldBe(1, "fetched once for the folder, not once per file");
+        _server.UploadCalls.ShouldBe(0);
     }
 
     [Fact]

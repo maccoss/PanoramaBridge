@@ -224,17 +224,43 @@ public sealed class FakeWebDavClient : IWebDavClient
         return Task.FromResult<string?>(OverrideReportedHash ?? Md5Of(content));
     }
 
-    public Task<IReadOnlyDictionary<string, string>> GetCollectionHashesAsync(
+    /// <summary>
+    /// Makes the next collection-hash request fail, once.
+    /// </summary>
+    /// <remarks>
+    /// A server hiccup is the interesting case for a cache: the question is not whether the one
+    /// request fails, but whether the failure is remembered. Set by a test and cleared as it
+    /// fires, so the retry after it succeeds.
+    /// </remarks>
+    public bool FailNextCollectionHash { get; set; }
+
+    /// <summary>Blocks collection-hash requests until released, so races can be arranged.</summary>
+    public SemaphoreSlim? HoldCollectionHash { get; set; }
+
+    public async Task<IReadOnlyDictionary<string, string>> GetCollectionHashesAsync(
         RemotePath collection,
         CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _collectionHashCalls);
 
+        if (HoldCollectionHash is { } gate)
+        {
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        if (FailNextCollectionHash)
+        {
+            FailNextCollectionHash = false;
+            throw new WebDavException(
+                "GET(md5sum)", collection,
+                System.Net.HttpStatusCode.ServiceUnavailable, "the server was briefly unwell");
+        }
+
         var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
 
         if (WithholdHashes)
         {
-            return Task.FromResult<IReadOnlyDictionary<string, string>>(hashes);
+            return hashes;
         }
 
         var prefix = collection.AsCollection().ToEncodedString();
@@ -247,7 +273,7 @@ public sealed class FakeWebDavClient : IWebDavClient
             }
         }
 
-        return Task.FromResult<IReadOnlyDictionary<string, string>>(hashes);
+        return hashes;
     }
 
     public Task EnsureCollectionAsync(
