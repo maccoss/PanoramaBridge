@@ -112,7 +112,7 @@ public sealed class ReconciliationScanner
 
         var batch = new List<LocalFileStamp>(BatchSize);
 
-        IEnumerator<FileInfo> walk;
+        IEnumerator<LocalFileStamp> walk;
 
         try
         {
@@ -127,7 +127,7 @@ public sealed class ReconciliationScanner
         {
             while (true)
             {
-                FileInfo info;
+                LocalFileStamp stamp;
 
                 try
                 {
@@ -136,7 +136,7 @@ public sealed class ReconciliationScanner
                         break;
                     }
 
-                    info = walk.Current;
+                    stamp = walk.Current;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -154,18 +154,8 @@ public sealed class ReconciliationScanner
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (!_options.Filter.Accepts(info.FullName))
-                {
-                    continue;
-                }
-
                 examined++;
-
-                // Length and last-write time come from the directory entry the walk has already
-                // read, so building the stamp here costs nothing. Going through
-                // LocalFileStamp.FromFile instead would stat every file in the tree a second
-                // time, which over SMB is a second round trip per file.
-                batch.Add(LocalFileStamp.FromFileInfo(info));
+                batch.Add(stamp);
 
                 if (batch.Count < BatchSize)
                 {
@@ -199,11 +189,30 @@ public sealed class ReconciliationScanner
         return new SweepResult(examined, offered, accounted, elapsed);
     }
 
-    private IEnumerable<FileInfo> Enumerate()
+    /// <summary>
+    /// Walks the tree, yielding each transferable thing already measured.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A hand-rolled walk rather than <c>EnumerateFiles</c> with recursion, because it has to be
+    /// able to <em>stop</em>. A Bruker <c>.d</c> is a directory that is one acquisition, and
+    /// descending into it would offer the files inside individually -- which is precisely how a
+    /// folder still being written transfers in pieces.
+    /// </para>
+    /// <para>
+    /// Files are stamped from the entry the walk already read, so size and modification time are
+    /// free; going through <c>LocalFileStamp.FromFile</c> instead would stat every file a second
+    /// time, and over SMB that is a second round trip each. A dataset folder has to be measured,
+    /// which costs a walk of it -- but that walk replaces the one that would have descended into
+    /// it anyway, so the sweep visits each file exactly once either way.
+    /// </para>
+    /// </remarks>
+    private IEnumerable<LocalFileStamp> Enumerate()
     {
         var options = new EnumerationOptions
         {
-            RecurseSubdirectories = _options.IncludeSubdirectories,
+            // One level at a time: the recursion is here so it can be pruned.
+            RecurseSubdirectories = false,
 
             // A folder this account cannot read must not abort the walk: on a shared instrument
             // volume there is usually at least one.
@@ -214,10 +223,72 @@ public sealed class ReconciliationScanner
                 FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint,
         };
 
-        // DirectoryInfo rather than Directory.EnumerateFiles, because this yields FileInfo
-        // objects already populated from what the directory walk returned. Size and modification
-        // time are therefore free; the string overload would cost an extra stat per file.
-        return new DirectoryInfo(_options.Root).EnumerateFiles("*", options);
+        var pending = new Stack<string>();
+        pending.Push(_options.Root);
+
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+            var isRoot = string.Equals(directory, _options.Root, StringComparison.OrdinalIgnoreCase);
+
+            // Materialised here so a failure surfaces now rather than part-way through the
+            // foreach, where it could not be told apart from a folder going away mid-walk.
+            List<FileSystemInfo> entries;
+
+            try
+            {
+                entries = [.. new DirectoryInfo(directory).EnumerateFileSystemInfos("*", options)];
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // A subfolder that cannot be read is skipped: on a shared instrument volume
+                // there is usually at least one, and losing the sweep over it would be worse.
+                //
+                // The root is different. If the monitored folder itself is unreachable -- a
+                // share that is down, a drive not mounted yet -- the sweep must say so, so
+                // monitoring can report it and wait rather than quietly finding nothing and
+                // looking healthy.
+                if (isRoot)
+                {
+                    throw;
+                }
+
+                _log.LogDebug(ex, "Skipped {Directory} while sweeping.", directory);
+                continue;
+            }
+
+            foreach (var entry in entries)
+            {
+                if (entry is DirectoryInfo child)
+                {
+                    if (DatasetFolder.Is(child.FullName, _options.Filter))
+                    {
+                        // One acquisition, not a folder of candidates. Measured, and not
+                        // descended into.
+                        if (DatasetFolder.Measure(child.FullName) is { } measured
+                            && !measured.IsEmpty)
+                        {
+                            yield return new LocalFileStamp(
+                                child.FullName, measured.TotalBytes, measured.NewestWriteUnixMs);
+                        }
+
+                        continue;
+                    }
+
+                    if (_options.IncludeSubdirectories)
+                    {
+                        pending.Push(child.FullName);
+                    }
+
+                    continue;
+                }
+
+                if (entry is FileInfo file && _options.Filter.Accepts(file.FullName))
+                {
+                    yield return LocalFileStamp.FromFileInfo(file);
+                }
+            }
+        }
     }
 
     private async Task<(int Offered, int Accounted)> ProcessAsync(
