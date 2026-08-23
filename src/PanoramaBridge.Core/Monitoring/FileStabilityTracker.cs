@@ -40,6 +40,17 @@ public sealed class FileStabilityTracker
     private readonly ConcurrentDictionary<string, Sample> _samples =
         new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// The folder counterpart, for the directory acquisitions the sweep also offers.
+    /// </summary>
+    /// <remarks>
+    /// Held here rather than beside it so that everything downstream -- the gate, the monitor,
+    /// their tests -- keeps handing paths to one tracker and does not have to know which kind of
+    /// thing it just received. The two answer the same question with the same vocabulary; only
+    /// the way they measure differs.
+    /// </remarks>
+    private readonly DatasetStabilityTracker _datasets;
+
     public FileStabilityTracker(TimeSpan quietPeriod, Func<DateTimeOffset>? clock = null)
     {
         if (quietPeriod < TimeSpan.Zero)
@@ -49,6 +60,7 @@ public sealed class FileStabilityTracker
 
         _quietPeriod = quietPeriod;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _datasets = new DatasetStabilityTracker(_quietPeriod, _clock);
     }
 
     /// <summary>How many files are being watched for stability.</summary>
@@ -68,6 +80,14 @@ public sealed class FileStabilityTracker
     public FileReadiness Check(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
+        // A directory here is an acquisition the sweep chose to offer whole -- a Bruker .d --
+        // and none of what follows applies to one: there is no handle to open and no single
+        // length to read.
+        if (Directory.Exists(path))
+        {
+            return _datasets.Check(path);
+        }
 
         var now = _clock();
 
@@ -114,10 +134,18 @@ public sealed class FileStabilityTracker
     }
 
     /// <summary>Stops tracking a file, for example once it has been queued.</summary>
-    public void Forget(string path) => _samples.TryRemove(path, out _);
+    public void Forget(string path)
+    {
+        _samples.TryRemove(path, out _);
+        _datasets.Forget(path);
+    }
 
     /// <summary>Forgets everything.</summary>
-    public void Clear() => _samples.Clear();
+    public void Clear()
+    {
+        _samples.Clear();
+        _datasets.Clear();
+    }
 
     /// <summary>
     /// Opens the file to establish both its true length and whether anyone else holds it.

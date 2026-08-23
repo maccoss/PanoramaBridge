@@ -1,4 +1,5 @@
 using PanoramaBridge.Core.Storage;
+using PanoramaBridge.Core.Monitoring;
 using PanoramaBridge.Core.Transfer;
 using PanoramaBridge.Core.WebDav;
 using PanoramaBridge.Tests.TestDoubles;
@@ -176,6 +177,123 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         latest.ShouldNotContain(
             r => r.State == TransferState.Uploading,
             "a stranded Uploading row blocks the updater and Exit for the whole session");
+    }
+
+    // -- directory acquisitions ------------------------------------------------------------
+
+    /// <summary>Writes a Bruker-shaped acquisition folder under the watched directory.</summary>
+    private string Acquisition(string name, params (string Name, string Content)[] files)
+    {
+        var folder = Path.Combine(_local, name);
+        Directory.CreateDirectory(folder);
+
+        foreach (var (file, content) in files)
+        {
+            var path = Path.Combine(folder, file);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, content);
+        }
+
+        return folder;
+    }
+
+    [Fact]
+    public async Task A_bruker_acquisition_arrives_as_one_verified_archive()
+    {
+        // The whole feature, end to end. A .d is a directory locally and one .d.zip remotely,
+        // which is how this lab already stores them -- and it is what makes the transfer atomic
+        // without any machinery: the archive either arrives and verifies or it does not.
+        var folder = Acquisition(
+            "250314_HeLa_DIA_01.d",
+            ("analysis.tdf", "the sqlite index"),
+            ("analysis.tdf_bin", "the binary data"));
+
+        var summary = await RunWithAsync(NewCoordinator(), folder);
+
+        summary.Uploaded.ShouldBe(1);
+
+        var remote = Destination.Append("250314_HeLa_DIA_01.d.zip");
+        _server.Content(remote).ShouldNotBeNull("the acquisition should be there as one archive");
+
+        // And it is a real archive holding the acquisition, not merely bytes of the right length.
+        using var zip = new System.IO.Compression.ZipArchive(
+            new MemoryStream(_server.Content(remote)!));
+
+        zip.Entries.Select(e => e.FullName).OrderBy(n => n, StringComparer.Ordinal)
+            .ShouldBe(["analysis.tdf", "analysis.tdf_bin"]);
+    }
+
+    [Fact]
+    public async Task The_ledger_records_the_folder_and_marks_it_a_dataset()
+    {
+        // Keyed on the folder, because that is the thing the user has and can point at. The
+        // archive is a means of carrying it and does not outlive the transfer.
+        var folder = Acquisition("run_002.d", ("analysis.tdf", "index"));
+
+        await RunWithAsync(NewCoordinator(), folder);
+
+        var record = await _store.GetAsync(folder);
+
+        record.ShouldNotBeNull();
+        record!.IsDataset.ShouldBeTrue();
+        record.State.ShouldBe(TransferState.Verified);
+        record.RemotePath.ShouldEndWith("run_002.d.zip");
+    }
+
+    [Fact]
+    public async Task The_working_archive_is_removed_afterwards()
+    {
+        // It is built inside the folder being monitored and is six gigabytes in real life.
+        var folder = Acquisition("run_003.d", ("analysis.tdf", "index"));
+
+        await RunWithAsync(NewCoordinator(), folder);
+
+        File.Exists(DatasetArchive.StagingPathFor(folder)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task An_unchanged_acquisition_is_not_packed_again()
+    {
+        // Packing six gigabytes to discover it was already there would be the most expensive way
+        // possible to answer that question, so the ledger is consulted first.
+        var folder = Acquisition("run_004.d", ("analysis.tdf", "index"));
+
+        await RunWithAsync(NewCoordinator(), folder);
+        _server.Reset();
+
+        var summary = await RunWithAsync(NewCoordinator(), folder);
+
+        summary.Skipped.ShouldBe(1);
+        _server.UploadCalls.ShouldBe(0, "nothing changed, so nothing should have been sent");
+    }
+
+    [Fact]
+    public async Task A_changed_acquisition_is_packed_and_sent_again()
+    {
+        var folder = Acquisition("run_005.d", ("analysis.tdf", "index"));
+        await RunWithAsync(NewCoordinator(), folder);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(folder, "analysis.tdf_bin"), "a file that was not there before");
+
+        var summary = await RunWithAsync(NewCoordinator(), folder);
+
+        summary.Uploaded.ShouldBe(1, "the acquisition grew, so it is a new version");
+    }
+
+    [Fact]
+    public async Task The_acquisition_itself_is_never_modified()
+    {
+        var folder = Acquisition("run_006.d", ("analysis.tdf", "the sqlite index"));
+        var file = Path.Combine(folder, "analysis.tdf");
+
+        var before = await File.ReadAllBytesAsync(file);
+        var written = File.GetLastWriteTimeUtc(file);
+
+        await RunWithAsync(NewCoordinator(), folder);
+
+        File.ReadAllBytes(file).ShouldBe(before);
+        File.GetLastWriteTimeUtc(file).ShouldBe(written);
     }
 
     [Fact]
