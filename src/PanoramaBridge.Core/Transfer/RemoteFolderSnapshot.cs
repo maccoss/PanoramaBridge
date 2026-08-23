@@ -55,6 +55,10 @@ public sealed class RemoteSnapshotCache
     private readonly Func<DateTimeOffset> _clock;
     private readonly ConcurrentDictionary<RemotePath, Task<RemoteFolderSnapshot>> _cache = new();
 
+    /// <summary>Folder hashes, fetched at most once per folder and only when one is read.</summary>
+    private readonly ConcurrentDictionary<RemotePath, Task<IReadOnlyDictionary<string, string>>>
+        _hashes = new();
+
     public RemoteSnapshotCache(
         IWebDavClient client,
         TimeSpan? lifetime = null,
@@ -183,10 +187,92 @@ public sealed class RemoteSnapshotCache
         var updated = Task.FromResult(snapshot with { Entries = entries, Hashes = hashes });
 
         _cache.TryUpdate(key, updated, pending);
+
+        // The fetched set, if there is one, predates this upload. The snapshot now carries the
+        // new file's hash, so dropping it costs nothing and keeps the two from disagreeing.
+        _hashes.TryRemove(key, out _);
+    }
+
+    /// <summary>
+    /// The server's hash for one file in a folder, fetching the folder's hashes if needed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Separate from <see cref="GetAsync"/>, and lazy, because the two questions cost wildly
+    /// different amounts. A listing is one cheap request. A collection hash makes Panorama read
+    /// <em>every byte in the folder</em> -- it computes them on demand, at roughly 600 MB/s -- so
+    /// a destination holding 300 GB of previous acquisitions is minutes of server time.
+    /// </para>
+    /// <para>
+    /// Fetching it with the listing meant paying that on the ordinary case: a new acquisition
+    /// going into a populated folder. The listing already establishes the file is not there and
+    /// must be uploaded; the hash is read only when a name matches, which for new work is never.
+    /// Users saw "Checking server" sit for minutes before the first file moved, for a number
+    /// nothing looked at.
+    /// </para>
+    /// <para>
+    /// Still one request per folder rather than per file: the whole folder's hashes arrive
+    /// together, so a batch re-offered into a populated destination pays it once.
+    /// </para>
+    /// </remarks>
+    public async Task<string?> HashOfAsync(
+        RemotePath folder,
+        string name,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(folder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        var key = folder.AsCollection();
+        var snapshot = await GetAsync(folder, cancellationToken).ConfigureAwait(false);
+
+        // Already known: recorded by an upload this session, or by an earlier fetch.
+        if (snapshot.Hashes.TryGetValue(name, out var known))
+        {
+            return known;
+        }
+
+        // Nothing to ask about. Avoids a fetch for a folder the server does not have yet.
+        if (snapshot.Entries.Count == 0)
+        {
+            return null;
+        }
+
+        var hashes = await _hashes
+            .GetOrAdd(key, _ => _client.GetCollectionHashesAsync(folder, cancellationToken))
+            .ConfigureAwait(false);
+
+        Merge(key, hashes);
+
+        return hashes.TryGetValue(name, out var hash) ? hash : null;
+    }
+
+    /// <summary>Folds fetched hashes into the cached snapshot, so they are asked for once.</summary>
+    private void Merge(RemotePath key, IReadOnlyDictionary<string, string> hashes)
+    {
+        if (!_cache.TryGetValue(key, out var pending) || !pending.IsCompletedSuccessfully)
+        {
+            return;
+        }
+
+        var snapshot = pending.Result;
+        var merged = new Dictionary<string, string>(hashes, StringComparer.Ordinal);
+
+        // Anything recorded from an upload wins: it is newer than the fetch.
+        foreach (var (name, hash) in snapshot.Hashes)
+        {
+            merged[name] = hash;
+        }
+
+        _cache.TryUpdate(key, Task.FromResult(snapshot with { Hashes = merged }), pending);
     }
 
     /// <summary>Drops everything. Used when the destination or credentials change.</summary>
-    public void Clear() => _cache.Clear();
+    public void Clear()
+    {
+        _cache.Clear();
+        _hashes.Clear();
+    }
 
     private async Task<RemoteFolderSnapshot> FetchAsync(
         RemotePath folder,
@@ -206,14 +292,12 @@ public sealed class RemoteSnapshotCache
             return RemoteFolderSnapshot.Empty(folder, takenUtc);
         }
 
-        var hashes = entries.Any(e => !e.IsCollection)
-            ? await _client.GetCollectionHashesAsync(folder, cancellationToken).ConfigureAwait(false)
-            : new Dictionary<string, string>(StringComparer.Ordinal);
-
+        // The listing only. Hashes are fetched by HashOfAsync, and only when something actually
+        // reads one -- see the remark there for why that matters so much.
         return new RemoteFolderSnapshot(
             folder,
             takenUtc,
             entries.ToDictionary(e => e.Name, e => e, StringComparer.Ordinal),
-            hashes);
+            new Dictionary<string, string>(StringComparer.Ordinal));
     }
 }

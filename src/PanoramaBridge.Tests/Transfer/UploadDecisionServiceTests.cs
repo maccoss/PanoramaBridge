@@ -192,6 +192,40 @@ public sealed class UploadDecisionServiceTests : IAsyncDisposable
         _server.CollectionHashCalls.ShouldBe(1);
     }
 
+    /// <summary>
+    /// A new file going into a populated destination must not make the server hash the folder.
+    /// </summary>
+    /// <remarks>
+    /// The case a lab actually has: a destination holding hundreds of gigabytes of previous
+    /// acquisitions, and one new file to put in it. Panorama computes a collection hash on
+    /// demand over every byte in the folder, at roughly 600 MB/s, so a 300 GB destination is
+    /// minutes of server time -- spent to discover that the file is not there and must be
+    /// uploaded, which the listing already said. The hash is only ever read when a name matches.
+    /// </remarks>
+    [Fact]
+    public async Task A_file_not_on_the_server_is_decided_without_hashing_the_folder()
+    {
+        var service = NewService();
+
+        // A destination that already holds other work.
+        for (var i = 0; i < 25; i++)
+        {
+            _server.Seed(Destination.Append($"earlier{i}.raw"), System.Text.Encoding.UTF8.GetBytes($"acquisition {i}"));
+        }
+
+        var stamp = await WriteLocalAsync("brand-new.raw", "today's acquisition");
+        _server.Reset();
+
+        var decision = await service.DecideAsync(
+            stamp, Destination.Append("brand-new.raw"), ConflictPolicy.Ask);
+
+        decision.Action.ShouldBe(UploadAction.Upload);
+
+        _server.ListCalls.ShouldBe(1, "the listing is what answers this");
+        _server.CollectionHashCalls.ShouldBe(
+            0, "nothing read a hash, so nothing should have asked the server to compute one");
+    }
+
     [Fact]
     public async Task A_different_size_on_the_server_is_a_conflict_without_hashing_either_side()
     {
