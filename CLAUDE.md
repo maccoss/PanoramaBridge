@@ -183,7 +183,8 @@ untested, and one holding state in a plain `Dictionary` cannot test concurrency.
 2. Put logic in `Core`, keep the WPF layer thin.
 3. Add tests, including cost assertions where a fast path matters.
 4. `dotnet test` must be green with no warnings.
-5. Note anything surprising in the handoff's traps section.
+5. **Add the release note in the same commit** if a user can observe the change. See below.
+6. Note anything surprising in the handoff's traps section.
 
 ### Fixing a bug
 
@@ -191,6 +192,27 @@ untested, and one holding state in a plain `Dictionary` cannot test concurrency.
    reproduced under concurrency, or on CI, or against a real file handle.
 2. Fix it, and record *why* the fix is what it is if the cause was non-obvious.
 3. Run the full suite; several of these components interact.
+4. **Add the release note in the same commit** if a user could have hit the bug. See below.
+
+### The release note goes in the commit that makes the change
+
+Not at release time. `release-notes/RELEASE_NOTES_next.md` is a working draft: append to it as
+each user-visible change lands, in the same commit, and it is finished when the release is.
+
+This is written here because it was already written in `release-notes/README.md` and still
+missed. Five commits went past between v26.3.0 and v26.3.1 with the draft untouched, one of them
+a fix for monitoring stopping silently on a share hiccup — and the notes then had to be
+reconstructed from `git log`, which is slower and loses the detail that made each fix worth
+describing. The rule was in a file nobody opens on the way to fixing a bug; this is that file.
+
+**User-visible** means behaviour, a message someone reads, a setting, or performance they would
+notice. Refactors, comments, test-only changes and documentation get no entry — say so in a
+clause of the commit message instead, so the omission reads as a decision rather than an
+oversight.
+
+A `PreToolUse` hook in `.claude/settings.json` prints a reminder when a commit touches `src/`
+without touching `release-notes/`. It is a reminder and not a gate: it cannot tell a refactor
+from a fix, so it never blocks, and a commit that genuinely needs no note should simply proceed.
 
 ### Touching the transport
 

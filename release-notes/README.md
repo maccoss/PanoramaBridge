@@ -38,7 +38,10 @@ release-notes/
 ### During Development
 
 Maintain `RELEASE_NOTES_next.md` as a working draft for the next planned version. Append entries
-as features and fixes land. The file stays unversioned until the release is finalized so the
+as features and fixes land — **in the same commit as the change**, not at release time. A
+`PreToolUse` hook in `.claude/settings.json` prints a reminder when a commit touches `src/`
+without touching this directory; it never blocks, because it cannot tell a refactor from a fix.
+See the release-note section of `CLAUDE.md` for what counts as user-visible. The file stays unversioned until the release is finalized so the
 target version can still change (a planned patch release becomes a feature release once new
 functionality lands).
 
