@@ -45,6 +45,21 @@ time and update the heading; see `README.md` in this directory for the process.
 
 ## Bug Fixes
 
+- **Sciex acquisitions transferred almost none of their data.** If you asked for `.wiff`, you got
+  the `.wiff` and nothing else — and on a ZenoTOF 8600 dataset that is 38 MB of a 13.7 GB
+  acquisition. The spectra live in the `.wiff.scan` beside it, whose extension Windows reports as
+  `.scan`, so it was never matched. The transfer was recorded as **verified**, correctly as far as
+  it went: the one file that was sent did arrive intact.
+
+  Companion files now travel with the acquisition they belong to. Asking for `.wiff` brings
+  `.wiff.scan` and the other `.wiff.*` files with it; asking for `.raw` is unaffected.
+
+  **If you have transferred Sciex data with an earlier version, it is incomplete on the server.**
+  Re-running the transfer will send what is missing.
+
+  Two things are deliberately left behind: SQLite's `-journal`, `-wal` and `-shm` working files,
+  which Sciex leaves beside every run, and the `.md5` checksum files PanoramaBridge writes itself.
+
 - **"Restart now" could stop working for the rest of a session.** Reported from an instrument
   where the update banner appeared, the update downloaded, and pressing **Restart now** did
   nothing at all.

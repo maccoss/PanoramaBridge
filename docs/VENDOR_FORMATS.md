@@ -14,18 +14,24 @@ report from someone with the instrument we lack has somewhere to land.
 | Vendor | Shape | Status |
 |---|---|---|
 | **Thermo** `.raw` | One file | **Verified against 47 real acquisitions, 313 GB**, 2020–2026, up to 9.9 GB, all format revision 66. Includes the truncation check. |
-| **Bruker** `.d` | Directory → one `.d.zip` | **Assumed.** Built and tested against folders shaped like a `.d`. No real acquisition has ever been through it. |
-| **Waters** `.raw` | Directory → one `.raw.zip` | **Assumed**, and less exercised than Bruker: the same code path, with no fixture modelled on a real one. |
-| **Sciex** `.wiff` | Files, with `.wiff.scan` companions | **Not handled as a set.** Each file transfers on its own, which is probably wrong — see below. |
-| **Agilent** `.d` | Directory → one `.d.zip` | **Assumed.** Shares the Bruker path by extension; nothing distinguishes them here. |
+| **Bruker** `.d` | Directory → one `.d.zip` | **Naming confirmed** against real data on Panorama Public; the completion logic is still untested against a real instrument. |
+| **Waters** `.raw` | Directory → one `.raw.zip` | **Naming confirmed** (`new_LG_6679.raw.zip`); completion logic untested. |
+| **Agilent** `.d` | Directory → one `.d.zip` | **Naming confirmed** (`LPK15_11260-S10-R1.d.zip`, 547 of them); completion logic untested. |
+| **Sciex** `.wiff` | Files, with companions | **Companion handling verified** against a real ZenoTOF 8600 dataset. Not archived: the files stay separate, as Skyline expects. |
 
 ## What "assumed" actually means
 
 For a directory acquisition, three things are reasoned rather than observed.
 
-1. **That one archive is what Panorama wants.** This comes from evidence rather than nothing: the
-   lab's Bruker data on Panorama Public is stored as `.d.zip`, one per acquisition, around 6 GB
-   each. That is a strong signal for Bruker and a weaker one for the other vendors.
+1. **That one archive is what Panorama wants.** This is now settled rather than assumed. Panorama
+   Public stores all three directory formats as `<folder name>.zip`, which is exactly what
+   PanoramaBridge produces:
+
+   | Vendor | Example on Panorama Public |
+   |---|---|
+   | Bruker | `250314_HeLa_100ng_90min_DIA_01_S2-A1_1_507.d.zip` |
+   | Waters | `new_LG_6679.raw.zip` |
+   | Agilent | `LPK15_11260-S10-R1.d.zip` |
 2. **That the folder has finished being written.** Three signals must settle together — nothing
    inside open for writing, and size, file count and newest timestamp all unchanged for the quiet
    period. This is modelled on how Bruker is described as finishing the files in a `.d` at
@@ -68,13 +74,38 @@ What is useful in a report:
 
 [Open an issue](https://github.com/maccoss/PanoramaBridge/issues) with any of that.
 
-## Sciex, which is not handled
+## Sciex: companions, not archives
 
-A `.wiff` arrives with `.wiff.scan`, and sometimes `.wiff2`, `.wiff.dia` and others alongside it.
-PanoramaBridge currently treats each as an unrelated file: add the extensions and they all
-transfer, but nothing knows they belong together, so they can arrive at different times and one
-can arrive without the others.
+A ZenoTOF 8600 acquisition is a set of sibling files rather than a folder:
 
-That is very likely wrong, and it is deliberately not guessed at. Whether they should be zipped
-as a set, transferred with the companions first, or left exactly as they are is a question for
-somebody who works with the data. If that is you, say so.
+| File | Size | What it is |
+|---|---|---|
+| `run.wiff` | 38 MB | Metadata and the sample list |
+| `run.wiff.scan` | **8,197 MB** | The spectra |
+| `run.wiff.dia` | 5,459 MB | Derived, written later |
+| `run.wiff.dia.quant` | 30 MB | Derived, written months later |
+| `run.wiff2` | 74 MB | A second-generation container |
+| `run.wiff2-journal` | 0 MB | SQLite's working file |
+| `run.timeseries.data` | 24 KB | Instrument telemetry |
+
+These are **not** archived. Skyline opens a `.wiff` by reading the `.wiff.scan` beside it, so both
+have to arrive as separate files, which is what PanoramaBridge does.
+
+The trap is in the naming. `Path.GetExtension("run.wiff.scan")` is `.scan`, not `.wiff.scan` — so
+a filter of `.wiff` used to match the 38 MB metadata file and nothing else. **A Sciex user
+transferred 0.3% of their acquisition and it was recorded as verified**, because the one file that
+was sent did arrive intact. Nothing revealed it until somebody tried to open the result.
+
+A file is now accepted if removing trailing extensions one at a time reaches an extension that was
+asked for, so `.wiff` brings `.wiff.scan`, `.wiff.dia` and `.wiff.dia.quant` with it. The rule is
+about the shape of the name rather than a list of vendor suffixes, because the vendor that invents
+the next suffix will not tell us.
+
+Two things are excluded from that walk: SQLite's `-journal`, `-wal` and `-shm` working files, and
+the `.md5` sidecar PanoramaBridge writes itself — which would otherwise reach `run.raw` from
+`run.raw.md5` and upload our own bookkeeping as data.
+
+**One consequence to be aware of:** asking for `.wiff` now also brings the derived `.wiff.dia` and
+`.wiff.dia.quant`, which on this dataset is another 5.5 GB per acquisition. If that is not wanted,
+say so — the alternative is a list of exactly which companions are data, which needs someone who
+works with the format rather than a guess.

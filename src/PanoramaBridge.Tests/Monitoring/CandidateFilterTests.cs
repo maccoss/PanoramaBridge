@@ -27,6 +27,57 @@ public sealed class CandidateFilterTests
     public void Anything_else_is_left_alone(string path) =>
         Instrument.Accepts(path).ShouldBeFalse();
 
+    // -- companion files, from a real Sciex ZenoTOF 8600 acquisition ---------------------------
+
+    [Theory]
+    [InlineData("250814_ZTScan_100spd_A_1_A1.wiff", true)]
+    [InlineData("250814_ZTScan_100spd_A_1_A1.wiff.scan", true)]
+    [InlineData("250814_ZTScan_100spd_A_1_A1.wiff.dia", true)]
+    [InlineData("250814_ZTScan_100spd_A_1_A1.wiff.dia.quant", true)]
+    [InlineData("250814_ZTScan_100spd_A_1_A1.timeseries.data", false)]
+    public void A_sciex_acquisition_travels_with_its_companions(string name, bool expected)
+    {
+        // The .wiff is metadata; the spectra are in the .wiff.scan, which is two hundred times
+        // larger. Path.GetExtension sees ".scan" and used to leave it behind, so asking for
+        // .wiff transferred 38 MB of a 13.7 GB acquisition -- and recorded it as verified,
+        // because the one file that was sent did arrive intact.
+        new CandidateFilter([".wiff"]).Accepts(name).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void The_sqlite_journal_beside_a_sciex_acquisition_is_not_data()
+    {
+        // Sciex leaves a .wiff2-journal next to every run. The extension walk reaches .wiff2 and
+        // would take it; it is SQLite's working file and belongs to whatever has the database
+        // open.
+        new CandidateFilter([".wiff2"])
+            .Accepts("250814_ZTScan_100spd_A_1_A1.wiff2-journal")
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Our_own_checksum_sidecar_is_never_mistaken_for_data()
+    {
+        // run.raw.md5 reaches run.raw by the same walk. Uploading our own bookkeeping as though
+        // it were an acquisition would be a loop with a straight face.
+        new CandidateFilter([".raw"]).Accepts("run.raw.md5").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void A_companion_of_something_not_asked_for_is_still_not_taken()
+    {
+        // The walk must not turn into "accept anything that shares a stem".
+        new CandidateFilter([".raw"]).Accepts("run.wiff.scan").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void An_ordinary_double_extension_is_unaffected()
+    {
+        new CandidateFilter([".gz"]).Accepts("results.tar.gz").ShouldBeTrue();
+        new CandidateFilter([".tar"]).Accepts("results.tar.gz").ShouldBeTrue();
+        new CandidateFilter([".zip"]).Accepts("results.tar.gz").ShouldBeFalse();
+    }
+
     [Fact]
     public void A_suffix_match_is_not_good_enough()
     {
