@@ -62,6 +62,69 @@ public sealed class CandidateFilter
             return false;
         }
 
-        return _extensions.Count == 0 || _extensions.Contains(Path.GetExtension(name));
+        // An empty list means "everything the working-file rules do not exclude", not literally
+        // every file. Our own .md5 sidecars, and the SQLite journals a vendor leaves beside a
+        // run, are never data: an empty settings box is not a request to upload this
+        // application's own bookkeeping.
+        if (_extensions.Count == 0)
+        {
+            return !IsWorkingFile(name);
+        }
+
+        // Companion files travel with the acquisition they belong to.
+        //
+        // Sciex writes run.wiff alongside run.wiff.scan, and the .wiff is metadata: the spectra
+        // are in the .scan. Matching on Path.GetExtension alone sees ".scan" and leaves it
+        // behind, so a user who asked for .wiff got 38 MB of a 13.7 GB acquisition -- recorded
+        // as verified, because the one file that was sent did arrive intact. Nothing about that
+        // is visible until somebody tries to open it in Skyline.
+        //
+        // So a name is accepted if removing trailing extensions one at a time reaches one that
+        // was asked for. run.wiff.scan reaches run.wiff; run.wiff.dia.quant reaches it too. The
+        // rule is deliberately about the shape of the name rather than a list of vendor
+        // suffixes, because the vendor that adds a new one will not tell us.
+        var candidate = name;
+
+        while (true)
+        {
+            var extension = Path.GetExtension(candidate);
+
+            if (extension.Length == 0)
+            {
+                return false;
+            }
+
+            if (_extensions.Contains(extension))
+            {
+                return !IsWorkingFile(name);
+            }
+
+            candidate = Path.GetFileNameWithoutExtension(candidate);
+        }
     }
+
+    /// <summary>
+    /// Whether a name is something a program is using rather than something to transfer.
+    /// </summary>
+    /// <remarks>
+    /// Checked only once a name has otherwise been accepted, so it costs nothing on the common
+    /// path.
+    /// <list type="bullet">
+    /// <item>
+    /// SQLite's journal, write-ahead log and shared-memory files sit beside a database while it
+    /// is open. Sciex leaves a <c>.wiff2-journal</c> next to every acquisition, and the extension
+    /// walk above would otherwise reach <c>.wiff2</c> and accept it.
+    /// </item>
+    /// <item>
+    /// The <c>.md5</c> sidecar this application writes itself. Without this, asking for
+    /// <c>.raw</c> would reach <c>run.raw</c> from <c>run.raw.md5</c> and upload our own
+    /// bookkeeping as though it were data.
+    /// </item>
+    /// </list>
+    /// </remarks>
+    private static bool IsWorkingFile(string name) =>
+        name.EndsWith("-journal", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith("-wal", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith("-shm", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith(".md5", StringComparison.OrdinalIgnoreCase);
 }

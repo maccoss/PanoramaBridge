@@ -25,14 +25,15 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
     private ReconciliationScanner NewScanner(
         RemotePath? destination = null,
         bool includeSubdirectories = true,
-        int maxUploadAttempts = 5) =>
+        int maxUploadAttempts = 5,
+        string[]? extensions = null) =>
         new(
             _store,
             new ReconciliationOptions
             {
                 Root = _root,
                 DestinationRoot = destination ?? Destination,
-                Filter = new CandidateFilter([".raw"]),
+                Filter = new CandidateFilter(extensions ?? [".raw"]),
                 IncludeSubdirectories = includeSubdirectories,
                 MaxUploadAttempts = maxUploadAttempts,
             });
@@ -85,6 +86,76 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         });
 
         return (result, offered);
+    }
+
+    // -- directory acquisitions ----------------------------------------------------------------
+
+    [Fact]
+    public async Task A_bruker_folder_is_offered_as_one_thing()
+    {
+        // A .d is one acquisition, not a folder of candidates. It reaches Panorama as a single
+        // .d.zip, so the sweep has to hand over the folder itself.
+        Write(Path.Combine("250314_HeLa_DIA_01.d", "analysis.tdf"), "the sqlite index");
+        Write(Path.Combine("250314_HeLa_DIA_01.d", "analysis.tdf_bin"), "the binary data");
+
+        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
+
+        offered.ShouldHaveSingleItem();
+        offered[0].ShouldEndWith("250314_HeLa_DIA_01.d");
+    }
+
+    [Fact]
+    public async Task The_files_inside_a_bruker_folder_are_never_offered_separately()
+    {
+        // The property that matters. Descending into a .d is how a folder still being written
+        // transfers in pieces -- and a piece of an acquisition on the server is worse than
+        // nothing there, because it looks like a complete upload.
+        Write(Path.Combine("run.d", "analysis.tdf"), "index");
+        Write(Path.Combine("run.d", "inner", "buried.raw"), "a file that matches the filter");
+
+        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
+
+        offered.ShouldHaveSingleItem();
+        offered[0].ShouldEndWith("run.d");
+        offered.ShouldNotContain(p => p.EndsWith("buried.raw", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_folder_the_user_did_not_ask_for_is_still_walked_into()
+    {
+        // Only extensions the user listed become acquisitions. An ordinary subfolder is still a
+        // subfolder, and the files inside it are still candidates.
+        Write(Path.Combine("2026-03-14", "run.raw"), "an ordinary acquisition");
+
+        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
+
+        offered.ShouldHaveSingleItem();
+        offered[0].ShouldEndWith("run.raw");
+    }
+
+    [Fact]
+    public async Task An_empty_bruker_folder_is_not_offered()
+    {
+        // Created but not written into. Offering it would pack an archive of nothing.
+        Directory.CreateDirectory(Path.Combine(_root, "empty.d"));
+
+        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
+
+        offered.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task The_working_archive_beside_an_acquisition_is_not_offered()
+    {
+        // It is built inside the folder being swept. The tilde is what keeps it out, and this is
+        // the test that says so at the level where it would do damage.
+        Write(Path.Combine("run.d", "analysis.tdf"), "index");
+        File.WriteAllText(Path.Combine(_root, "~run.d.zip"), "a working archive");
+
+        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d", ".zip"]));
+
+        offered.ShouldHaveSingleItem();
+        offered[0].ShouldEndWith("run.d");
     }
 
     [Fact]

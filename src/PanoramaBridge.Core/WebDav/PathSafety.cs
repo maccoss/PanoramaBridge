@@ -169,16 +169,33 @@ public static class PathSafety
     /// <exception cref="ArgumentException">
     /// The file lies outside the base directory, or a name cannot be used remotely.
     /// </exception>
+    /// <param name="localBaseDirectory">The monitored folder.</param>
+    /// <param name="localFilePath">What is being transferred.</param>
+    /// <param name="destinationRoot">Where the monitored folder maps to.</param>
+    /// <param name="remoteName">
+    /// Overrides the last segment. Used for a directory acquisition, which is a <c>.d</c> folder
+    /// locally and a <c>.d.zip</c> file remotely: everything above it keeps the same shape, only
+    /// the leaf changes.
+    /// </param>
     public static RemotePath ResolveDestination(
         string localBaseDirectory,
         string localFilePath,
-        RemotePath destinationRoot)
+        RemotePath destinationRoot,
+        string? remoteName = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(localBaseDirectory);
         ArgumentException.ThrowIfNullOrWhiteSpace(localFilePath);
         ArgumentNullException.ThrowIfNull(destinationRoot);
 
         var relative = Path.GetRelativePath(localBaseDirectory, localFilePath);
+
+        if (!string.IsNullOrWhiteSpace(remoteName))
+        {
+            // Validated as part of the whole relative path below, so a name containing a
+            // separator or anything else unusable is refused exactly as any other would be.
+            var parent = Path.GetDirectoryName(relative);
+            relative = string.IsNullOrEmpty(parent) ? remoteName : Path.Combine(parent, remoteName);
+        }
 
         if (Path.IsPathRooted(relative) || relative.StartsWith("..", StringComparison.Ordinal))
         {
