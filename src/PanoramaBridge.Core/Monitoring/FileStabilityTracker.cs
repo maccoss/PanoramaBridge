@@ -63,11 +63,16 @@ public sealed class FileStabilityTracker
         _datasets = new DatasetStabilityTracker(_quietPeriod, _clock);
     }
 
-    /// <summary>How many files are being watched for stability.</summary>
-    public int Count => _samples.Count;
-
-    /// <summary>Paths currently being watched.</summary>
-    public IReadOnlyCollection<string> Tracked => _samples.Keys.ToArray();
+    /// <summary>
+    /// How many things are being watched for stability, files and acquisition folders together.
+    /// </summary>
+    /// <remarks>
+    /// Both dictionaries. Check, Forget and Clear have always routed to the dataset tracker while
+    /// this read only the wrapper's own, so it reported nothing while three acquisitions were
+    /// being watched and walked every pass. The classic wrapper gap: the mutating members
+    /// delegate and the query member does not.
+    /// </remarks>
+    public int Count => _samples.Count + _datasets.Count;
 
     /// <summary>
     /// Examines a file and reports whether it is ready.

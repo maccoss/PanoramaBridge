@@ -79,6 +79,11 @@ public sealed class DatasetStabilityTracker
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
+        // Keyed on the path with any trailing separator removed, so one folder cannot end up
+        // with two clocks running under two spellings -- and so Forget with either spelling
+        // reaches the sample. DatasetFolder.ArchiveNameFor trims for the same reason.
+        path = Key(path);
+
         var now = _clock();
         var stamp = DatasetFolder.Measure(path);
 
@@ -92,9 +97,35 @@ public sealed class DatasetStabilityTracker
 
         if (current.IsEmpty)
         {
-            // Created but not yet written into. Keep watching rather than archiving nothing.
-            _samples[path] = new Sample(current, now);
-            return FileReadiness.Settling(0, TimeSpan.Zero, _quietPeriod);
+            // Created but not yet written into. Keep watching rather than archiving nothing --
+            // but for a bounded time.
+            //
+            // The clock used to restart on every look, which made quietFor permanently zero and
+            // gave this state no way to end. An acquisition abandoned before anything was
+            // written into it, or emptied after the sweep had already offered it, was re-walked
+            // on the instrument's own disk every pass for the life of the process. Nothing
+            // upstream could stop it either: Settling clears the gate's give-up counter, and
+            // only Locked has a path past it.
+            //
+            // So the sample is kept when the folder is still empty, and once it has been empty
+            // for the quiet period it is given up on. Nothing is lost by that: the sweep never
+            // offers an empty acquisition, so if one is written into later, the sweep is what
+            // brings it back.
+            var seen = _samples.TryGetValue(path, out var first) && first.Stamp == current
+                ? first
+                : new Sample(current, now);
+
+            _samples[path] = seen;
+
+            var emptyFor = now - seen.SettledAt;
+
+            if (emptyFor < _quietPeriod)
+            {
+                return FileReadiness.Settling(0, emptyFor, _quietPeriod);
+            }
+
+            _samples.TryRemove(path, out _);
+            return FileReadiness.Empty(path);
         }
 
         var previous = _samples.TryGetValue(path, out var sample) ? sample : (Sample?)null;
@@ -106,7 +137,7 @@ public sealed class DatasetStabilityTracker
 
             return previous is null
                 ? FileReadiness.Settling(current.TotalBytes, TimeSpan.Zero, _quietPeriod)
-                : FileReadiness.Growing(previous.Value.Stamp.TotalBytes, current.TotalBytes);
+                : FileReadiness.DatasetGrowing(previous.Value.Stamp, current);
         }
 
         // Unchanged. Asked last, because it opens every file in the folder and there is no point
@@ -128,7 +159,20 @@ public sealed class DatasetStabilityTracker
     }
 
     /// <summary>Stops watching a folder, for example once it has been queued.</summary>
-    public void Forget(string path) => _samples.TryRemove(path, out _);
+    public void Forget(string path) => _samples.TryRemove(Key(path), out _);
+
+    /// <summary>
+    /// The dictionary key for a folder: its path without a trailing separator.
+    /// </summary>
+    /// <remarks>
+    /// Only the separator is normalised, not the whole path. Both entry points already hand over
+    /// a <see cref="FileSystemInfo.FullName"/>, so casing and relative segments do not arise in
+    /// practice, and calling <see cref="Path.GetFullPath(string)"/> on every folder on every pass
+    /// would be paying on the instrument for a problem nothing has produced. A trailing separator
+    /// is the one variation that does occur, which is why ArchiveNameFor already handles it.
+    /// </remarks>
+    private static string Key(string path) =>
+        path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
     /// <summary>Forgets everything.</summary>
     public void Clear() => _samples.Clear();

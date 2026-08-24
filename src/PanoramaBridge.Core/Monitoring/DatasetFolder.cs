@@ -17,8 +17,6 @@ namespace PanoramaBridge.Core.Monitoring;
 public readonly record struct DatasetStamp(long TotalBytes, int FileCount, long NewestWriteUnixMs)
 {
     /// <summary>Nothing there.</summary>
-    public static DatasetStamp Empty { get; }
-
     /// <summary>True when the folder holds no files at all, at any depth.</summary>
     public bool IsEmpty => FileCount == 0;
 

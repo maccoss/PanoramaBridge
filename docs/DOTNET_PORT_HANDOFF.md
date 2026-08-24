@@ -577,9 +577,10 @@ sending-early as the one quiet failure mode.
 1. **The conflict dialog.** The ledger already records `Conflict`, and the sweep deliberately
    leaves such a file alone until a person or a local change resolves it. Nothing yet asks.
 2. **`LegacyConfigImporter`**, then code signing.
-3. **Known defects in the dataset path**, listed in §9. None is a data-loss risk, and none is
-   urgent -- the two that were (a walk failure taking monitoring down with it, and a leaked
-   tracker sample that could call a folder ready on one look) are fixed.
+3. **Nothing outstanding in the dataset path.** The eight defects a review turned up after
+   v26.3.0 are all fixed: the two that mattered -- a walk failure taking monitoring down with it,
+   and a leaked tracker sample that could call a folder ready on one look -- and six smaller ones.
+   They are in the git history rather than here, now that none of them is pending.
 
 ---
 
@@ -587,12 +588,6 @@ sending-early as the one quiet failure mode.
 
 | Item | Notes |
 |---|---|
-| Growing message can print identical byte counts | `FileReadiness.Growing` is built from `TotalBytes` alone, so a folder whose file count or newest timestamp moved while its size held still reports "1,048,576 to 1,048,576 bytes" — exactly the case the three-number stamp exists to catch, described in the one way that hides it. |
-| An empty `.d` is re-walked forever | The `IsEmpty` branch returns `Settling` and rewrites the sample every pass. `Settling` resets the gate's give-up counter, which only `Locked` can trip, so an aborted acquisition leaving an empty folder is walked on the instrument's own disk for the process lifetime. |
-| Folder names vanish from user-facing messages | `FileReadiness.Missing` and `Locked` build their text with `Path.GetFileName`, which returns an empty string for a path ending in a separator. `DatasetFolder.ArchiveNameFor` trims both separators for exactly this reason and has a test for it; the tracker's messages do not. |
-| `_samples` keys are not normalised | Only `OrdinalIgnoreCase`, so two spellings of one folder get two independent clocks and `Forget` with one spelling leaves the other live. `Path.GetFullPath` on entry would collapse them. |
-| `FileStabilityTracker.Count` and `Tracked` exclude datasets | `Check`, `Forget` and `Clear` forward to the dataset tracker; the two query members read only the wrapper's own dictionary, so both under-report while folders are being watched. `Tracked` additionally has no callers anywhere in the solution. |
-| `DatasetStamp.Empty` is dead and accidentally correct | A get-only auto-property with no initialiser, so it returns `default` — which happens to be the intended value, making the omission invisible. Nothing reads it. |
 | Default concurrency on a 4-core instrument PC | 3 today. If a transfer's ~1.7% of a 4-core machine is too much, drop to 1–2. Needs real hardware. |
 | Code signing | Azure Trusted Signing (~$10/mo) preferred, then SignPath Foundation (free for OSS). Needs a decision and possibly UW paperwork. |
 | Vendor completion sentinels | **Not the approach taken.** Completion is decided by three signals settling together (§7a) rather than by looking for a per-vendor sentinel file, because a sentinel list is wrong the moment a vendor changes one and there is nobody here to notice. Still worth validating against a live instrument write, which is the one thing the real data could not settle. |

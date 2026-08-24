@@ -119,6 +119,134 @@ public sealed class DatasetFolderTests : IDisposable
     // -- deciding it has finished -------------------------------------------------------------
 
     [Fact]
+    public void An_empty_folder_is_given_up_on_rather_than_watched_for_ever()
+    {
+        // An acquisition abandoned before anything was written into it, or emptied after the
+        // sweep had already offered it. The clock used to restart on every look, so quietFor was
+        // permanently zero and this state had no way to end: the folder was re-walked on the
+        // instrument's own disk every pass for the life of the process. Settling also clears the
+        // gate's give-up counter, so nothing upstream could stop it either.
+        var folder = NewFolder("aborted.d");
+
+        var now = DateTimeOffset.UtcNow;
+        var tracker = new DatasetStabilityTracker(TimeSpan.FromSeconds(10), () => now);
+
+        tracker.Check(folder).IsReady.ShouldBeFalse("empty is never ready");
+
+        now = now.AddSeconds(11);
+
+        var readiness = tracker.Check(folder);
+
+        readiness.IsReady.ShouldBeFalse();
+        readiness.Reason.ShouldBe(ReadinessReason.Empty);
+        readiness.IsWorthRetrying.ShouldBeFalse("the gate has to be able to let go of it");
+        tracker.Count.ShouldBe(0);
+    }
+
+    [Fact]
+    public void A_folder_written_into_after_being_given_up_on_is_ready_again()
+    {
+        // Giving up costs nothing, because the sweep declines to offer an empty acquisition and
+        // is therefore what brings this one back once it holds something.
+        var folder = NewFolder("late.d");
+
+        var now = DateTimeOffset.UtcNow;
+        var tracker = new DatasetStabilityTracker(TimeSpan.FromSeconds(10), () => now);
+
+        tracker.Check(folder);
+        now = now.AddSeconds(11);
+        tracker.Check(folder).Reason.ShouldBe(ReadinessReason.Empty);
+
+        Write(folder, "analysis.tdf", "data");
+
+        tracker.Check(folder).IsReady.ShouldBeFalse("first sighting of a folder with data in it");
+
+        now = now.AddSeconds(11);
+        tracker.Check(folder).IsReady.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void A_folder_that_gains_a_file_without_gaining_bytes_says_so()
+    {
+        // The case the three-number stamp exists to catch, and the one a bytes-only message
+        // described in the single way that hides it: "1,024 to 1,024 bytes since the last check".
+        var folder = NewFolder("counting.d");
+        Write(folder, "analysis.tdf", "data");
+
+        var now = DateTimeOffset.UtcNow;
+        var tracker = new DatasetStabilityTracker(TimeSpan.FromSeconds(10), () => now);
+
+        tracker.Check(folder);
+
+        // A zero-byte placeholder: the file count moves, the total does not.
+        Write(folder, "placeholder.tdf_bin", "");
+
+        var readiness = tracker.Check(folder);
+
+        readiness.Reason.ShouldBe(ReadinessReason.Growing);
+        readiness.Detail.ShouldContain("1 to 2 files");
+        readiness.Detail.ShouldNotContain("4 to 4 bytes");
+    }
+
+    [Fact]
+    public void A_trailing_separator_does_not_start_a_second_clock()
+    {
+        // Two spellings of one folder used to get two independent samples, so the quiet period
+        // restarted depending on how the caller happened to write the path, and Forget with one
+        // spelling left the other running. ArchiveNameFor trims for the same reason.
+        var folder = NewFolder("spelled.d");
+        Write(folder, "analysis.tdf", "data");
+
+        var now = DateTimeOffset.UtcNow;
+        var tracker = new DatasetStabilityTracker(TimeSpan.FromSeconds(10), () => now);
+
+        tracker.Check(folder).IsReady.ShouldBeFalse("first sighting");
+        tracker.Count.ShouldBe(1);
+
+        now = now.AddSeconds(11);
+
+        tracker.Check(folder + Path.DirectorySeparatorChar).IsReady.ShouldBeTrue();
+
+        tracker.Forget(folder + Path.DirectorySeparatorChar);
+        tracker.Count.ShouldBe(0);
+    }
+
+    [Fact]
+    public void A_vanished_folder_is_reported_missing_whichever_way_its_path_is_spelled()
+    {
+        var folder = NewFolder("gone.d");
+        Directory.Delete(folder);
+
+        var tracker = new DatasetStabilityTracker(TimeSpan.FromSeconds(10));
+
+        var readiness = tracker.Check(folder + Path.DirectorySeparatorChar);
+
+        readiness.Reason.ShouldBe(ReadinessReason.Missing);
+
+        // Named, not blank. Note this passes because Key trims the separator before the message
+        // is built, so it pins the keying rather than the naming -- the guard inside
+        // FileReadiness is covered by A_path_ending_in_a_separator_still_has_a_name.
+        readiness.Detail.ShouldContain("gone.d");
+    }
+
+    [Theory]
+    [InlineData(@"D:\runs\250314.d")]
+    [InlineData(@"D:\runs\250314.d\")]
+    [InlineData("D:/runs/250314.d/")]
+    public void A_path_ending_in_a_separator_still_has_a_name(string path)
+    {
+        // Path.GetFileName returns an empty string for a path ending in a separator, so these
+        // messages read "'' is no longer there." -- to a scientist looking at a stalled transfer,
+        // which is exactly who they are written for. Tested on the factories rather than through
+        // a tracker, because a tracker normalises the path first and would hide the guard.
+        FileReadiness.Missing(path).Detail.ShouldContain("250314.d");
+        FileReadiness.Locked(0, path).Detail.ShouldContain("250314.d");
+        FileReadiness.Unreadable(path, "denied").Detail.ShouldContain("250314.d");
+        FileReadiness.StillInUse(0, path, 5).Detail.ShouldContain("250314.d");
+        FileReadiness.Empty(path).Detail.ShouldContain("250314.d");
+    }
+
+    [Fact]
     public void One_look_is_never_enough()
     {
         // The same rule as for a file. A single observation cannot tell a finished acquisition

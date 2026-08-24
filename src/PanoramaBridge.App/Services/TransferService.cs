@@ -531,7 +531,10 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             _ => TransferState.Discovered,
         };
 
-        if (readiness.Reason != ReadinessReason.Missing)
+        // Missing and Empty are both "there is nothing here to send", which is not a state
+        // worth a row in the transfer list: the first has gone, and the second is a folder the
+        // sweep will offer again if an acquisition is ever written into it.
+        if (readiness.Reason is not (ReadinessReason.Missing or ReadinessReason.Empty))
         {
             Progress.Report(new TransferProgress(
                 report.Path,
