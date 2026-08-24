@@ -25,14 +25,25 @@ namespace PanoramaBridge.Core.Monitoring;
 /// recently -- and a caller reading it after checking folder A would get folder B's file count
 /// and timestamps, with nothing to indicate the swap. There was such a property; it was removed
 /// rather than locked, because a correct one still answers a question the caller did not ask.
-/// </para>
-/// <para>
 /// The measurement a caller can rely on is the one in the returned <see cref="FileReadiness"/>,
 /// which describes the folder that was passed in and nothing else.
-/// <see cref="DatasetFolder.Measure"/> gives the full stamp for anyone needing the file count or
-/// the newest write, at the cost of walking the folder again -- which is what
-/// <c>TransferCoordinator</c> does. If that second walk ever shows up in a measurement, the fix
-/// is to return the stamp from <see cref="Check"/>, not to park it on the instance.
+/// </para>
+/// <para>
+/// Anyone needing the file count or the newest write calls <see cref="DatasetFolder.Measure"/>
+/// and walks the folder again. That second walk is not waste waiting to be optimised away, and
+/// it should not be replaced by handing this one's stamp forward: <c>TransferCoordinator</c>
+/// takes its measurement at pack time because the number it needs is the one true then. A folder
+/// can sit between the gate and the worker for minutes and go on changing, and what it measures
+/// there becomes the ledger row and the baseline that decides whether the upload was superseded.
+/// A readiness-time stamp carried forward would describe neither what was packed nor what is on
+/// the server. What would have to move is the measurement's moment, not where it is stored.
+/// </para>
+/// <para>
+/// On threading: the dictionary makes concurrent checks of <em>different</em> folders safe, which
+/// is what the sweep does. Overlapping calls for the <em>same</em> folder are not supported --
+/// the sample is read, rewritten and removed as separate operations, so two of them could both
+/// see a settled folder and both report it ready. <see cref="ReadinessGate"/> drives this from a
+/// single loop, which is what keeps that from arising.
 /// </para>
 /// </remarks>
 public sealed class DatasetStabilityTracker
