@@ -106,4 +106,18 @@ public sealed class CandidateFilterTests
         CandidateFilter.Everything.Accepts(@"C:\data\notes.txt").ShouldBeTrue();
         CandidateFilter.Everything.Accepts(@"C:\data\run1.raw").ShouldBeTrue();
     }
+
+    [Theory]
+    [InlineData(@"C:\data\run1.raw.md5")]
+    [InlineData(@"C:\data\run1.wiff2-journal")]
+    [InlineData(@"C:\data\run1.wiff2-wal")]
+    [InlineData(@"C:\data\run1.wiff2-shm")]
+    public void An_empty_extension_list_still_leaves_the_working_files(string path)
+    {
+        // "Everything" means every acquisition, not every byte in the folder. This path skipped
+        // the working-file rules entirely, so a user who left the box empty would have had
+        // PanoramaBridge upload its own .md5 sidecars back to the server as though they were
+        // data, and the SQLite journals sitting beside a run still being written with them.
+        CandidateFilter.Everything.Accepts(path).ShouldBeFalse();
+    }
 }

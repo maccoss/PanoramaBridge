@@ -219,6 +219,12 @@ public static class DatasetArchive
         var root = Path.GetFullPath(folder);
         long read = 0;
 
+        // One buffer for the whole acquisition, not one per file. A megabyte lands on the large
+        // object heap, and a .d holds thousands of small files: allocating inside the loop made
+        // packing a folder a few thousand LOH allocations and the collections that follow, on the
+        // machine attached to the mass spectrometer.
+        var buffer = new byte[1 << 20];
+
         // The stream is created here rather than by ZipFile so the archive can be removed
         // reliably if anything goes wrong part-way.
         await using var output = new FileStream(
@@ -242,7 +248,6 @@ public static class DatasetArchive
 
             await using var target = entry.Open();
 
-            var buffer = new byte[1 << 20];
             int taken;
 
             while ((taken = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)

@@ -62,9 +62,13 @@ public sealed class CandidateFilter
             return false;
         }
 
+        // An empty list means "everything the working-file rules do not exclude", not literally
+        // every file. Our own .md5 sidecars, and the SQLite journals a vendor leaves beside a
+        // run, are never data: an empty settings box is not a request to upload this
+        // application's own bookkeeping.
         if (_extensions.Count == 0)
         {
-            return true;
+            return !IsWorkingFile(name);
         }
 
         // Companion files travel with the acquisition they belong to.

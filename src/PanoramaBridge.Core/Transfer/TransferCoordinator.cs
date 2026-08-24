@@ -617,7 +617,10 @@ public sealed class TransferCoordinator : IAsyncDisposable
             .ConfigureAwait(false);
 
         // The archive's size, not the folder's: progress has to be against what is going over
-        // the wire, or a packed acquisition would appear to overshoot or stall short.
+        // the wire, or a packed acquisition would appear to overshoot or stall short. It is
+        // the total for every report this method makes, not only the ones during the upload:
+        // the bytes counted against it are always the archive's, so the folder's size would
+        // show a stored acquisition finishing at slightly over a hundred percent.
         var sending = source is null ? stamp.Length : new FileInfo(source).Length;
 
         var stopwatch = Stopwatch.StartNew();
@@ -691,7 +694,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
             _snapshots.Record(destination, result.BytesUploaded, result.Hashes.Md5, acquired);
 
             Report(localPath, encoded, TransferState.Superseded, "Changed during upload",
-                result.BytesUploaded, stamp.Length,
+                result.BytesUploaded, sending,
                 message: "The file changed while it was being uploaded; it will be sent again.");
 
             // Re-offer it. The dedup gate was released by the worker loop's finally, so this
@@ -710,13 +713,13 @@ public sealed class TransferCoordinator : IAsyncDisposable
         {
             Interlocked.Increment(ref _uploaded);
             Report(localPath, encoded, TransferState.Uploaded, "Uploaded",
-                result.BytesUploaded, stamp.Length, result.BytesPerSecond,
+                result.BytesUploaded, sending, result.BytesPerSecond,
                 verification: VerifyMethod.None);
             return;
         }
 
         Report(localPath, encoded, TransferState.Uploaded, "Verifying",
-            result.BytesUploaded, stamp.Length, result.BytesPerSecond);
+            result.BytesUploaded, sending, result.BytesPerSecond);
 
         var remoteHash = await _client
             .GetFileHashAsync(destination, cancellationToken)
@@ -733,7 +736,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 .ConfigureAwait(false);
 
             Report(localPath, encoded, TransferState.Failed, "Not verified",
-                result.BytesUploaded, stamp.Length, message: Message);
+                result.BytesUploaded, sending, message: Message);
             return;
         }
 
@@ -751,7 +754,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
             _log.LogError("Verification of {Path} failed: {Message}", localPath, message);
 
             Report(localPath, encoded, TransferState.Failed, "Verification failed",
-                result.BytesUploaded, stamp.Length, message: message);
+                result.BytesUploaded, sending, message: message);
             return;
         }
 
@@ -765,7 +768,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
             .ConfigureAwait(false);
 
         Report(localPath, encoded, TransferState.Verified, "Verified",
-            result.BytesUploaded, stamp.Length, result.BytesPerSecond,
+            result.BytesUploaded, sending, result.BytesPerSecond,
             verification: VerifyMethod.ServerMd5);
     }
 
