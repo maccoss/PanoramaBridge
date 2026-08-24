@@ -1,10 +1,12 @@
 # PanoramaBridge .NET port — handoff
 
-State of the port as of 2026-08-20. Read this before touching `src/`.
+State of the work as of 2026-08-24. Read this before touching `src/`.
 
-Everything lives on branch **`dotnet-port`**, open as
-**[PR #2](https://github.com/maccoss/PanoramaBridge/pull/2)**. `main` is untouched and still holds
-the Python application.
+The port is finished and shipped. **`main` is the .NET application**, released through
+**v26.3.0**; the Python package was removed after v26.1.0 and survives only in git history under
+the `v0.1.9rc4` tag. The `dotnet-port` branch and PR #2 are closed history, not somewhere to
+look. This page is no longer a port plan — it is the standing record of what is built, what was
+decided, and what cost real time to learn.
 
 ---
 
@@ -20,15 +22,24 @@ the Python application.
 | Resource behaviour on an instrument PC | **Done, measured.** |
 | SMB share monitoring | **Verified** against a live file server. |
 | 4 — Continuous monitoring | **Done, measured.** See §7 for what it is and §8 for what was left. |
-| 5 — Datasets, conflict dialog, polish | Not started. See §9. |
-| 6 — Code signing, ship | **Shipping as v26.1.0.** Code signing still outstanding; see §9. |
+| 5 — Datasets | **Done, shipped in v26.3.0.** Directory acquisitions and Sciex companions. See §7a. |
+| 5 — Conflict dialog, polish | Not started. See §9. |
+| 6 — Code signing, ship | **Shipped, through v26.3.0.** Code signing still outstanding; see §9. |
 
-432 tests passing, 9 skipped unless the opt-in SMB suite is enabled, CI green, warnings as errors.
-Coverage: **Core 87%, App 49%, pbctl 17%**, 69% over everything hand-written.
+534 tests in the main suite, 9 of them skipped unless the opt-in SMB suite is enabled, plus 32 in
+`ThermoRaw.Tests`. CI green, warnings as errors.
+
+> Coverage was **Core 87%, App 49%, pbctl 17%** when it was last measured, at v26.1.0. Three
+> feature releases have landed since and nothing has re-run it, so treat those as historical
+> rather than current.
 
 **What works today:** configure the two settings tabs and press **Start monitoring**. The folder
 is watched, and each acquisition is transferred and verified once it has finished being written.
 **Upload now** still does a single pass for anyone who would rather drive it by hand.
+
+That now covers three shapes of acquisition: a single file (Thermo `.raw`), a directory packed
+into one archive (Bruker and Agilent `.d`, Waters `.raw` directories), and a file that travels
+with companions (Sciex `.wiff` with its `.wiff.scan`). See §7a.
 
 ---
 
@@ -36,7 +47,7 @@ is watched, and each acquisition is transferred and verified once it has finishe
 
 ```bash
 dotnet build PanoramaBridge.sln -c Release
-dotnet test  PanoramaBridge.sln -c Release          # 432 tests, no network needed
+dotnet test  PanoramaBridge.sln -c Release          # 566 tests, no network needed
 src/PanoramaBridge.App/bin/Release/net8.0-windows/PanoramaBridge.exe
 ```
 
@@ -100,7 +111,14 @@ src/PanoramaBridge.Core/     all logic. No UI dependency. net8.0
 src/PanoramaBridge.App/      WPF shell. net8.0-windows
 src/PanoramaBridge.Cli/      pbctl
 src/PanoramaBridge.Tests/    xUnit. net8.0-windows: see below
+src/PanoramaBridge.ThermoRaw/       Thermo RAW truncation check. net8.0, no dependencies
+src/PanoramaBridge.ThermoRawCheck/  thermoraw-check, standalone and trimmed
+src/PanoramaBridge.ThermoRaw.Tests/ net8.0, so CI runs it on Linux too
 ```
+
+`ThermoRaw` sits outside `Core` deliberately: it is useful without PanoramaBridge, it must build
+on Linux, and it ships as its own binary with every release. Keep it dependency-free, `Core`
+included.
 
 `Core` is deliberately UI-free, which is why the progress aggregator and the readiness gate live
 there rather than in the view models: their behaviour is testable without a dispatcher.
@@ -123,7 +141,10 @@ implicit usings, so the test project puts them back explicitly. See §6.
 | `Monitoring/ReconciliationScanner` | The periodic walk. The mechanism monitoring rests on, and the only thing that guarantees a file is found. |
 | `Monitoring/DirectoryMonitor` | `FileSystemWatcher`, wrapped so it is allowed to fail. An accelerator, never the mechanism. |
 | `Monitoring/ContinuousMonitor` | Puts those two together and feeds the gate. |
-| `Monitoring/CandidateFilter` | Which files count as data. One filter, so the sweep and the watcher cannot disagree. |
+| `Monitoring/CandidateFilter` | Which files count as data. One filter, so the sweep and the watcher cannot disagree. Also walks trailing extensions, so `.wiff` brings `.wiff.scan`. |
+| `Monitoring/DatasetFolder` | Recognises a directory acquisition, measures it, and names its archive. |
+| `Monitoring/DatasetStabilityTracker` | The folder counterpart of the stability tracker. Three signals must settle together, and an empty folder is never ready. |
+| `Transfer/DatasetArchive` | Packs a directory acquisition into one stored-not-compressed archive, beside the acquisition, checking free space first. |
 | `Transfer/UploadDecisionService` | The three-tier "does this need uploading?" ladder. |
 | `Transfer/ChecksumSidecar` | The `.md5` written beside every upload. The only record of a file's hash, and of the date it was acquired, that travels with the data rather than living in a database on one instrument PC. `md5sum -c` reads it unmodified. |
 | `Transfer/TransferCoordinator` | Owns all mutable transfer state, a bounded `Channel`, and N workers. |
@@ -144,7 +165,8 @@ implicit usings, so the test project puts them back explicitly. See §6.
 - **Velopack** for install and update, from GitHub Releases.
 - **CalVer `YY.feature.patch`**, matching `skyline-prism`. Version lives only in
   `Directory.Build.props`; `release.yml` refuses to publish if the tag disagrees.
-- **Folder acquisitions** (`.d`, Waters `.raw` directories) will become atomic transfer items.
+- **Folder acquisitions** (`.d`, Waters `.raw` directories) are atomic transfer items: one
+  directory becomes one archive, uploaded as one object. Done in v26.3.0 — see §7a.
 - **Verification means the server's own MD5.** Nothing weaker may be reported as verified.
 
 ### The Python package is retired, and how
@@ -314,8 +336,14 @@ not rediscover them the hard way.
   Serilog's switch, which is the only thing the toggle can control.
 
 - **A directory raises the same watcher events a file does.** A folder named `dataset.raw` passes
-  an extension filter, and handing it to the gate means opening it, failing, and telling the user
-  their file could not be read. Checked with `File.Exists` before anything is reported.
+  an extension filter, and `DirectoryMonitor` still checks `File.Exists` before reporting
+  anything, because a watcher event carries no way to tell which it was.
+
+  What changed in v26.3.0 is that a directory is no longer always wrong. The **sweep** offers one
+  deliberately when its extension was asked for, and `FileStabilityTracker.Check` routes anything
+  that is a directory to the dataset tracker. So the rule is not "directories are a mistake" but
+  "a directory is an acquisition only when the sweep says so"; the watcher path still has no way
+  to know, and still declines.
 
 - **Instrument and copy software rename into place.** A file written under a working name and
   renamed on completion arrives as `Renamed`, not `Created`. Subscribing only to creations means
@@ -505,15 +533,52 @@ from the ledger, and asks the server nothing at all.
 
 ---
 
-## 8. Next: Phase 5
+## 7a. Directory acquisitions and companions, as built
 
-1. **Dataset folders.** `AcquisitionDetector`, atomic `.d` and Waters `.raw` directory upload,
-   collection-level verification. `CandidateFilter` explicitly does not handle these: the
-   question is when a whole folder is complete, not whether one file inside it matches, so they
-   become transfer items of their own rather than a filter rule.
-2. **The conflict dialog.** The ledger already records `Conflict`, and the sweep deliberately
+Shipped in v26.3.0. Two problems, one release.
+
+**A directory acquisition is one object.** A `.d` is a directory locally and a single `.d.zip`
+remotely, which is an observation rather than a preference: Panorama Public stores every Bruker,
+Waters and Agilent acquisition as `<folder name>.zip`. One object is what makes the transfer
+atomic without any machinery for atomicity — it either arrives and verifies against the server's
+own MD5, or it does not — so verification, the sidecar, conflict handling and the ledger all
+apply unchanged.
+
+- `DatasetFolder` recognises one by the same extension list that governs files, and being a
+  directory is what separates a Waters `.raw` folder from a Thermo `.raw` file.
+- `DatasetStabilityTracker` decides it has finished: nothing inside open for writing, **and**
+  size, file count and newest timestamp all unchanged. Three numbers rather than one, because
+  Bruker closes the files in a `.d` at different moments, so a total can hold still while a file
+  is added. An empty `.d` is never ready.
+- `DatasetArchive` packs it, stored not compressed, beside the acquisition under a `~` name that
+  `CandidateFilter` already rejects — otherwise every pack would hand the sweep a six-gigabyte
+  candidate. Free space is checked with headroom first, and a failed or cancelled pack removes
+  its partial file.
+- **The sweep no longer descends** into an acquisition. That was the actual mechanism behind
+  "a folder still being written can transfer partially": a recursive walk offered the files
+  inside individually.
+
+**Companions travel with the acquisition.** `Path.GetExtension("run.wiff.scan")` is `.scan`, so a
+filter of `.wiff` matched 38 MB of metadata and left 8.2 GB of spectra behind — and recorded it
+verified, correctly as far as it went. `CandidateFilter` now strips trailing extensions one at a
+time, so `.wiff` reaches `.wiff.scan`. Excluded from that walk: SQLite's `-journal`, `-wal` and
+`-shm`, and our own `.md5` sidecar, which would otherwise reach `run.raw` from `run.raw.md5`.
+
+What is **not** established: the completion decision, for any vendor. Real acquisitions were
+downloaded from Panorama Public and run through, which settles recognising, packing, naming and
+verifying — but a downloaded folder arrives finished, so nothing about it exercises the decision
+to wait. See [`VENDOR_FORMATS.md`](VENDOR_FORMATS.md), which draws that line per vendor and names
+sending-early as the one quiet failure mode.
+
+---
+
+## 8. Next
+
+1. **The conflict dialog.** The ledger already records `Conflict`, and the sweep deliberately
    leaves such a file alone until a person or a local change resolves it. Nothing yet asks.
-3. **`LegacyConfigImporter`**, then signing and ship.
+2. **`LegacyConfigImporter`**, then code signing.
+3. **Known defects in the dataset path**, listed in §9. None is a data-loss risk; the first is a
+   robustness one and worth doing before an instrument site reports it.
 
 ---
 
@@ -521,14 +586,22 @@ from the ledger, and asks the server nothing at all.
 
 | Item | Notes |
 |---|---|
+| **`IsAnythingWriting` can stop all monitoring** | Its outer `try` catches only `DirectoryNotFoundException`, while `DatasetFolder.Measure` directly above catches `IOException` and `UnauthorizedAccessException` too. An `IOException` raised by the enumeration itself — an SMB blip, and SMB monitoring is supported — escapes `Check`, and `ReadinessGate` catches only `OperationCanceledException`. One folder hiccups and monitoring stops for every watched path. |
+| **Dataset samples leak through the wrapper** | A `.d` renamed into place makes the next `FileStabilityTracker.Check` see `Directory.Exists` false, take the file branch, and clear only the file dictionary. The gate's give-up path does not call `Forget`, so the dataset tracker keeps its sample for the process lifetime — one per renamed or deleted acquisition. |
+| Growing message can print identical byte counts | `FileReadiness.Growing` is built from `TotalBytes` alone, so a folder whose file count or newest timestamp moved while its size held still reports "1,048,576 to 1,048,576 bytes" — exactly the case the three-number stamp exists to catch, described in the one way that hides it. |
+| An empty `.d` is re-walked forever | The `IsEmpty` branch returns `Settling` and rewrites the sample every pass. `Settling` resets the gate's give-up counter, which only `Locked` can trip, so an aborted acquisition leaving an empty folder is walked on the instrument's own disk for the process lifetime. |
+| Folder names vanish from user-facing messages | `FileReadiness.Missing` and `Locked` build their text with `Path.GetFileName`, which returns an empty string for a path ending in a separator. `DatasetFolder.ArchiveNameFor` trims both separators for exactly this reason and has a test for it; the tracker's messages do not. |
+| `_samples` keys are not normalised | Only `OrdinalIgnoreCase`, so two spellings of one folder get two independent clocks and `Forget` with one spelling leaves the other live. `Path.GetFullPath` on entry would collapse them. |
+| `FileStabilityTracker.Count` and `Tracked` exclude datasets | `Check`, `Forget` and `Clear` forward to the dataset tracker; the two query members read only the wrapper's own dictionary, so both under-report while folders are being watched. `Tracked` additionally has no callers anywhere in the solution. |
+| `DatasetStamp.Empty` is dead and accidentally correct | A get-only auto-property with no initialiser, so it returns `default` — which happens to be the intended value, making the omission invisible. Nothing reads it. |
 | Default concurrency on a 4-core instrument PC | 3 today. If a transfer's ~1.7% of a 4-core machine is too much, drop to 1–2. Needs real hardware. |
 | Code signing | Azure Trusted Signing (~$10/mo) preferred, then SignPath Foundation (free for OSS). Needs a decision and possibly UW paperwork. |
-| Vendor completion sentinels | Bruker `analysis.tdf`, Agilent `AcqData\`, Waters `_HEADER.TXT` — validate against real acquisitions. |
+| Vendor completion sentinels | **Not the approach taken.** Completion is decided by three signals settling together (§7a) rather than by looking for a per-vendor sentinel file, because a sentinel list is wrong the moment a vendor changes one and there is nobody here to notice. Still worth validating against a live instrument write, which is the one thing the real data could not settle. |
 | Concurrency ceiling panoramaweb tolerates | Start at 3; nothing has been pushed hard enough to find a limit. |
 | SQLite connection-per-operation | Fine at current scale; a warm run of 38 files took ~1.4 s of fixed overhead. The sweep no longer reads per file — `GetManyAsync` batches five hundred paths per statement — so the 200k case is much less alarming than it was, but it has still never been run. |
 | Retrying a failed upload | The sweep re-offers a failed file until `MaxUploadAttempts`, five, and then leaves it until the file changes or someone asks. Deliberately not a user setting yet: nobody has hit the case in anger, and one more box on that tab needs to earn its place. |
 | A sweep of a very large share | 35,000 files takes tens of seconds (§7). Nothing adapts the interval to how long the last sweep took, and perhaps it should. |
-| The first transfer into a big destination folder stalls | **Fixed, unreleased at the time of writing.** The collection hash was fetched alongside the listing, for every folder, before anything knew whether it would be read -- and it is read only when a destination name matches, which for new work is never. So a new acquisition into a populated folder made Panorama hash every byte in it, at roughly 600 MB/s, to answer a question the listing had already answered: 300 GB was minutes of "Checking server" before the first file moved. It is now fetched on demand, still once per folder so a batch that genuinely needs hashes pays one request. |
+| The first transfer into a big destination folder stalls | **Fixed and released in v26.2.1.** The collection hash was fetched alongside the listing, for every folder, before anything knew whether it would be read -- and it is read only when a destination name matches, which for new work is never. So a new acquisition into a populated folder made Panorama hash every byte in it, at roughly 600 MB/s, to answer a question the listing had already answered: 300 GB was minutes of "Checking server" before the first file moved. It is now fetched on demand, still once per folder so a batch that genuinely needs hashes pays one request. |
 | Monitoring while a manual scan runs | Refused rather than queued. **Upload now** turns into **Check now** while monitoring, which covers the case that actually comes up. |
 | A live-server test suite | `CLAUDE.md` documented one gated on `PANORAMABRIDGE_IT_*` and it never existed; those variables are read only by `pbctl`. It matters because every fact in §5 was established by a throwaway program and nothing re-checks any of them. If LabKey changes `?method=md5sum`, the semicolon behaviour, or `X-LABKEY-Last-Modified`, this document quietly becomes wrong. |
 | `pbctl` command bodies | 3.7% covered. The parsing is now extracted and fully tested; everything below it needs a server, which is the suite above. |
