@@ -146,7 +146,48 @@ public sealed class DatasetFolderTests : IDisposable
 
         var readiness = tracker.Check(folder);
         readiness.IsReady.ShouldBeTrue();
-        tracker.SettledAt!.Value.FileCount.ShouldBe(1);
+
+        // What it settled at travels in the answer, which describes the folder that was asked
+        // about. "data" is four bytes.
+        readiness.Length.ShouldBe(4);
+    }
+
+    [Fact]
+    public void Two_folders_settling_together_do_not_borrow_each_others_measurements()
+    {
+        // One tracker watches every folder at once, and two acquisitions finishing in the same
+        // sweep is the ordinary case rather than a corner: an instrument writing a plate leaves
+        // them side by side. Each answer has to describe the folder it was asked about.
+        //
+        // This does not reproduce the defect it comes from -- that was a property holding the
+        // last folder to settle, which nothing read, so nothing could observe it holding the
+        // wrong folder. It pins the invariant that made such a property wrong in the first
+        // place, so the next attempt to save the second walk has to keep the measurement with
+        // the answer rather than on the tracker.
+        var small = NewFolder("small.d");
+        var large = NewFolder("large.d");
+
+        Write(small, "analysis.tdf", "data");
+        Write(large, "analysis.tdf", new string('x', 5000));
+
+        var now = DateTimeOffset.UtcNow;
+        var tracker = new DatasetStabilityTracker(TimeSpan.FromSeconds(10), () => now);
+
+        tracker.Check(small).IsReady.ShouldBeFalse("first sighting");
+        tracker.Check(large).IsReady.ShouldBeFalse("first sighting");
+
+        now = now.AddSeconds(11);
+
+        // Interleaved deliberately: the large one settles between asking about the small one and
+        // reading the small one's answer.
+        var smallReadiness = tracker.Check(small);
+        var largeReadiness = tracker.Check(large);
+
+        smallReadiness.IsReady.ShouldBeTrue();
+        largeReadiness.IsReady.ShouldBeTrue();
+
+        smallReadiness.Length.ShouldBe(4);
+        largeReadiness.Length.ShouldBe(5000);
     }
 
     [Fact]

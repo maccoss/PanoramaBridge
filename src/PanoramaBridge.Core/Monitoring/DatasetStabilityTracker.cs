@@ -19,6 +19,21 @@ namespace PanoramaBridge.Core.Monitoring;
 /// created but not yet written to is quiet, unlocked, and complete-looking, and zipping it would
 /// produce a valid archive of nothing.
 /// </para>
+/// <para>
+/// Nothing here holds the measurement a folder settled at. One instance tracks every folder at
+/// once, so a property carrying "the last one to settle" belongs to whichever call finished most
+/// recently -- and a caller reading it after checking folder A would get folder B's file count
+/// and timestamps, with nothing to indicate the swap. There was such a property; it was removed
+/// rather than locked, because a correct one still answers a question the caller did not ask.
+/// </para>
+/// <para>
+/// The measurement a caller can rely on is the one in the returned <see cref="FileReadiness"/>,
+/// which describes the folder that was passed in and nothing else.
+/// <see cref="DatasetFolder.Measure"/> gives the full stamp for anyone needing the file count or
+/// the newest write, at the cost of walking the folder again -- which is what
+/// <c>TransferCoordinator</c> does. If that second walk ever shows up in a measurement, the fix
+/// is to return the stamp from <see cref="Check"/>, not to park it on the instance.
+/// </para>
 /// </remarks>
 public sealed class DatasetStabilityTracker
 {
@@ -41,9 +56,6 @@ public sealed class DatasetStabilityTracker
 
     /// <summary>How many folders are being watched.</summary>
     public int Count => _samples.Count;
-
-    /// <summary>The measurement a ready folder settled at, so a caller need not take it again.</summary>
-    public DatasetStamp? SettledAt { get; private set; }
 
     /// <summary>
     /// Examines a folder and reports whether it is ready to be archived.
@@ -100,7 +112,6 @@ public sealed class DatasetStabilityTracker
         }
 
         _samples.TryRemove(path, out _);
-        SettledAt = current;
 
         return FileReadiness.Ready(current.TotalBytes);
     }
