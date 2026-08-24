@@ -9,3 +9,19 @@ TestResults/
 *.trx
 *.coverage
 coverage.*.xml
+
+# Python-era leftovers. The Python application was removed after v26.1.0 and survives only in
+# git history, but a working copy from before then still has these sitting untracked -- roughly
+# twelve thousand files, which one `git add -A` will happily commit.
+.venv/
+.venv-win/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.spec
+
+# Serilog writes here when the application is run from the repository root.
+panoramabridge.log
