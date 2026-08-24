@@ -98,7 +98,16 @@ public sealed class FileStabilityTracker
         if (probe.Reason is ReadinessReason.Missing or ReadinessReason.Unreadable)
         {
             // Stop tracking: neither state improves by asking again.
+            //
+            // Both dictionaries, not just this one. A path that was a directory on an earlier
+            // pass has a sample in the dataset tracker, and instrument software renaming a .d
+            // into place is exactly how that happens: the next call finds Directory.Exists
+            // false, arrives here down the file branch, and would clear only the file sample.
+            // The gate's give-up path does not call Forget either -- it only does so for a file
+            // held open past the locked-file policy -- so the dataset entry survived for the
+            // life of the process, one per renamed or deleted acquisition.
             _samples.TryRemove(path, out _);
+            _datasets.Forget(path);
             return probe;
         }
 

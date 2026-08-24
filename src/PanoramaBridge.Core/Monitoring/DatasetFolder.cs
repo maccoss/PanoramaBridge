@@ -191,7 +191,35 @@ public static class DatasetFolder
         }
         catch (DirectoryNotFoundException)
         {
+            // Gone. Nothing is writing to a folder that is not there, and Measure will report it
+            // missing on the next pass.
             return false;
+        }
+        catch (IOException)
+        {
+            // The walk itself failed -- an SMB share blinking is the case that matters, and
+            // monitoring one is supported. Two things were wrong with letting this out.
+            //
+            // It escaped: DatasetStabilityTracker.Check has no handler, and ReadinessGate
+            // catches only OperationCanceledException, so one folder hiccuping stopped
+            // monitoring for every watched path. Measure, directly above, has caught IOException
+            // and UnauthorizedAccessException all along; this did not, and the asymmetry was the
+            // whole bug.
+            //
+            // And the answer is true rather than false. The question is "may anything still be
+            // writing in here", so failing to complete the walk is not evidence that nothing is.
+            // False would let an unprovable folder through on a satisfied quiet clock, which is
+            // the one outcome this application must never produce. True holds it back; the
+            // tracker reports Locked, the gate keeps retrying, and a share that stays broken is
+            // eventually handed back to the periodic check by the locked-file policy.
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Enumeration refused outright, which is not the same as the per-file case handled
+            // in the loop: there, one unreadable file among many is not evidence either way,
+            // while here nothing was examined at all. Unprovable, so held back.
+            return true;
         }
 
         return false;

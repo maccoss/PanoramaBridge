@@ -577,8 +577,9 @@ sending-early as the one quiet failure mode.
 1. **The conflict dialog.** The ledger already records `Conflict`, and the sweep deliberately
    leaves such a file alone until a person or a local change resolves it. Nothing yet asks.
 2. **`LegacyConfigImporter`**, then code signing.
-3. **Known defects in the dataset path**, listed in §9. None is a data-loss risk; the first is a
-   robustness one and worth doing before an instrument site reports it.
+3. **Known defects in the dataset path**, listed in §9. None is a data-loss risk, and none is
+   urgent -- the two that were (a walk failure taking monitoring down with it, and a leaked
+   tracker sample that could call a folder ready on one look) are fixed.
 
 ---
 
@@ -586,8 +587,6 @@ sending-early as the one quiet failure mode.
 
 | Item | Notes |
 |---|---|
-| **`IsAnythingWriting` can stop all monitoring** | Its outer `try` catches only `DirectoryNotFoundException`, while `DatasetFolder.Measure` directly above catches `IOException` and `UnauthorizedAccessException` too. An `IOException` raised by the enumeration itself — an SMB blip, and SMB monitoring is supported — escapes `Check`, and `ReadinessGate` catches only `OperationCanceledException`. One folder hiccups and monitoring stops for every watched path. |
-| **Dataset samples leak through the wrapper** | A `.d` renamed into place makes the next `FileStabilityTracker.Check` see `Directory.Exists` false, take the file branch, and clear only the file dictionary. The gate's give-up path does not call `Forget`, so the dataset tracker keeps its sample for the process lifetime — one per renamed or deleted acquisition. |
 | Growing message can print identical byte counts | `FileReadiness.Growing` is built from `TotalBytes` alone, so a folder whose file count or newest timestamp moved while its size held still reports "1,048,576 to 1,048,576 bytes" — exactly the case the three-number stamp exists to catch, described in the one way that hides it. |
 | An empty `.d` is re-walked forever | The `IsEmpty` branch returns `Settling` and rewrites the sample every pass. `Settling` resets the gate's give-up counter, which only `Locked` can trip, so an aborted acquisition leaving an empty folder is walked on the instrument's own disk for the process lifetime. |
 | Folder names vanish from user-facing messages | `FileReadiness.Missing` and `Locked` build their text with `Path.GetFileName`, which returns an empty string for a path ending in a separator. `DatasetFolder.ArchiveNameFor` trims both separators for exactly this reason and has a test for it; the tracker's messages do not. |

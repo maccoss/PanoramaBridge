@@ -19,6 +19,49 @@ public sealed class FileStabilityTrackerTests : IDisposable
 
     private string PathFor(string name) => Path.Combine(_directory, name);
 
+    // -- Acquisition folders routed to the dataset tracker ------------------------------------
+
+    [Fact]
+    public void A_folder_recreated_at_a_vanished_path_starts_its_clock_again()
+    {
+        // Renaming into place is how instrument and copy software finish an acquisition, and it
+        // takes a tracked .d down a path nothing else does: Check sees Directory.Exists false and
+        // goes down the file branch, which used to clear only the file sample and leave the
+        // dataset one behind. The gate does not call Forget here either -- it does that only for
+        // a file held open past the locked-file policy -- so the entry survived for the life of
+        // the process.
+        //
+        // The consequence is the reason this matters rather than being mere housekeeping. A new
+        // acquisition written to the same path, measuring identically, would match the stale
+        // sample instead of being a first sighting, and its quiet period would already have
+        // elapsed. The folder would be called ready on one look, which is the rule this whole
+        // class exists to hold.
+        var folder = PathFor("acquiring.d");
+        var written = new DateTime(2026, 8, 19, 9, 0, 0, DateTimeKind.Utc);
+
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "analysis.tdf"), "data");
+        File.SetLastWriteTimeUtc(Path.Combine(folder, "analysis.tdf"), written);
+
+        var tracker = NewTracker();
+        tracker.Check(folder).IsReady.ShouldBeFalse("first sighting");
+
+        Directory.Move(folder, folder + "-final");
+
+        // Neither a file nor a directory now, so this goes down the file branch.
+        tracker.Check(folder).IsReady.ShouldBeFalse();
+
+        Advance(TimeSpan.FromSeconds(11));
+
+        // Identical in all three numbers the stamp records, so a surviving sample would compare
+        // equal and fall straight through to the quiet check.
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "analysis.tdf"), "data");
+        File.SetLastWriteTimeUtc(Path.Combine(folder, "analysis.tdf"), written);
+
+        tracker.Check(folder).IsReady.ShouldBeFalse("one look is never enough");
+    }
+
     // -- An instrument holding a file open ----------------------------------------------------
 
     [Fact]
