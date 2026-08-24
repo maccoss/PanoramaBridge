@@ -45,17 +45,19 @@ time and update the heading; see `README.md` in this directory for the process.
 
 ## Bug Fixes
 
-- **Sciex acquisitions transferred almost none of their data.** If you asked for `.wiff`, you got
-  the `.wiff` and nothing else — and on a ZenoTOF 8600 dataset that is 38 MB of a 13.7 GB
-  acquisition. The spectra live in the `.wiff.scan` beside it, whose extension Windows reports as
-  `.scan`, so it was never matched. The transfer was recorded as **verified**, correctly as far as
-  it went: the one file that was sent did arrive intact.
+- **Companion files now travel with the acquisition they belong to.**
 
-  Companion files now travel with the acquisition they belong to. Asking for `.wiff` brings
-  `.wiff.scan` and the other `.wiff.*` files with it; asking for `.raw` is unaffected.
+  A Sciex acquisition is a set of siblings: `run.wiff` holds the metadata and `run.wiff.scan`
+  holds the spectra, and on a ZenoTOF 8600 dataset that is 38 MB against 8.2 GB. Windows reports
+  the extension of `run.wiff.scan` as `.scan`, so asking for `.wiff` matched the metadata and left
+  the data behind — and the result was recorded as verified, correctly as far as it went, because
+  the one file that was sent did arrive intact.
 
-  **If you have transferred Sciex data with an earlier version, it is incomplete on the server.**
-  Re-running the transfer will send what is missing.
+  Asking for `.wiff` now brings `.wiff.scan` and the other `.wiff.*` files with it. Asking for
+  `.raw` behaves exactly as before.
+
+  Nobody has yet used PanoramaBridge on Sciex data, so there is nothing on a server to repair;
+  this is about being right when somebody does.
 
   Two things are deliberately left behind: SQLite's `-journal`, `-wal` and `-shm` working files,
   which Sciex leaves beside every run, and the `.md5` checksum files PanoramaBridge writes itself.

@@ -92,9 +92,12 @@ These are **not** archived. Skyline opens a `.wiff` by reading the `.wiff.scan` 
 have to arrive as separate files, which is what PanoramaBridge does.
 
 The trap is in the naming. `Path.GetExtension("run.wiff.scan")` is `.scan`, not `.wiff.scan` — so
-a filter of `.wiff` used to match the 38 MB metadata file and nothing else. **A Sciex user
-transferred 0.3% of their acquisition and it was recorded as verified**, because the one file that
-was sent did arrive intact. Nothing revealed it until somebody tried to open the result.
+a filter of `.wiff` used to match the 38 MB metadata file and nothing else: **0.3% of the
+acquisition, recorded as verified**, because the one file that was sent did arrive intact. Nothing
+would have revealed it until somebody opened the result and found no spectra.
+
+No Sciex data has ever been transferred with PanoramaBridge, so this was caught before it cost
+anybody anything — by looking at a real dataset rather than at the format's documentation.
 
 A file is now accepted if removing trailing extensions one at a time reaches an extension that was
 asked for, so `.wiff` brings `.wiff.scan`, `.wiff.dia` and `.wiff.dia.quant` with it. The rule is
@@ -105,7 +108,14 @@ Two things are excluded from that walk: SQLite's `-journal`, `-wal` and `-shm` w
 the `.md5` sidecar PanoramaBridge writes itself — which would otherwise reach `run.raw` from
 `run.raw.md5` and upload our own bookkeeping as data.
 
-**One consequence to be aware of:** asking for `.wiff` now also brings the derived `.wiff.dia` and
-`.wiff.dia.quant`, which on this dataset is another 5.5 GB per acquisition. If that is not wanted,
-say so — the alternative is a list of exactly which companions are data, which needs someone who
-works with the format rather than a guess.
+**One consequence to be aware of:** the rule brings *every* `.wiff.*` sibling, including derived
+files. On the dataset above that means `.wiff.dia` and `.wiff.dia.quant`, another 5.5 GB per
+acquisition — but note those were written months after the run, by processing rather than by the
+instrument. A folder an instrument writes into would not normally contain them; the dataset
+examined here is an analysis folder, which is why they are in it.
+
+So this is unlikely to matter when monitoring an instrument, and would matter when pointing
+PanoramaBridge at a folder that also holds processed output. If that turns out to be a real
+nuisance, the fix is a way to exclude an extension rather than a hardcoded list of which
+companions count as data — the latter needs someone who works with the format, and would be wrong
+the moment a vendor adds a suffix.
