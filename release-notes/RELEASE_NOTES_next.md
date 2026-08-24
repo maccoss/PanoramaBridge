@@ -5,10 +5,12 @@ time and update the heading; see `README.md` in this directory for the process.
 
 ## New Features
 
-- **Bruker `.d` acquisitions transfer as a single archive.** Point PanoramaBridge at a folder your
+- **Folder acquisitions transfer as a single archive.** Point PanoramaBridge at a folder your
   instrument writes `.d` directories into, add `.d` to the file types, and each completed
   acquisition is packed into one `.d.zip` and uploaded — which is how they are already stored on
-  Panorama.
+  Panorama. The same applies to an Agilent `.d` and to a Waters `.raw` **directory**, which is a
+  folder where Thermo's `.raw` is a file; PanoramaBridge tells the two apart and handles each
+  correctly.
 
   This replaces the behaviour warned about in earlier notes, where the files inside a `.d` could be
   transferred individually and a folder still being written could arrive in pieces. A `.d` is now
@@ -27,21 +29,22 @@ time and update the heading; see `README.md` in this directory for the process.
   acquisition, checked before anything is written — if there is not enough, the transfer is
   declined and says so rather than filling the disk.
 
-  **Please tell us how this goes.** The MacCoss Lab runs Thermo instruments only, so this has been
-  built and tested against acquisitions shaped like a Bruker `.d` rather than against a real one.
-  The logic that decides a folder has finished, and the assumption that one `.d.zip` is what you
-  want on Panorama, are both reasoned from how these formats are documented and stored — not from
-  watching a real instrument write one.
+  **Please tell us how this goes.** The MacCoss Lab runs Thermo instruments only, so this was
+  built against real Bruker, Waters and Agilent acquisitions downloaded from Panorama Public
+  rather than against an instrument writing one. Recognising a folder, packing it, naming the
+  archive and getting it verified onto the server are all settled that way.
+
+  The one thing a downloaded acquisition cannot establish is **when a folder has finished being
+  written**, because it arrives already finished. That decision is still reasoned: three signals
+  have to settle together, which is modelled on how Bruker is described as closing the files in a
+  `.d` at different moments. If your instrument writes in some way that satisfies all three
+  part-way through, an acquisition could go early.
 
   Nothing here modifies or deletes an acquisition, and a folder is only ever sent whole, so the
-  ways this can be wrong are: sending one too early, refusing to send one at all, or packing
-  something Panorama does not want. The log records what each folder measured — file count, total
-  bytes, newest timestamp — so a report of any of those can be acted on. **Help → Application
-  logs.**
-
-  The same mechanism covers a Waters `.raw` **directory**, which is a folder where Thermo's `.raw`
-  is a file; PanoramaBridge tells them apart and handles each correctly. That path is even less
-  exercised than the Bruker one.
+  ways this can be wrong are bounded: sending one too early, refusing to send one at all, or
+  packing something Panorama does not want. The log records what each folder measured — file
+  count, total bytes, newest timestamp — so a report of any of those can be acted on.
+  **Help → Application logs.**
 
 ## Bug Fixes
 
@@ -56,11 +59,17 @@ time and update the heading; see `README.md` in this directory for the process.
   Asking for `.wiff` now brings `.wiff.scan` and the other `.wiff.*` files with it. Asking for
   `.raw` behaves exactly as before.
 
-  Nobody has yet used PanoramaBridge on Sciex data, so there is nothing on a server to repair;
-  this is about being right when somebody does.
+  This was found in a real ZenoTOF 8600 dataset. Nobody has yet used PanoramaBridge on Sciex data,
+  so there is nothing on a server to repair; it is about being right when somebody does.
 
   Two things are deliberately left behind: SQLite's `-journal`, `-wal` and `-shm` working files,
   which Sciex leaves beside every run, and the `.md5` checksum files PanoramaBridge writes itself.
+
+- **Leaving the file types box empty no longer uploads PanoramaBridge's own checksum files.**
+  An empty box means "every acquisition", and it was taking every *file* — including the `.md5`
+  sidecars PanoramaBridge writes beside its own uploads, and the working files a vendor leaves
+  next to a run while it is still being written. Those are excluded now, exactly as they are when
+  the box has extensions in it.
 
 - **"Restart now" could stop working for the rest of a session.** Reported from an instrument
   where the update banner appeared, the update downloaded, and pressing **Restart now** did
@@ -76,6 +85,10 @@ time and update the heading; see `README.md` in this directory for the process.
   broken when they decline.
 
 ## Performance
+
+- **Packing a folder acquisition allocates one buffer instead of one per file.** A `.d` holds
+  thousands of small files, and a megabyte allocated for each of them lands on the large object
+  heap — garbage collection an instrument computer should not be paying for.
 
 ## Breaking Changes
 

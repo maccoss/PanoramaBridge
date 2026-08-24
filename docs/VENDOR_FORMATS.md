@@ -1,11 +1,15 @@
 # Vendor formats: what is verified, and what is assumed
 
-The MacCoss Lab runs **Thermo instruments only**. Everything PanoramaBridge does for any other
-vendor is reasoned from documentation, from what is already stored on Panorama, and from the
-shape of the format — not from watching that instrument write a file.
+The MacCoss Lab runs **Thermo instruments only**. Every other vendor's format has been exercised
+against real acquisitions downloaded from Panorama Public — Bruker, Waters and Agilent folders,
+and a Sciex dataset with its companions — rather than against an instrument writing one. The data
+is real; the acquisition in progress is not.
 
-This page says which is which, so nobody has to guess how much to trust a given path, and so a
-report from someone with the instrument we lack has somewhere to land.
+That distinction is the whole of this page. A downloaded folder is already finished, so it
+establishes everything about recognising, packing, naming and transferring an acquisition, and
+nothing at all about deciding when one has stopped being written. The first set is settled. The
+second is not, and cannot be until somebody with the instrument watches it happen — which is why
+a report has somewhere to land at the bottom of this page.
 
 ---
 
@@ -14,32 +18,39 @@ report from someone with the instrument we lack has somewhere to land.
 | Vendor | Shape | Status |
 |---|---|---|
 | **Thermo** `.raw` | One file | **Verified against 47 real acquisitions, 313 GB**, 2020–2026, up to 9.9 GB, all format revision 66. Includes the truncation check. |
-| **Bruker** `.d` | Directory → one `.d.zip` | **Naming confirmed** against real data on Panorama Public; the completion logic is still untested against a real instrument. |
-| **Waters** `.raw` | Directory → one `.raw.zip` | **Naming confirmed** (`new_LG_6679.raw.zip`); completion logic untested. |
-| **Agilent** `.d` | Directory → one `.d.zip` | **Naming confirmed** (`LPK15_11260-S10-R1.d.zip`, 547 of them); completion logic untested. |
-| **Sciex** `.wiff` | Files, with companions | **Companion handling verified** against a real ZenoTOF 8600 dataset. Not archived: the files stay separate, as Skyline expects. |
+| **Bruker** `.d` | Directory → one `.d.zip` | **Packing and naming verified** against real acquisitions from Panorama Public. Completion detection untested against a live instrument. |
+| **Waters** `.raw` | Directory → one `.raw.zip` | **Packing and naming verified** (`new_LG_6679.raw.zip`). Completion detection untested against a live instrument. |
+| **Agilent** `.d` | Directory → one `.d.zip` | **Packing and naming verified** (`LPK15_11260-S10-R1.d.zip`, 547 of them). Completion detection untested against a live instrument. |
+| **Sciex** `.wiff` | Files, with companions | **Verified against a real ZenoTOF 8600 dataset**, companions included. Not archived: the files stay separate, as Skyline expects. |
 
-## What "assumed" actually means
+## What is settled, and what is not
 
-For a directory acquisition, three things are reasoned rather than observed.
+For a directory acquisition, three things were once reasoned rather than observed. Two are now
+settled; the third is the one that matters most, and it is the one a downloaded folder cannot
+settle.
 
-1. **That one archive is what Panorama wants.** This is now settled rather than assumed. Panorama
-   Public stores all three directory formats as `<folder name>.zip`, which is exactly what
-   PanoramaBridge produces:
+1. **That one archive is what Panorama wants.** Settled. Panorama Public stores all three
+   directory formats as `<folder name>.zip`, which is exactly what PanoramaBridge produces:
 
    | Vendor | Example on Panorama Public |
    |---|---|
    | Bruker | `250314_HeLa_100ng_90min_DIA_01_S2-A1_1_507.d.zip` |
    | Waters | `new_LG_6679.raw.zip` |
    | Agilent | `LPK15_11260-S10-R1.d.zip` |
-2. **That the folder has finished being written.** Three signals must settle together — nothing
-   inside open for writing, and size, file count and newest timestamp all unchanged for the quiet
-   period. This is modelled on how Bruker is described as finishing the files in a `.d` at
-   different moments. If some instrument writes in a way that satisfies all three part-way
-   through, an acquisition could be sent early.
-3. **That storing rather than compressing is right.** Bruker's binary data is already compressed,
-   so deflate would cost processor time on an instrument computer for very little. If a format
-   turns out to compress well, this is worth revisiting — with a measurement.
+2. **That the archive is one Panorama and Skyline will read.** Settled for what was tested. Real
+   Bruker, Waters and Agilent acquisitions were packed and transferred by this code, and the
+   Sciex dataset went with its companions.
+3. **That the folder has finished being written.** **Still assumed**, and untouched by either of
+   the above: a folder downloaded from Panorama Public is complete before PanoramaBridge ever
+   sees it, so nothing about it exercises the decision to wait. Three signals must settle
+   together — nothing inside open for writing, and size, file count and newest timestamp all
+   unchanged for the quiet period. This is modelled on how Bruker is described as finishing the
+   files in a `.d` at different moments. If some instrument writes in a way that satisfies all
+   three part-way through, an acquisition could be sent early.
+
+Storing rather than compressing is a judgement rather than an assumption: Bruker's binary data is
+already compressed, so deflate would cost processor time on an instrument computer for very
+little. If a format turns out to compress well, this is worth revisiting — with a measurement.
 
 ## How it can be wrong, and how bad each is
 
@@ -96,8 +107,9 @@ a filter of `.wiff` used to match the 38 MB metadata file and nothing else: **0.
 acquisition, recorded as verified**, because the one file that was sent did arrive intact. Nothing
 would have revealed it until somebody opened the result and found no spectra.
 
-No Sciex data has ever been transferred with PanoramaBridge, so this was caught before it cost
-anybody anything — by looking at a real dataset rather than at the format's documentation.
+No Sciex data had been transferred with PanoramaBridge before this, so there is nothing on a
+server to repair — it was caught by looking at a real dataset rather than at the format's
+documentation.
 
 A file is now accepted if removing trailing extensions one at a time reaches an extension that was
 asked for, so `.wiff` brings `.wiff.scan`, `.wiff.dia` and `.wiff.dia.quant` with it. The rule is
