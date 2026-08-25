@@ -29,15 +29,15 @@ time and update the heading; see `README.md` in this directory for the process.
   Thermo `.raw` that ends before its data does — offers only **Keep**. Replacing a good copy on
   the server with a short one is the outcome that check exists to prevent.
 
+- **A new choice for occupied destinations: send mine alongside it.** Under **When a different
+  file is already on the server**, alongside *Ask me*, *Leave the copy on the server alone* and
+  *Replace the copy on the server*, there is now **Send mine alongside it, under a new name**. The
+  file is sent as `run (2).raw` without asking, and the copy already there is left as it is.
+
+  The behaviour existed in the settings file but had no button and never worked, so nothing
+  changes for anyone who has not just gone looking for it.
+
 ## Bug Fixes
-
-- **The "Rename" conflict setting did nothing.** Setting **When the destination is occupied** to
-  rename has, since the first release, behaved exactly like **Ask**: files were held waiting for a
-  decision rather than being sent under a new name, and nothing said so. It now does what it says
-  — the file is sent alongside under the first free name, without asking.
-
-  If you had this set and wondered why files kept collecting under **Needs attention**, that is
-  why. Those files are still there and can be released with the buttons described above.
 
 ## Performance
 

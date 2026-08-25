@@ -22,7 +22,7 @@ namespace PanoramaBridge.Core.Storage;
 /// </remarks>
 public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposable
 {
-    private const int CurrentSchemaVersion = 3;
+    private const int CurrentSchemaVersion = 4;
 
     private readonly string _connectionString;
 
@@ -88,17 +88,17 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             INSERT INTO uploads
               (local_path, remote_path, size, mtime_utc, md5, sha256,
                state, verify_method, verified_utc, attempts, last_error, is_dataset,
-               raw_check, resolution, rename_to)
+               raw_check, resolution, rename_to, conflict_kind)
             VALUES
               ($path, $remote, $size, $mtime, $md5, $sha256,
                $state, $verify, $verified, $attempts, $error, $dataset, $rawcheck,
-               $resolution, $renameto)
+               $resolution, $renameto, $kind)
             ON CONFLICT(local_path) DO UPDATE SET
               remote_path = $remote, size = $size, mtime_utc = $mtime,
               md5 = $md5, sha256 = $sha256, state = $state, verify_method = $verify,
               verified_utc = $verified, attempts = $attempts, last_error = $error,
               is_dataset = $dataset, raw_check = $rawcheck,
-              resolution = $resolution, rename_to = $renameto;
+              resolution = $resolution, rename_to = $renameto, conflict_kind = $kind;
             """,
             command =>
             {
@@ -111,6 +111,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                 command.Parameters.AddWithValue(
                     "$rawcheck", record.RawCheck ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue("$resolution", (int)record.Resolution);
+                command.Parameters.AddWithValue("$kind", (int)record.ConflictKind);
                 command.Parameters.AddWithValue(
                     "$renameto", record.RenameTo ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue("$state", (int)record.State);
@@ -158,11 +159,17 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                    resolution = $resolution,
                    rename_to  = $renameto,
                    last_error = $error
-             WHERE local_path = $path;
+             WHERE local_path = $path
+               AND state      = $conflict;
             """,
             command =>
             {
                 command.Parameters.AddWithValue("$path", localPath);
+
+                // Only a row still held. The Uploads tab is a snapshot that can be minutes old,
+                // and a sweep may have re-offered one of these files since: writing Declined
+                // underneath a running upload would flip a transfer's state from beneath it.
+                command.Parameters.AddWithValue("$conflict", (int)TransferState.Conflict);
                 command.Parameters.AddWithValue(
                     "$state", (int)(keep ? TransferState.Declined : TransferState.Discovered));
                 command.Parameters.AddWithValue(
@@ -447,7 +454,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         """
         SELECT local_path, remote_path, size, mtime_utc, md5, sha256,
                state, verify_method, verified_utc, attempts, last_error, is_dataset,
-               raw_check, resolution, rename_to
+               raw_check, resolution, rename_to, conflict_kind
         """;
 
     private static UploadRecord Read(SqliteDataReader reader) => new(
@@ -467,7 +474,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         IsDataset: reader.GetInt32(11) != 0,
         RawCheck: reader.IsDBNull(12) ? null : reader.GetString(12),
         Resolution: (ConflictResolution)reader.GetInt32(13),
-        RenameTo: reader.IsDBNull(14) ? null : reader.GetString(14));
+        RenameTo: reader.IsDBNull(14) ? null : reader.GetString(14),
+        ConflictKind: (ConflictKind)reader.GetInt32(15));
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {
@@ -522,7 +530,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
               is_dataset    INTEGER NOT NULL DEFAULT 0,
               raw_check     TEXT,
               resolution    INTEGER NOT NULL DEFAULT 0,
-              rename_to     TEXT
+              rename_to     TEXT,
+              conflict_kind INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS ix_uploads_state   ON uploads(state);
@@ -585,6 +594,16 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         if (from < 3 && !ColumnExists(command, "uploads", "rename_to"))
         {
             command.CommandText = "ALTER TABLE uploads ADD COLUMN rename_to TEXT;";
+            command.ExecuteNonQuery();
+        }
+
+        if (from < 4 && !ColumnExists(command, "uploads", "conflict_kind"))
+        {
+            // Existing rows take Unknown. A conflict recorded by an older build therefore offers
+            // every choice, which is the pre-existing behaviour rather than a new risk: those
+            // rows were held before any of this existed.
+            command.CommandText =
+                "ALTER TABLE uploads ADD COLUMN conflict_kind INTEGER NOT NULL DEFAULT 0;";
             command.ExecuteNonQuery();
         }
     }

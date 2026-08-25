@@ -38,7 +38,10 @@ public sealed class UploadsConflictTests : IAsyncDisposable
             Attempts: 0,
             LastError: reason,
             IsDataset: false,
-            RawCheck: rawCheck));
+            RawCheck: rawCheck,
+            ConflictKind: rawCheck is null
+                ? ConflictKind.DestinationOccupied
+                : ConflictKind.LocalFileDamaged));
 
         return path;
     }
@@ -150,11 +153,40 @@ public sealed class UploadsConflictTests : IAsyncDisposable
 
         await view.ResolveRenameCommand.ExecuteAsync(null);
 
-        view.HasRenameProblem.ShouldBeTrue();
-        view.RenameProblem.ShouldContain("no connection");
+        view.HasResolveProblem.ShouldBeTrue();
+        view.ResolveProblem.ShouldContain("no connection");
 
         // And nothing was decided on the strength of a name nobody could check.
         (await _store.GetAsync(@"C:\data\a.raw"))!.State.ShouldBe(TransferState.Conflict);
+    }
+
+    [Fact]
+    public async Task Refusing_to_overwrite_a_damaged_file_says_so()
+    {
+        // Doing nothing silently reads as a broken button rather than as the guard it is.
+        await ConflictAsync("short.raw", rawCheck: "Incomplete: the file ends before its data does.");
+
+        var view = await LoadedAsync();
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+
+        view.HasResolveProblem.ShouldBeTrue();
+        view.ResolveProblem.ShouldContain("damaged");
+    }
+
+    [Fact]
+    public async Task A_message_does_not_outlive_the_situation_that_produced_it()
+    {
+        await ConflictAsync("a.raw");
+
+        var view = await LoadedAsync();
+        await view.ResolveRenameCommand.ExecuteAsync(null);
+        view.HasResolveProblem.ShouldBeTrue("no connection");
+
+        // Keep succeeds. A red line still claiming there is no connection, beside a list that has
+        // just changed, is worse than no message at all.
+        await view.ResolveKeepCommand.ExecuteAsync(null);
+
+        view.HasResolveProblem.ShouldBeFalse();
     }
 
     public ValueTask DisposeAsync() => _store.DisposeAsync();

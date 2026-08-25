@@ -353,7 +353,11 @@ public sealed class ReconciliationScanner
         try
         {
             destination = PathSafety
-                .ResolveDestination(_options.Root, stamp.Path, _options.DestinationRoot)
+                .ResolveDestination(
+                    _options.Root,
+                    stamp.Path,
+                    _options.DestinationRoot,
+                    record.DestinationLeaf)
                 .ToEncodedString();
         }
         catch (ArgumentException)

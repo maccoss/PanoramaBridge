@@ -56,6 +56,33 @@ public enum TransferState
     Declined = 10,
 }
 
+/// <summary>Why a row is being held.</summary>
+/// <remarks>
+/// Two very different situations reach <see cref="TransferState.Conflict"/> and they want
+/// opposite things, so which one it is has to be recorded rather than inferred. It was inferred
+/// at first, by comparing the held reason against the raw-check summary and calling them the same
+/// thing when the strings matched -- which they did only because one was assigned from the other.
+/// Rewording either, or prefixing one, would have silently turned a damaged acquisition back into
+/// something the Overwrite button would send, and no test would have failed.
+/// </remarks>
+public enum ConflictKind
+{
+    /// <summary>Not held, or held before this was recorded.</summary>
+    Unknown = 0,
+
+    /// <summary>Something different occupies the destination.</summary>
+    DestinationOccupied = 1,
+
+    /// <summary>
+    /// The local file is damaged. Reading it established that it ends before its data does.
+    /// </summary>
+    /// <remarks>
+    /// Replacing a good remote copy with this one is the outcome the truncation check exists to
+    /// prevent, so the only decision offered is to keep what is on the server.
+    /// </remarks>
+    LocalFileDamaged = 2,
+}
+
 /// <summary>What a person decided to do about a conflict.</summary>
 /// <remarks>
 /// Stored on the row rather than held in memory, so a decision survives a restart: an
@@ -165,10 +192,31 @@ public sealed record UploadRecord(
     bool IsDataset,
     string? RawCheck = null,
     ConflictResolution Resolution = ConflictResolution.None,
-    string? RenameTo = null)
+    string? RenameTo = null,
+    ConflictKind ConflictKind = ConflictKind.Unknown)
 {
     /// <summary>True when a person has decided what to do and the engine has not yet acted.</summary>
     public bool HasPendingResolution => Resolution != ConflictResolution.None;
+
+    /// <summary>
+    /// The leaf name this file is sent under, or null when it goes under its own.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="RenameTo"/> outlives the decision that set it, which is what stops a renamed
+    /// file being sent for ever. Everything that asks "is this file accounted for?" works out
+    /// where the file <em>would</em> go, and for a renamed one that is not where it went: the
+    /// sweep compared a row verified at <c>run (2).raw</c> against a destination of
+    /// <c>run.raw</c>, decided the row described somewhere else, and offered the file again --
+    /// whereupon the ladder found <c>run.raw</c> still occupied and sent it as <c>run (3).raw</c>.
+    /// Then <c>(4)</c>, on every sweep, for ever. Nothing bounded it, because the attempt limit
+    /// only applies to rows that failed.
+    /// <para>
+    /// So the name is a property of where this file belongs now, not an instruction waiting to be
+    /// carried out. If the local file changes it is sent again, to the same renamed destination,
+    /// which is what somebody who chose "send it alongside" meant.
+    /// </para>
+    /// </remarks>
+    public string? DestinationLeaf => RenameTo;
 
     /// <summary>
     /// True when this file is known to be safely on the server, unchanged since.

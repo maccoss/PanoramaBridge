@@ -291,10 +291,13 @@ public sealed class TransferCoordinator : IAsyncDisposable
             return;
         }
 
+        // The renamed leaf, when this file has one. The sweep resolves the same way, and the
+        // two agreeing is what keeps a renamed file from looking unaccounted-for on every pass.
         var destination = PathSafety.ResolveDestination(
             _options.LocalBaseDirectory,
             localPath,
-            _options.DestinationRoot);
+            _options.DestinationRoot,
+            decided?.DestinationLeaf);
 
         var encoded = destination.ToEncodedString();
 
@@ -348,6 +351,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                     {
                         State = TransferState.Conflict,
                         LastError = rawCheck.Summary,
+                        ConflictKind = ConflictKind.LocalFileDamaged,
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -405,6 +409,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                         {
                             State = TransferState.Conflict,
                             LastError = decision.Reason,
+                            ConflictKind = ConflictKind.DestinationOccupied,
                             Md5 = decision.Hashes?.Md5 ?? record.Md5,
                             Sha256 = decision.Hashes?.Sha256 ?? record.Sha256,
                         },
@@ -675,6 +680,25 @@ public sealed class TransferCoordinator : IAsyncDisposable
             _options.DestinationRoot,
             free);
 
+        // Checked before sending, exactly as the path a person drives is. The names came from a
+        // snapshot that may be minutes old, and this path runs unattended and continuously with
+        // nobody watching -- so it is the one where quietly replacing somebody else's file would
+        // go unnoticed longest. The manual path got this guard first; leaving it off here was an
+        // inconsistency, not a decision.
+        var stillFree = await _decisions
+            .DecideAsync(stamp, renamed, ConflictPolicy.Ask, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (stillFree.Action != UploadAction.Upload)
+        {
+            _log.LogWarning(
+                "{Path}: '{Free}' turned out to be occupied as well; holding it instead.",
+                record.LocalPath,
+                free);
+
+            return false;
+        }
+
         _log.LogInformation(
             "{Path}: '{Taken}' is occupied, sending it as '{Free}' by policy.",
             record.LocalPath,
@@ -685,6 +709,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
         {
             RemotePath = renamed.ToEncodedString(),
             State = TransferState.Queued,
+            RenameTo = free,
         };
 
         await _store.SaveAsync(queued, cancellationToken).ConfigureAwait(false);
@@ -758,6 +783,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                             RemotePath = encoded,
                             State = TransferState.Conflict,
                             LastError = reason,
+                            ConflictKind = ConflictKind.DestinationOccupied,
                             Resolution = ConflictResolution.None,
                             RenameTo = null,
                         },
@@ -777,8 +803,10 @@ public sealed class TransferCoordinator : IAsyncDisposable
             LastWriteUnixMs = stamp.LastWriteUnixMs,
             State = TransferState.Queued,
             LastError = null,
+
+            // The instruction is spent. The name it chose is kept: it is where this file lives
+            // now, and dropping it is what made a renamed file be sent again on every sweep.
             Resolution = ConflictResolution.None,
-            RenameTo = null,
         };
 
         await _store.SaveAsync(queued, cancellationToken).ConfigureAwait(false);

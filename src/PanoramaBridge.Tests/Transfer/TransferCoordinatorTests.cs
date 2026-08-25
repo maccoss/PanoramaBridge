@@ -176,7 +176,15 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         // destination it was refused at would be worse than no row.
         // Percent-encoded, parentheses included, which is RemotePath doing its job.
         after.RemotePath.ShouldEndWith("run%20%282%29.raw");
-        after.RenameTo.ShouldBeNull();
+
+        // The name is kept, not cleared. It is where this file lives now, and everything that
+        // asks "is this accounted for?" resolves the destination through it. Clearing it made the
+        // sweep compare a row verified at run (2).raw against a destination of run.raw, decide
+        // the row described somewhere else, and offer the file again -- for ever.
+        after.RenameTo.ShouldBe("run (2).raw");
+
+        // Spent, though: the instruction was carried out.
+        after.Resolution.ShouldBe(ConflictResolution.None);
     }
 
     [Fact]

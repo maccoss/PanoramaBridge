@@ -88,6 +88,42 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         return (result, offered);
     }
 
+    [Fact]
+    public async Task A_file_sent_under_a_new_name_is_not_offered_again()
+    {
+        // A renamed acquisition is verified at "run (2).raw", while the sweep works out where the
+        // file *would* go, which is always "run.raw". Comparing the two says the row does not
+        // describe this destination, so the file is offered again -- and the ladder finds run.raw
+        // still occupied, renames it to run (3).raw, and does the whole thing again on the next
+        // sweep. A seven-gigabyte acquisition re-sent every quarter of an hour, for ever, filling
+        // the destination with copies. Nothing bounds it: the attempt limit only applies to rows
+        // that failed.
+        var path = Write("run.raw");
+
+        var stamp = LocalFileStamp.FromFile(path);
+
+        await _store.SaveAsync(new UploadRecord(
+            LocalPath: stamp.Path,
+            RemotePath: Destination.Append("run (2).raw").ToEncodedString(),
+            Length: stamp.Length,
+            LastWriteUnixMs: stamp.LastWriteUnixMs,
+            Md5: "d41d8cd98f00b204e9800998ecf8427e",
+            Sha256: null,
+            State: TransferState.Verified,
+            VerifyMethod: VerifyMethod.ServerMd5,
+            VerifiedUtc: DateTimeOffset.UtcNow,
+            Attempts: 1,
+            LastError: null,
+            IsDataset: false,
+            RawCheck: null,
+            Resolution: ConflictResolution.None,
+            RenameTo: "run (2).raw"));
+
+        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
+
+        offered.ShouldBeEmpty();
+    }
+
     // -- directory acquisitions ----------------------------------------------------------------
 
     [Fact]

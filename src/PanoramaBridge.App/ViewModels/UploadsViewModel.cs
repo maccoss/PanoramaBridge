@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net.Http;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text;
@@ -104,9 +105,7 @@ public sealed partial class UploadRowViewModel : ObservableObject
     /// </remarks>
     public bool IsLocalFileProblem =>
         Record.State == TransferState.Conflict
-        && Record.RawCheck is { Length: > 0 }
-        && Record.LastError is { Length: > 0 }
-        && string.Equals(Record.RawCheck, Record.LastError, StringComparison.Ordinal);
+        && Record.ConflictKind == ConflictKind.LocalFileDamaged;
 
     /// <summary>Whether this row is picked for a bulk decision.</summary>
     [ObservableProperty]
@@ -211,13 +210,17 @@ public sealed partial class UploadsViewModel : ObservableObject
     [ObservableProperty]
     private UploadFilter _filter = UploadFilter.All;
 
-    /// <summary>Why a rename could not be worked out, for the view to show.</summary>
+    /// <summary>What stopped a decision being carried out, for the view to show.</summary>
+    /// <remarks>
+    /// Cleared on every reload, so a message never outlives the situation that produced it: an
+    /// offline warning left standing beside a list that has since changed is worse than none.
+    /// </remarks>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasRenameProblem))]
-    private string _renameProblem = string.Empty;
+    [NotifyPropertyChangedFor(nameof(HasResolveProblem))]
+    private string _resolveProblem = string.Empty;
 
-    /// <summary>True when there is a rename problem worth a line of red text.</summary>
-    public bool HasRenameProblem => RenameProblem.Length > 0;
+    /// <summary>True when there is something worth a line of red text.</summary>
+    public bool HasResolveProblem => ResolveProblem.Length > 0;
 
     /// <summary>Search text applied to the file name.</summary>
     [ObservableProperty]
@@ -235,6 +238,8 @@ public sealed partial class UploadsViewModel : ObservableObject
     public async Task RefreshAsync()
     {
         IsLoading = true;
+        ResolveProblem = string.Empty;
+
         try
         {
             var states = Filter switch
@@ -289,7 +294,10 @@ public sealed partial class UploadsViewModel : ObservableObject
     {
         // Deliberately not offered for a damaged local file: that would push a short acquisition
         // over a good remote copy.
-        foreach (var row in Targets().Where(r => !r.IsLocalFileProblem))
+        var targets = Targets();
+        var eligible = targets.Where(r => !r.IsLocalFileProblem).ToArray();
+
+        foreach (var row in eligible)
         {
             await _store
                 .ResolveConflictAsync(row.Record.LocalPath, ConflictResolution.Overwrite)
@@ -297,6 +305,16 @@ public sealed partial class UploadsViewModel : ObservableObject
         }
 
         await RefreshAsync().ConfigureAwait(true);
+
+        // Refresh clears this, so it is set afterwards. Doing nothing silently reads as a broken
+        // button rather than as the guard it is.
+        if (eligible.Length == 0 && targets.Count > 0)
+        {
+            ResolveProblem =
+                "Nothing was replaced. Every file picked is held because its own contents are "
+                + "damaged, and replacing a good copy on the server with a short one is what "
+                + "that check exists to prevent. Keep is the choice that applies.";
+        }
     }
 
     /// <summary>Keeps what is on the server and stops offering the local file.</summary>
@@ -336,13 +354,11 @@ public sealed partial class UploadsViewModel : ObservableObject
 
         if (client is null)
         {
-            RenameProblem =
+            ResolveProblem =
                 "A free name has to be checked against the server, and there is no connection at "
                 + "the moment. Test the connection on the Server tab, then try again.";
             return;
         }
-
-        RenameProblem = string.Empty;
 
         var taken = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var proposals = new List<(UploadRowViewModel Row, string Name)>();
@@ -372,7 +388,20 @@ public sealed partial class UploadsViewModel : ObservableObject
                 }
                 catch (WebDavException ex)
                 {
-                    RenameProblem = ex.ToUserMessage();
+                    ResolveProblem = ex.ToUserMessage();
+                    return;
+                }
+                catch (Exception ex) when (ex is HttpRequestException or IOException
+                    or OperationCanceledException)
+                {
+                    // The client is only null before the first connection, so an unplugged
+                    // network gives a live client and a raw transport failure. Caught here
+                    // because it is the common case, and because the alternative is the generic
+                    // crash box carrying "No such host is known" -- which is not a sentence
+                    // written for somebody looking at a stalled transfer.
+                    ResolveProblem =
+                        "The server could not be reached, so a free name could not be checked. "
+                        + $"Try again once the connection is back. ({ex.Message})";
                     return;
                 }
 
@@ -380,6 +409,19 @@ public sealed partial class UploadsViewModel : ObservableObject
             }
 
             var proposed = ConflictNames.NextFree(path.Name, names);
+
+            // The suffix lengthens the name, and the destination has a limit. Refusing here keeps
+            // the failure attached to the decision that caused it, instead of turning into a
+            // Failed row minutes later with a message about character counts.
+            var usable = PathSafety.ValidateSegment(proposed);
+
+            if (!usable.IsValid)
+            {
+                ResolveProblem =
+                    $"'{path.Name}' cannot be renamed automatically: {usable.Message} "
+                    + "Rename it on disk, or keep the copy on the server.";
+                return;
+            }
 
             // Remembered, so the next file in this batch does not propose the same name.
             names.Add(proposed);

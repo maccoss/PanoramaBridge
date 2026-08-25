@@ -111,9 +111,12 @@
                     <RadioButton Margin="{StaticResource RowMargin}" GroupName="Conflict"
                                  Content="Leave the copy on the server alone"
                                  IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Skip}" />
-                    <RadioButton GroupName="Conflict"
+                    <RadioButton Margin="{StaticResource RowMargin}" GroupName="Conflict"
                                  Content="Replace the copy on the server"
                                  IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Overwrite}" />
+                    <RadioButton GroupName="Conflict"
+                                 Content="Send mine alongside it, under a new name"
+                                 IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Rename}" />
                     <TextBlock Style="{StaticResource Hint}"
                                Text="This only applies to a file nobody can account for. Editing a file that PanoramaBridge uploaded itself is treated as a new version and re-sent without asking." />
                 </StackPanel>

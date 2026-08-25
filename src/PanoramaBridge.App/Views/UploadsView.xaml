@@ -68,8 +68,8 @@
                                Text="A file whose own contents are damaged is held here too, and only Keep applies to it: replacing a good remote copy with a short one is the thing this check exists to prevent." />
 
                     <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Foreground="#A32100"
-                               Text="{Binding RenameProblem}"
-                               Visibility="{Binding HasRenameProblem, Converter={StaticResource BooleanToVisibility}}" />
+                               Text="{Binding ResolveProblem}"
+                               Visibility="{Binding HasResolveProblem, Converter={StaticResource BooleanToVisibility}}" />
                 </StackPanel>
             </Border>
         </StackPanel>
@@ -102,25 +102,29 @@
             </DataGrid.RowStyle>
 
             <DataGrid.Columns>
-                <!--
-                    Editable in an otherwise read-only grid, which is why IsReadOnly is set on the
-                    column rather than left to inherit. Ticking a row is not editing the ledger.
+<!--
+                    A template column with a real CheckBox, not DataGridCheckBoxColumn.
+
+                    This grid is IsReadOnly, and DataGrid.IsReadOnly short-circuits BeginEdit for
+                    every cell in it: a column can only be more restrictive than the grid, never
+                    less, so IsReadOnly="False" on the column achieves nothing. The check box a
+                    DataGridCheckBoxColumn renders outside edit mode is not hit-testable either,
+                    so the tick silently never registered. And because "nothing ticked" means
+                    "all of them", pressing Replace would then have overwritten every conflicted
+                    file on the server rather than the one that was aimed at.
+
+                    A CheckBox in a template is an ordinary control and needs no edit mode.
                 -->
-                <DataGridCheckBoxColumn Header="" Width="34" IsReadOnly="False"
-                                        Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}">
-                    <DataGridCheckBoxColumn.CellStyle>
-                        <Style TargetType="DataGridCell">
-                            <Setter Property="ToolTip" Value="Pick this file to decide about" />
-                            <Style.Triggers>
-                                <!-- Only a conflict is something a person can decide about. -->
-                                <DataTrigger Binding="{Binding CanResolve}" Value="False">
-                                    <Setter Property="IsEnabled" Value="False" />
-                                    <Setter Property="ToolTip" Value="{x:Null}" />
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </DataGridCheckBoxColumn.CellStyle>
-                </DataGridCheckBoxColumn>
+                <DataGridTemplateColumn Header="" Width="34">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      IsEnabled="{Binding CanResolve}"
+                                      ToolTip="Pick this file to decide about" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
 
                 <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="2*" />
                 <DataGridTextColumn Header="State" Binding="{Binding State}" Width="130" />

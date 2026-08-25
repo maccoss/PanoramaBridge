@@ -137,5 +137,20 @@ public sealed class ConflictResolutionStoreTests : IAsyncDisposable
             () => _store.ResolveConflictAsync(Path, ConflictResolution.Rename, name));
     }
 
+    [Fact]
+    public async Task A_row_the_engine_has_moved_on_to_is_left_alone()
+    {
+        await ConflictedAsync();
+
+        // The Uploads tab is a snapshot. A sweep can re-offer a file between the list being drawn
+        // and a button being pressed, and writing Declined underneath a running upload would flip
+        // a transfer's state from beneath it -- then be overwritten again when it finishes.
+        await _store.SetStateAsync(Path, TransferState.Uploading);
+
+        await _store.ResolveConflictAsync(Path, ConflictResolution.Keep);
+
+        (await _store.GetAsync(Path))!.State.ShouldBe(TransferState.Uploading);
+    }
+
     public ValueTask DisposeAsync() => _store.DisposeAsync();
 }
