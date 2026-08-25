@@ -342,7 +342,10 @@ public sealed class UploadsConflictTests : IAsyncDisposable
         await view.ResolveOverwriteCommand.ExecuteAsync(null);
 
         view.HasResolveProblem.ShouldBeTrue();
-        view.ResolveProblem.ShouldContain("not changed");
+
+        // Named for what actually happened. "not changed" was satisfied by a message blaming a
+        // transfer that never ran, so it green-lit the wrong explanation.
+        view.ResolveProblem.ShouldContain("no longer held");
     }
 
     [Fact]
@@ -498,7 +501,54 @@ public sealed class UploadsConflictTests : IAsyncDisposable
 
         await view.ResolveRenameCommand.ExecuteAsync(null);
 
-        view.ResolveProblem.ShouldContain("not changed");
+        // The damaged file must be named as damaged. Asserting only "not changed" accepted a
+        // message telling the user a transfer had picked it up, which is definitively wrong and
+        // sends them looking for something that never happened.
+        view.ResolveProblem.ShouldContain("damaged");
+        view.ResolveProblem.ShouldNotContain("no longer held");
+    }
+
+    [Fact]
+    public async Task A_damaged_file_left_out_of_a_replace_is_reported_too()
+    {
+        // The same defect the rename path was fixed for. Replace filtered damaged files out of
+        // its eligible set and then counted only what it confirmed, so the counts agreed and the
+        // exclusion was never mentioned -- the user believing the batch was settled while one
+        // file is still held. Three buttons, one rule.
+        await ConflictAsync("a.raw");
+        await ConflictAsync("short.raw", rawCheck: "Incomplete: the file ends before its data does.");
+
+        var view = await LoadedAsync();
+
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+
+        view.ResolveProblem.ShouldContain("damaged");
+    }
+
+    [Fact]
+    public async Task Keeping_does_not_use_up_a_tick_the_store_refused()
+    {
+        // A refused file is still held, so its tick has to survive for the retry. Consuming it
+        // would leave the screen showing one row ticked while the next press meant every held
+        // file on the machine.
+        var refused = await ConflictAsync("busy.raw");
+        await ConflictAsync("other.raw");
+
+        var view = await LoadedAsync();
+        view.Rows.Single(r => r.Record.LocalPath == refused).IsSelected = true;
+
+        await _store.SetStateAsync(refused, TransferState.Uploading);
+        await view.ResolveKeepCommand.ExecuteAsync(null);
+
+
+        // Back to held, and the tick still means it.
+        await _store.SetStateAsync(refused, TransferState.Conflict);
+        await view.ResolveKeepCommand.ExecuteAsync(null);
+
+        (await _store.GetAsync(refused))!.State.ShouldBe(TransferState.Declined);
+        (await _store.GetAsync(@"C:\data\other.raw"))!.State
+            .ShouldBe(TransferState.Conflict, "the tick still narrowed it");
     }
 
     public ValueTask DisposeAsync() => _store.DisposeAsync();

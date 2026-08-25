@@ -80,10 +80,23 @@
                     <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,0" TextWrapping="Wrap"
                                Text="A file whose own contents are damaged is held here too, and only Keep applies to it: replacing a good remote copy with a short one is the thing this check exists to prevent." />
 
-                    <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Foreground="#A32100"
-                               Text="{Binding ResolveProblem}"
-                               Visibility="{Binding HasResolveProblem, Converter={StaticResource BooleanToVisibility}}" />
                 </StackPanel>
+            </Border>
+
+            <!--
+                Outside the banner above, deliberately.
+
+                It lived inside it, and the banner is shown only while conflicts remain, so the
+                one case this message exists for, a decision that settled or found nothing, is
+                exactly the case where the banner had just collapsed and took the explanation with
+                it. The button looked as though it had done nothing, which is the symptom the
+                message was added to remove.
+            -->
+            <Border Margin="0,10,0,0" Padding="10" CornerRadius="3"
+                    Background="#FDECEA" BorderBrush="#E0A9A0" BorderThickness="1"
+                    Visibility="{Binding HasResolveProblem, Converter={StaticResource BooleanToVisibility}}">
+                <TextBlock TextWrapping="Wrap" Foreground="#A32100"
+                           Text="{Binding ResolveProblem}" />
             </Border>
         </StackPanel>
 

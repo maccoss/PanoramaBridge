@@ -263,12 +263,34 @@ public sealed class TransferProgressAggregator
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
 
-        _dirty.TryRemove(localPath, out _);
-
-        if (!_latest.TryRemove(localPath, out _))
+        if (!_latest.TryGetValue(localPath, out var entry))
         {
             return false;
         }
+
+        // Never a transfer that has started.
+        //
+        // The caller is resolving a conflict, and between the ledger being written and this being
+        // reached the sweep can have picked the file up and begun sending it. Dropping the entry
+        // then loses the row for a live upload -- and HasTransferInFlight is read from exactly
+        // this dictionary, so the update and tray-exit guards would both conclude nothing was
+        // moving and let the process restart mid-transfer.
+        if (entry.State is TransferState.Uploading or TransferState.Uploaded
+            or TransferState.Queued)
+        {
+            return false;
+        }
+
+        // Compare-and-remove, so a report arriving between the read above and here is kept rather
+        // than silently discarded. Removing the entry before the dirty flag matters for the same
+        // reason: the other order can leave a path queued for redraw with nothing to redraw from,
+        // and DrainChanged then drops the update entirely.
+        if (!_latest.TryRemove(new KeyValuePair<string, TransferProgress>(localPath, entry)))
+        {
+            return false;
+        }
+
+        _dirty.TryRemove(localPath, out _);
 
         // Announced, because removing an entry is invisible otherwise. The view builds its rows
         // from what has changed, and a row whose entry has simply vanished never comes up -- so

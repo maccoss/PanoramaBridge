@@ -92,13 +92,20 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
             }
         }
 
-        // The totals and the attention count are read here rather than left to the timer, which
-        // is stopped whenever nothing is moving -- and nothing is moving in the case this exists
-        // for.
-        var totals = _aggregator.Totals();
-        Summary = totals.Describe();
-        OverallProgress = totals.Fraction;
-        AttentionCount = totals.NeedsAttention;
+        // The totals are left to the next refresh rather than recomputed here.
+        //
+        // This is called once per file from a bulk decision, and Totals() walks every entry the
+        // aggregator holds -- which on a machine that has been uploading for weeks is not small.
+        // Recomputing per file made settling five hundred conflicts a five-hundred-pass scan on
+        // the UI thread, with three property notifications each driving the status bar and the
+        // taskbar indicator behind them. The window stopped responding for the length of the
+        // batch.
+        //
+        // Waking instead starts the refresh timer, which recomputes once and then stops itself
+        // when nothing is moving. That is the mechanism the rest of this class already uses, and
+        // it is what makes the redraw happen at all: the timer is stopped whenever nothing is
+        // transferring, which is exactly the state somebody is in when they clear conflicts.
+        Wake();
     }
 
     /// <summary>

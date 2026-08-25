@@ -232,8 +232,10 @@ public sealed partial class UploadsViewModel : ObservableObject
     /// -- while the button said otherwise. On an instrument with a long history the conflicts
     /// outside that window are exactly the old ones somebody is trying to clear.
     /// </remarks>
-    private async Task<IReadOnlyList<UploadRecord>> TargetsAsync()
+    private async Task<(IReadOnlyList<UploadRecord> Records, bool Picked)> TargetsAsync()
     {
+        var picked = _picked.Count > 0;
+
         // Picked files are fetched by name rather than by pulling every conflict on the machine
         // into memory to filter it down. On the long-history instrument this whole method exists
         // for, that read was the largest allocation the tab made, once per button press.
@@ -247,14 +249,21 @@ public sealed partial class UploadsViewModel : ObservableObject
                 .Where(r => r.State == TransferState.Conflict)
                 .ToArray();
 
-            // A pick only means anything while its file is still held. Nothing pruned these when
-            // a file was settled, and the tick box is disabled the moment a row stops being
-            // resolvable, so it could not be cleared by hand either -- one settled pick made
-            // every later decision target "the held files that are picked", of which there were
-            // none, and the buttons went quietly dead for the rest of the session.
-            _picked.IntersectWith(still.Select(r => r.LocalPath));
+            // Pruned only for files that are finished with, not for ones merely busy.
+            //
+            // A pick has to go once its file is settled, or it lingers and every later decision
+            // aims at a file that is already dealt with. But a file a transfer has picked up is
+            // coming back: dropping its tick there means the retry silently widens to every held
+            // file on the machine, while the screen still shows exactly one row ticked.
+            var settled = byPath.Values
+                .Where(r => r.State is TransferState.Verified or TransferState.Skipped
+                    or TransferState.Declined)
+                .Select(r => r.LocalPath);
 
-            _aimedAtNothing = still.Length == 0;
+            _picked.ExceptWith(settled);
+
+            // A row that has vanished from the ledger altogether is finished with too.
+            _picked.IntersectWith(byPath.Keys);
 
             // Empty is an answer, not an absence of one.
             //
@@ -263,15 +272,15 @@ public sealed partial class UploadsViewModel : ObservableObject
             // every held conflict on the machine is decided instead -- silently, and with no
             // confirmation for the two decisions that need one. Aiming at nothing must do
             // nothing.
-            return still;
+            return (still, picked);
         }
 
-        _aimedAtNothing = false;
-
         // Nothing was ever picked, which is what the buttons mean by "all of them".
-        return await _store
+        var all = await _store
             .GetByStateAsync([TransferState.Conflict], limit: int.MaxValue)
             .ConfigureAwait(true);
+
+        return (all, picked);
     }
 
     /// <summary>True when there is anything at all to decide about.</summary>
@@ -326,16 +335,11 @@ public sealed partial class UploadsViewModel : ObservableObject
     /// <summary>Exactly the files the pending confirmation counted.</summary>
     private IReadOnlyList<UploadRecord> _armed = [];
 
-    /// <summary>
-    /// True when files were picked and every one has since stopped being held.
-    /// </summary>
-    /// <remarks>
-    /// Kept because the picks are pruned on the way out of <see cref="TargetsAsync"/>, so by the
-    /// time a command finishes it can no longer tell "nothing was picked" from "everything picked
-    /// has gone". Those need opposite answers: the first means all of them, the second means
-    /// nothing, and only the second is worth a message.
-    /// </remarks>
-    private bool _aimedAtNothing;
+    /// <summary>How many the confirmation left out as damaged, so it can still be reported.</summary>
+    private int _armedDamaged;
+
+    /// <summary>Whether the confirmation was aimed at picked files.</summary>
+    private bool _armedPicked;
 
     /// <summary>Search text applied to the file name.</summary>
     [ObservableProperty]
@@ -457,6 +461,7 @@ public sealed partial class UploadsViewModel : ObservableObject
             OverwriteArmed = false;
 
             var applied = 0;
+            var written = new List<UploadRecord>(confirmed.Count);
 
             foreach (var record in confirmed)
             {
@@ -472,19 +477,21 @@ public sealed partial class UploadsViewModel : ObservableObject
                     // and a queued row nothing ever removes keeps the refresh timer awake for
                     // ever.
                     _forget?.Invoke(record.LocalPath);
+                    written.Add(record);
                 }
             }
 
-            Consume(confirmed);
+            Consume(written);
 
             await RefreshAsync().ConfigureAwait(true);
 
-            ReportShortfall(applied, confirmed.Count);
+            Say(new ResolveOutcome(
+                confirmed.Count + _armedDamaged, applied, _armedDamaged, _armedPicked));
+
             return;
         }
 
-        var targets = await TargetsAsync().ConfigureAwait(true);
-        var aimedAtNothing = _aimedAtNothing;
+        var (targets, picked) = await TargetsAsync().ConfigureAwait(true);
 
         // Deliberately not offered for a damaged local file: that would push a short acquisition
         // over a good remote copy.
@@ -492,25 +499,17 @@ public sealed partial class UploadsViewModel : ObservableObject
             .Where(r => r.ConflictKind != ConflictKind.LocalFileDamaged)
             .ToArray();
 
+        var damaged = targets.Count - eligible.Length;
+
         if (eligible.Length == 0)
         {
             await RefreshAsync().ConfigureAwait(true);
-
-            if (targets.Count > 0)
-            {
-                ResolveProblem =
-                    "Nothing was replaced. Every file picked is held because its own contents are "
-                    + "damaged, and replacing a good copy on the server with a short one is what "
-                    + "that check exists to prevent. Keep is the choice that applies.";
-            }
-            else if (aimedAtNothing)
-            {
-                ReportShortfall(0, 0);
-            }
-
+            Say(new ResolveOutcome(targets.Count, 0, damaged, picked));
             return;
         }
 
+        _armedDamaged = damaged;
+        _armedPicked = picked;
         _armed = eligible;
         OverwriteArmed = true;
 
@@ -518,6 +517,78 @@ public sealed partial class UploadsViewModel : ObservableObject
             $"This will replace {eligible.Length} file(s) on the server with the local copies, "
             + "and what is there now will be gone. Press Replace again to go ahead, or any "
             + "other button to stop.";
+    }
+
+    /// <summary>
+    /// What one press of one of the three buttons actually did.
+    /// </summary>
+    /// <remarks>
+    /// Introduced after four rounds of messages driven by flags set in one method and read in
+    /// another. Each round added a flag, each flag needed a different reading in each of the three
+    /// commands, and the last one -- a "did the picks all vanish" bool -- turned out to be
+    /// provably inert: it was set immediately before returning the empty list it described, so the
+    /// ternary that consumed it always chose the same branch. It shipped with a comment explaining
+    /// reasoning it did not have.
+    /// <para>
+    /// So the outcome is counted rather than flagged, and the sentence is derived from the counts.
+    /// A message that disagrees with what happened now requires the counts to be wrong, which a
+    /// test can see.
+    /// </para>
+    /// </remarks>
+    /// <param name="Aimed">Files the press was aimed at.</param>
+    /// <param name="Applied">Files whose decision was recorded.</param>
+    /// <param name="Damaged">Files skipped because the local file is damaged.</param>
+    /// <param name="Picked">Whether the user had picked specific files.</param>
+    private readonly record struct ResolveOutcome(
+        int Aimed,
+        int Applied,
+        int Damaged,
+        bool Picked)
+    {
+        /// <summary>What to tell the user, or null when everything asked for happened.</summary>
+        public string? Problem
+        {
+            get
+            {
+                if (Aimed == 0)
+                {
+                    return Picked
+                        ? "Nothing was changed. The files you picked are no longer held: a "
+                          + "transfer picked them up, or something else settled them. Refresh to "
+                          + "see where they stand."
+                        : null;
+                }
+
+                var refused = Aimed - Applied - Damaged;
+
+                if (Damaged > 0 && Applied == 0 && refused == 0)
+                {
+                    return "Nothing was changed. Every file picked is held because its own "
+                        + "contents are damaged, and sending or replacing with a short "
+                        + "acquisition is what that check exists to prevent. Keep is the choice "
+                        + "that applies.";
+                }
+
+                var parts = new List<string>(2);
+
+                if (Damaged > 0)
+                {
+                    parts.Add(
+                        $"{Damaged} was left alone because its own contents are damaged; only "
+                        + "Keep applies to it");
+                }
+
+                if (refused > 0)
+                {
+                    parts.Add(
+                        $"{refused} is no longer held, so nothing was written for it");
+                }
+
+                return parts.Count == 0
+                    ? null
+                    : $"Of {Aimed} file(s): " + string.Join("; ", parts) + ".";
+            }
+        }
     }
 
     /// <summary>
@@ -546,32 +617,12 @@ public sealed partial class UploadsViewModel : ObservableObject
     /// which is right -- but silently. Without this the user sees no error and reasonably believes
     /// every conflict is settled, when some are still held and will be offered again.
     /// </remarks>
-    private void ReportShortfall(int applied, int attempted)
+    private void Say(ResolveOutcome outcome)
     {
-        if (attempted == 0)
+        if (outcome.Problem is { } problem)
         {
-            // Only reachable when files were picked and none is still held: the decision found
-            // nothing to act on, which the user needs telling rather than reading as success.
-            ResolveProblem =
-                "Nothing was changed. The files you picked are no longer held -- a transfer "
-                + "picked them up, or something else settled them. Refresh to see where they "
-                + "stand.";
-            return;
+            ResolveProblem = problem;
         }
-
-        if (applied >= attempted)
-        {
-            return;
-        }
-
-        // Deliberately does not name a cause. Zero rows changed means the row is no longer
-        // held, which is usually a transfer having picked it up -- but it is also what a second
-        // window, a double press, or a deleted row produces, and those need different remedies.
-        // Sending somebody to look for a transfer that never ran is worse than saying less.
-        ResolveProblem =
-            $"{attempted - applied} of {attempted} file(s) were not changed, because they are no "
-            + "longer held: something else settled them while this list was on screen. Refresh to "
-            + "see where they stand.";
     }
 
     /// <summary>Keeps what is on the server and stops offering the local file.</summary>
@@ -580,8 +631,8 @@ public sealed partial class UploadsViewModel : ObservableObject
     {
         OverwriteArmed = false;
 
-        var targets = await TargetsAsync().ConfigureAwait(true);
-        var aimedAtNothing = _aimedAtNothing;
+        var (targets, picked) = await TargetsAsync().ConfigureAwait(true);
+        var written = new List<UploadRecord>(targets.Count);
         var applied = 0;
 
         foreach (var record in targets)
@@ -595,14 +646,19 @@ public sealed partial class UploadsViewModel : ObservableObject
             if (wrote > 0)
             {
                 Announce(record, TransferState.Declined, "Kept what is on the server");
+                written.Add(record);
             }
         }
 
-        Consume(targets);
+        // Only what was actually written. A file the store refused is still held, so its tick
+        // has to survive for the retry -- consuming it would let the next press widen to
+        // everything while the screen still showed one row ticked.
+        Consume(written);
 
         await RefreshAsync().ConfigureAwait(true);
 
-        ReportShortfall(applied, aimedAtNothing ? 0 : targets.Count);
+        // Keep applies to a damaged file too, so nothing is left out here.
+        Say(new ResolveOutcome(targets.Count, applied, 0, picked));
     }
 
     /// <summary>
@@ -628,8 +684,7 @@ public sealed partial class UploadsViewModel : ObservableObject
             return;
         }
 
-        var targets = await TargetsAsync().ConfigureAwait(true);
-        var aimedAtNothing = _aimedAtNothing;
+        var (targets, picked) = await TargetsAsync().ConfigureAwait(true);
 
         var sendable = targets
             .Where(r => r.ConflictKind != ConflictKind.LocalFileDamaged)
@@ -644,6 +699,7 @@ public sealed partial class UploadsViewModel : ObservableObject
         }
 
         var applied = 0;
+        var written = new List<UploadRecord>(plan.Proposals.Count);
 
         foreach (var (record, name) in plan.Proposals)
         {
@@ -656,10 +712,11 @@ public sealed partial class UploadsViewModel : ObservableObject
             if (wrote > 0)
             {
                 _forget?.Invoke(record.LocalPath);
+                written.Add(record);
             }
         }
 
-        Consume(plan.Proposals.Select(x => x.Record));
+        Consume(written);
 
         await RefreshAsync().ConfigureAwait(true);
 
@@ -667,26 +724,10 @@ public sealed partial class UploadsViewModel : ObservableObject
         // against itself meant a damaged file filtered out before planning was never mentioned:
         // every proposal succeeded, the counts agreed, and the user was left believing a file was
         // settled while it is still held.
-        // Against what was aimed at, not against the plan that came back. Measuring the plan
-        // against itself meant a damaged file filtered out before planning was never mentioned:
-        // every proposal succeeded, the counts agreed, and the user was left believing a file
-        // was settled while it is still held.
-        ReportShortfall(applied, aimedAtNothing ? 0 : targets.Count);
-
-        if (plan.Proposals.Count == 0 && targets.Count > 0)
-        {
-            // Two ways to get here, and they need opposite remedies. Blaming truncation for a
-            // malformed destination sends somebody to look at an acquisition that is fine.
-            var damaged = targets.Count(r => r.ConflictKind == ConflictKind.LocalFileDamaged);
-
-            ResolveProblem = damaged == targets.Count
-                ? "Nothing was renamed. Every file picked is held because its own contents are "
-                  + "damaged, and sending a short acquisition under any name is not the answer. "
-                  + "Keep is the choice that applies."
-                : "Nothing was renamed. No new name could be worked out for the files picked, "
-                  + "which usually means their recorded destination cannot be read. The "
-                  + "application log records the path for each one.";
-        }
+        // Counted against what was aimed at, with the damaged exclusions named separately, so a
+        // file left out for truncation is never described as one a transfer picked up.
+        Say(new ResolveOutcome(
+            targets.Count, applied, targets.Count - sendable.Length, picked));
     }
 
     /// <summary>
