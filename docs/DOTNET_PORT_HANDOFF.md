@@ -160,7 +160,12 @@ implicit usings, so the test project puts them back explicitly. See §6.
 - **WPF**, `net8.0-windows`, MVVM, Windows only.
 - **The Python version was never in production.** The user's words: brittle, not trustworthy. So
   there is no installed base, nothing it wrote matters, and **do not benchmark against it**.
-  Migration of its settings is a convenience, not a requirement.
+- **No settings importer, and none is planned.** This followed from the line above and took a
+  while to be said out loud. `LegacyConfigImporter` sat in the next-steps list from the start of
+  the port; nobody ever ran the Python application in earnest, so there is no `config.json` on any
+  instrument to read, and an importer for a file that does not exist anywhere is work with no
+  user at the end of it. Anyone who did try the Python version retypes a server URL and a folder
+  once. Removed from the plan rather than left to look pending.
 - **API keys preferred** over the account password. Both supported.
 - **Velopack** for install and update, from GitHub Releases.
 - **CalVer `YY.feature.patch`**, matching `skyline-prism`. Version lives only in
@@ -576,7 +581,7 @@ sending-early as the one quiet failure mode.
 
 1. **The conflict dialog.** The ledger already records `Conflict`, and the sweep deliberately
    leaves such a file alone until a person or a local change resolves it. Nothing yet asks.
-2. **`LegacyConfigImporter`**, then code signing.
+2. **Code signing**, still outstanding since v26.1.0. See §9.
 3. **Nothing outstanding in the dataset path.** The eight defects a review turned up after
    v26.3.0 are all fixed: the two that mattered -- a walk failure taking monitoring down with it,
    and a leaked tracker sample that could call a folder ready on one look -- and six smaller ones.
