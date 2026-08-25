@@ -41,6 +41,39 @@ public enum TransferState
 
     /// <summary>Gave up. <see cref="UploadRecord.LastError"/> says why.</summary>
     Failed = 9,
+
+    /// <summary>
+    /// A conflict a person resolved by keeping the remote copy. Nothing was sent, and nothing
+    /// will be until the local file changes.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not <see cref="Skipped"/>, which means an identical copy was already there
+    /// and carries a verified standing to prove it. Here the two copies differ and somebody
+    /// chose the remote one. Folding that into Skipped would be the "one Completed label meaning
+    /// three things" mistake this enum exists to avoid, and it would claim a verification that
+    /// was never performed.
+    /// </remarks>
+    Declined = 10,
+}
+
+/// <summary>What a person decided to do about a conflict.</summary>
+/// <remarks>
+/// Stored on the row rather than held in memory, so a decision survives a restart: an
+/// instrument PC can be rebooted between somebody deciding and the transfer running.
+/// </remarks>
+public enum ConflictResolution
+{
+    /// <summary>Nothing decided. The row stands where it is.</summary>
+    None = 0,
+
+    /// <summary>Replace the remote copy with this one.</summary>
+    Overwrite = 1,
+
+    /// <summary>Keep the remote copy and stop offering this file.</summary>
+    Keep = 2,
+
+    /// <summary>Send it alongside under the name in <see cref="UploadRecord.RenameTo"/>.</summary>
+    Rename = 3,
 }
 
 /// <summary>
@@ -130,8 +163,13 @@ public sealed record UploadRecord(
     int Attempts,
     string? LastError,
     bool IsDataset,
-    string? RawCheck = null)
+    string? RawCheck = null,
+    ConflictResolution Resolution = ConflictResolution.None,
+    string? RenameTo = null)
 {
+    /// <summary>True when a person has decided what to do and the engine has not yet acted.</summary>
+    public bool HasPendingResolution => Resolution != ConflictResolution.None;
+
     /// <summary>
     /// True when this file is known to be safely on the server, unchanged since.
     /// </summary>

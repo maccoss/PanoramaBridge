@@ -378,6 +378,12 @@ public sealed class ReconciliationScanner
         return record.State switch
         {
             TransferState.Conflict => true,
+
+            // Somebody chose to keep the remote copy. Offering it again would re-raise the
+            // conflict they just settled, every sweep, for as long as the file sits there. The
+            // stamp check above is what lets them back in: change the local file and it is a new
+            // question, which is exactly when it should be asked again.
+            TransferState.Declined => true,
             TransferState.Failed => record.Attempts >= _options.MaxUploadAttempts,
             _ => false,
         };

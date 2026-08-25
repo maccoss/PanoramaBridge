@@ -22,7 +22,7 @@ namespace PanoramaBridge.Core.Storage;
 /// </remarks>
 public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposable
 {
-    private const int CurrentSchemaVersion = 2;
+    private const int CurrentSchemaVersion = 3;
 
     private readonly string _connectionString;
 
@@ -88,15 +88,17 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             INSERT INTO uploads
               (local_path, remote_path, size, mtime_utc, md5, sha256,
                state, verify_method, verified_utc, attempts, last_error, is_dataset,
-               raw_check)
+               raw_check, resolution, rename_to)
             VALUES
               ($path, $remote, $size, $mtime, $md5, $sha256,
-               $state, $verify, $verified, $attempts, $error, $dataset, $rawcheck)
+               $state, $verify, $verified, $attempts, $error, $dataset, $rawcheck,
+               $resolution, $renameto)
             ON CONFLICT(local_path) DO UPDATE SET
               remote_path = $remote, size = $size, mtime_utc = $mtime,
               md5 = $md5, sha256 = $sha256, state = $state, verify_method = $verify,
               verified_utc = $verified, attempts = $attempts, last_error = $error,
-              is_dataset = $dataset, raw_check = $rawcheck;
+              is_dataset = $dataset, raw_check = $rawcheck,
+              resolution = $resolution, rename_to = $renameto;
             """,
             command =>
             {
@@ -108,6 +110,9 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                 command.Parameters.AddWithValue("$sha256", record.Sha256 ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue(
                     "$rawcheck", record.RawCheck ?? (object)DBNull.Value);
+                command.Parameters.AddWithValue("$resolution", (int)record.Resolution);
+                command.Parameters.AddWithValue(
+                    "$renameto", record.RenameTo ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue("$state", (int)record.State);
                 command.Parameters.AddWithValue("$verify", (int)record.VerifyMethod);
                 command.Parameters.AddWithValue(
@@ -118,6 +123,62 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                 command.Parameters.AddWithValue("$dataset", record.IsDataset ? 1 : 0);
             },
             cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public Task ResolveConflictAsync(
+        string localPath,
+        ConflictResolution resolution,
+        string? renameTo = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
+
+        if (resolution == ConflictResolution.None)
+        {
+            throw new ArgumentException(
+                "Resolving a conflict needs an actual decision.", nameof(resolution));
+        }
+
+        if (resolution == ConflictResolution.Rename && string.IsNullOrWhiteSpace(renameTo))
+        {
+            throw new ArgumentException(
+                "Renaming needs the name to rename to.", nameof(renameTo));
+        }
+
+        var keep = resolution == ConflictResolution.Keep;
+
+        // Keep is finished the moment it is recorded, so it stores no pending resolution: there
+        // is nothing left for the engine to do. The message is stored where every other reason
+        // for a row's state is stored, so the Uploads tab explains it without a special case.
+        return ExecuteWriteAsync(
+            """
+            UPDATE uploads
+               SET state      = $state,
+                   resolution = $resolution,
+                   rename_to  = $renameto,
+                   last_error = $error
+             WHERE local_path = $path;
+            """,
+            command =>
+            {
+                command.Parameters.AddWithValue("$path", localPath);
+                command.Parameters.AddWithValue(
+                    "$state", (int)(keep ? TransferState.Declined : TransferState.Discovered));
+                command.Parameters.AddWithValue(
+                    "$resolution", (int)(keep ? ConflictResolution.None : resolution));
+                command.Parameters.AddWithValue(
+                    "$renameto",
+                    resolution == ConflictResolution.Rename
+                        ? renameTo!
+                        : (object)DBNull.Value);
+                command.Parameters.AddWithValue(
+                    "$error",
+                    keep
+                        ? "Kept the copy already on the server."
+                        : (object)DBNull.Value);
+            },
+            cancellationToken);
     }
 
     /// <inheritdoc />
@@ -386,7 +447,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         """
         SELECT local_path, remote_path, size, mtime_utc, md5, sha256,
                state, verify_method, verified_utc, attempts, last_error, is_dataset,
-               raw_check
+               raw_check, resolution, rename_to
         """;
 
     private static UploadRecord Read(SqliteDataReader reader) => new(
@@ -404,7 +465,9 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         Attempts: reader.GetInt32(9),
         LastError: reader.IsDBNull(10) ? null : reader.GetString(10),
         IsDataset: reader.GetInt32(11) != 0,
-        RawCheck: reader.IsDBNull(12) ? null : reader.GetString(12));
+        RawCheck: reader.IsDBNull(12) ? null : reader.GetString(12),
+        Resolution: (ConflictResolution)reader.GetInt32(13),
+        RenameTo: reader.IsDBNull(14) ? null : reader.GetString(14));
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {
@@ -457,7 +520,9 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
               attempts      INTEGER NOT NULL DEFAULT 0,
               last_error    TEXT,
               is_dataset    INTEGER NOT NULL DEFAULT 0,
-              raw_check     TEXT
+              raw_check     TEXT,
+              resolution    INTEGER NOT NULL DEFAULT 0,
+              rename_to     TEXT
             );
 
             CREATE INDEX IF NOT EXISTS ix_uploads_state   ON uploads(state);
@@ -505,6 +570,21 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         if (from < 2 && !ColumnExists(command, "uploads", "raw_check"))
         {
             command.CommandText = "ALTER TABLE uploads ADD COLUMN raw_check TEXT;";
+            command.ExecuteNonQuery();
+        }
+
+        if (from < 3 && !ColumnExists(command, "uploads", "resolution"))
+        {
+            // NOT NULL with a default is safe in ALTER TABLE ADD COLUMN: existing rows take the
+            // default, which is None, which is what an un-decided row means.
+            command.CommandText =
+                "ALTER TABLE uploads ADD COLUMN resolution INTEGER NOT NULL DEFAULT 0;";
+            command.ExecuteNonQuery();
+        }
+
+        if (from < 3 && !ColumnExists(command, "uploads", "rename_to"))
+        {
+            command.CommandText = "ALTER TABLE uploads ADD COLUMN rename_to TEXT;";
             command.ExecuteNonQuery();
         }
     }

@@ -36,6 +36,32 @@ public interface IStateStore
         string? lastError = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Records what a person decided about a conflict.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Writes the decision to the ledger rather than acting on it here. The engine applies it on
+    /// the next pass, which keeps the decision durable across a restart and keeps this interface
+    /// free of transfer logic.
+    /// </para>
+    /// <para>
+    /// <see cref="ConflictResolution.Keep"/> is terminal and leaves nothing pending: the row goes
+    /// to <see cref="TransferState.Declined"/> and the sweep stops offering it. The other two put
+    /// the row back to <see cref="TransferState.Discovered"/> so the sweep picks it up, carrying
+    /// the decision that will be honoured when it does.
+    /// </para>
+    /// </remarks>
+    /// <param name="renameTo">
+    /// The new leaf name, required for <see cref="ConflictResolution.Rename"/> and ignored
+    /// otherwise.
+    /// </param>
+    Task ResolveConflictAsync(
+        string localPath,
+        ConflictResolution resolution,
+        string? renameTo = null,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Marks a row verified, recording how it was checked.</summary>
     Task MarkVerifiedAsync(
         string localPath,

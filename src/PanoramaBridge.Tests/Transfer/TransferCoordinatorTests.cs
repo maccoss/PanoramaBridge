@@ -132,6 +132,85 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         after.State.ShouldBe(TransferState.Conflict);
     }
 
+    // -- Acting on a decision somebody made about a conflict ----------------------------------
+
+    [Fact]
+    public async Task A_conflict_resolved_as_overwrite_replaces_the_remote_copy()
+    {
+        var file = await WriteAsync("run.raw", "the local one");
+        _server.Seed(Destination.Append("run.raw"), "something else entirely"u8.ToArray());
+
+        // First pass: the policy is Ask, so it is held rather than sent.
+        await RunWithAsync(NewCoordinator(), file);
+        (await _store.GetAsync(file))!.State.ShouldBe(TransferState.Conflict);
+
+        await _store.ResolveConflictAsync(file, ConflictResolution.Overwrite);
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        var after = await _store.GetAsync(file);
+        after!.State.ShouldBe(TransferState.Verified);
+
+        // The decision is consumed, not left standing. Otherwise a one-off "overwrite this"
+        // quietly becomes a permanent policy for one file that nobody remembers agreeing to.
+        after.Resolution.ShouldBe(ConflictResolution.None);
+        after.HasPendingResolution.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task A_conflict_resolved_as_rename_sends_it_under_the_new_name()
+    {
+        var file = await WriteAsync("run.raw", "the local one");
+        _server.Seed(Destination.Append("run.raw"), "something else entirely"u8.ToArray());
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        await _store.ResolveConflictAsync(file, ConflictResolution.Rename, "run (2).raw");
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        var after = await _store.GetAsync(file);
+        after!.State.ShouldBe(TransferState.Verified);
+
+        // The row now points at where the bytes actually went. A verified row naming the
+        // destination it was refused at would be worse than no row.
+        // Percent-encoded, parentheses included, which is RemotePath doing its job.
+        after.RemotePath.ShouldEndWith("run%20%282%29.raw");
+        after.RenameTo.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Renaming_leaves_the_copy_that_was_already_there_untouched()
+    {
+        var file = await WriteAsync("run.raw", "the local one");
+        var occupied = Destination.Append("run.raw");
+        _server.Seed(occupied, "something else entirely"u8.ToArray());
+
+        await RunWithAsync(NewCoordinator(), file);
+        await _store.ResolveConflictAsync(file, ConflictResolution.Rename, "run (2).raw");
+        await RunWithAsync(NewCoordinator(), file);
+
+        // The whole reason somebody picks Rename over Overwrite.
+        _server.Content(occupied).ShouldBe("something else entirely"u8.ToArray());
+    }
+
+    [Fact]
+    public async Task A_decision_is_honoured_without_asking_the_policy_again()
+    {
+        var file = await WriteAsync("run.raw", "the local one");
+        _server.Seed(Destination.Append("run.raw"), "something else entirely"u8.ToArray());
+
+        await RunWithAsync(NewCoordinator(), file);
+        await _store.ResolveConflictAsync(file, ConflictResolution.Overwrite);
+
+        // Still Ask, which is what raised the conflict in the first place. If the engine
+        // consulted it again the file would simply be held a second time and the decision would
+        // vanish -- silently, which is the part that would make it hard to find.
+        await RunWithAsync(NewCoordinator(policy: ConflictPolicy.Ask), file);
+
+        (await _store.GetAsync(file))!.State.ShouldBe(TransferState.Verified);
+    }
+
     [Fact]
     public async Task Cancelling_a_run_does_not_leave_a_file_reporting_that_it_is_uploading()
     {

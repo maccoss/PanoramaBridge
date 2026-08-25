@@ -280,6 +280,17 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         var stamp = LocalFileStamp.FromFile(localPath);
 
+        // Read before deciding. A person may have resolved a conflict since this file was last
+        // offered, and their answer replaces the question rather than informing it -- asking the
+        // policy again would return the same conflict and discard the decision.
+        var decided = await _store.GetAsync(localPath, cancellationToken).ConfigureAwait(false);
+
+        if (decided is { HasPendingResolution: true })
+        {
+            await ApplyResolutionAsync(decided, stamp, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         var destination = PathSafety.ResolveDestination(
             _options.LocalBaseDirectory,
             localPath,
@@ -594,6 +605,61 @@ public sealed class TransferCoordinator : IAsyncDisposable
             // and it is left inside the folder the sweep walks.
             DatasetArchive.Discard(packed.Path);
         }
+    }
+
+    /// <summary>
+    /// Carries out what a person decided about a conflict.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The decision is consumed here rather than left on the row: it answers the conflict that
+    /// was raised, not every conflict this file will ever have. Leaving it set would silently
+    /// turn a one-off "overwrite this" into a standing policy for one file, which is the kind of
+    /// thing nobody remembers agreeing to.
+    /// </para>
+    /// <para>
+    /// Neither branch consults <see cref="TransferOptions.ConflictPolicy"/>. That is the whole
+    /// point: the policy is what produced the conflict, and asking it again would produce the
+    /// same one.
+    /// </para>
+    /// </remarks>
+    private async Task ApplyResolutionAsync(
+        UploadRecord record,
+        LocalFileStamp stamp,
+        CancellationToken cancellationToken)
+    {
+        var localPath = record.LocalPath;
+
+        // A rename keeps the tree's shape and changes only the leaf, exactly as a packed
+        // acquisition does.
+        var destination = PathSafety.ResolveDestination(
+            _options.LocalBaseDirectory,
+            localPath,
+            _options.DestinationRoot,
+            record.Resolution == ConflictResolution.Rename ? record.RenameTo : null);
+
+        var encoded = destination.ToEncodedString();
+
+        _log.LogInformation(
+            "{Path}: sending after a conflict was resolved as {Resolution}{Named}.",
+            localPath,
+            record.Resolution,
+            record.Resolution == ConflictResolution.Rename ? $" ({record.RenameTo})" : string.Empty);
+
+        var queued = record with
+        {
+            RemotePath = encoded,
+            Length = stamp.Length,
+            LastWriteUnixMs = stamp.LastWriteUnixMs,
+            State = TransferState.Queued,
+            LastError = null,
+            Resolution = ConflictResolution.None,
+            RenameTo = null,
+        };
+
+        await _store.SaveAsync(queued, cancellationToken).ConfigureAwait(false);
+
+        await UploadAsync(queued, stamp, destination, cancellationToken).ConfigureAwait(false);
     }
 
     /// <param name="source">
