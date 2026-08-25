@@ -282,5 +282,87 @@ public sealed class UploadsConflictTests : IAsyncDisposable
         declined.Count.ShouldBe(2);
     }
 
+    [Fact]
+    public async Task A_tick_survives_the_row_being_filtered_out_of_view()
+    {
+        var picked = await ConflictAsync("plate-a.raw");
+        await ConflictAsync("plate-b.raw");
+
+        var view = await LoadedAsync();
+        view.Rows.Single(r => r.Record.LocalPath == picked).IsSelected = true;
+
+        // Narrow the list so the ticked row is not on screen, then decide. Reading the ticks off
+        // the rows would find none, and "no ticks" means every held file -- so a decision aimed
+        // at one acquisition would land on both.
+        view.Search = "plate-b";
+        await view.RefreshAsync();
+        view.Rows.Count.ShouldBe(1);
+
+        await view.ResolveKeepCommand.ExecuteAsync(null);
+
+        (await _store.GetAsync(picked))!.State.ShouldBe(TransferState.Declined);
+        (await _store.GetAsync(@"C:\data\plate-b.raw"))!.State.ShouldBe(TransferState.Conflict);
+    }
+
+    [Fact]
+    public async Task The_banner_appears_for_conflicts_the_view_never_loaded()
+    {
+        await ConflictAsync("old.raw");
+
+        var view = await LoadedAsync();
+
+        // Narrowed to nothing. The buttons act on the whole ledger, so the banner that hosts them
+        // has to be scoped the same way -- otherwise it hides in exactly the case the buttons
+        // were widened to handle, and there is no way to press them at all.
+        view.Search = "nothing-matches-this";
+        await view.RefreshAsync();
+
+        view.Rows.ShouldBeEmpty();
+        view.HasConflicts.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task A_decision_that_did_not_land_is_reported()
+    {
+        var path = await ConflictAsync("a.raw");
+
+        var view = await LoadedAsync();
+
+        // Arming holds the exact list the confirmation counted, and the second press can be an
+        // arbitrary time later -- long enough for a sweep to pick one of them up. The store
+        // refuses to write over a row mid-transfer, which is right, but silently: without saying
+        // so the user sees no error and believes every conflict is settled.
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+        view.OverwriteArmed.ShouldBeTrue();
+
+        await _store.SetStateAsync(path, TransferState.Uploading);
+
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+
+        view.HasResolveProblem.ShouldBeTrue();
+        view.ResolveProblem.ShouldContain("not changed");
+    }
+
+    [Fact]
+    public async Task Confirming_replaces_only_what_the_first_press_counted()
+    {
+        await ConflictAsync("a.raw");
+
+        var view = await LoadedAsync();
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+        view.ResolveProblem.ShouldContain("1 file(s)");
+
+        // A batch lands between the two presses. The count is the entire point of asking, so the
+        // second press must act on what was counted rather than on whatever is there now.
+        await ConflictAsync("arrived-later.raw");
+
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+
+        (await _store.GetAsync(@"C:\data\a.raw"))!.Resolution
+            .ShouldBe(ConflictResolution.Overwrite);
+        (await _store.GetAsync(@"C:\data\arrived-later.raw"))!.State
+            .ShouldBe(TransferState.Conflict, "it was never counted, so it was never confirmed");
+    }
+
     public ValueTask DisposeAsync() => _store.DisposeAsync();
 }

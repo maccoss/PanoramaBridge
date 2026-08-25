@@ -152,5 +152,23 @@ public sealed class ConflictResolutionStoreTests : IAsyncDisposable
         (await _store.GetAsync(Path))!.State.ShouldBe(TransferState.Uploading);
     }
 
+    [Theory]
+    [InlineData(ConflictResolution.Keep)]
+    [InlineData(ConflictResolution.Overwrite)]
+    public async Task A_decision_that_is_not_a_rename_does_not_forget_where_the_file_lives(
+        ConflictResolution resolution)
+    {
+        // The row already lives at run (2).raw because somebody sent it alongside earlier.
+        await ConflictedAsync();
+        await _store.ResolveConflictAsync(Path, ConflictResolution.Rename, "run (2).raw");
+        await _store.SetStateAsync(Path, TransferState.Conflict);
+
+        await _store.ResolveConflictAsync(Path, resolution);
+
+        // Clearing this would send the sweep back to resolving the row to its original name, and
+        // re-open the unbounded re-send the column was added to close.
+        (await _store.GetAsync(Path))!.RenameTo.ShouldBe("run (2).raw");
+    }
+
     public ValueTask DisposeAsync() => _store.DisposeAsync();
 }

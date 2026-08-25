@@ -127,7 +127,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     }
 
     /// <inheritdoc />
-    public Task ResolveConflictAsync(
+    public Task<int> ResolveConflictAsync(
         string localPath,
         ConflictResolution resolution,
         string? renameTo = null,
@@ -152,12 +152,12 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         // Keep is finished the moment it is recorded, so it stores no pending resolution: there
         // is nothing left for the engine to do. The message is stored where every other reason
         // for a row's state is stored, so the Uploads tab explains it without a special case.
-        return ExecuteWriteAsync(
+        return ExecuteWriteCountingAsync(
             """
             UPDATE uploads
                SET state      = $state,
                    resolution = $resolution,
-                   rename_to  = $renameto,
+                   rename_to  = CASE WHEN $renaming = 1 THEN $renameto ELSE rename_to END,
                    last_error = $error
              WHERE local_path = $path
                AND state      = $conflict;
@@ -174,11 +174,15 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                     "$state", (int)(keep ? TransferState.Declined : TransferState.Discovered));
                 command.Parameters.AddWithValue(
                     "$resolution", (int)(keep ? ConflictResolution.None : resolution));
+                // Only a rename writes this column. It is where the file lives, not a pending
+                // instruction: clearing it when somebody presses Keep or Replace on a row that
+                // already lives at "run (2).raw" would lose that, and the sweep would go back to
+                // resolving the row to its original name -- re-opening the unbounded re-send this
+                // column was added to close.
                 command.Parameters.AddWithValue(
-                    "$renameto",
-                    resolution == ConflictResolution.Rename
-                        ? renameTo!
-                        : (object)DBNull.Value);
+                    "$renaming", resolution == ConflictResolution.Rename ? 1 : 0);
+                command.Parameters.AddWithValue(
+                    "$renameto", renameTo ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue(
                     "$error",
                     keep
@@ -482,6 +486,27 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         return connection;
+    }
+
+    /// <summary>Writes, and reports how many rows it actually changed.</summary>
+    private async Task<int> ExecuteWriteCountingAsync(
+        string sql,
+        Action<SqliteCommand> bind,
+        CancellationToken cancellationToken)
+    {
+        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            bind(command);
+            return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
     }
 
     private async Task ExecuteWriteAsync(

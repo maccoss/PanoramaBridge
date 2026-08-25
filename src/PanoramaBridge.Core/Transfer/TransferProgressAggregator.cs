@@ -208,6 +208,11 @@ public sealed class TransferProgressAggregator
                 case TransferState.Verified:
                 case TransferState.Skipped:
                 case TransferState.Uploaded:
+
+                // Settled by a person choosing the copy on the server. Nothing is going to
+                // happen to it, so counting it as needing attention would leave the status bar
+                // asking for a decision that has already been made.
+                case TransferState.Declined:
                     finished++;
                     break;
 
@@ -233,6 +238,7 @@ public sealed class TransferProgressAggregator
         foreach (var (path, progress) in _latest)
         {
             if (progress.State is TransferState.Verified or TransferState.Skipped
+                    or TransferState.Declined
                 && _latest.TryRemove(path, out _))
             {
                 _dirty.TryRemove(path, out _);

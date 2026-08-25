@@ -43,9 +43,3 @@ Installed copies update themselves. Nothing needs reinstalling, and no setting c
 
   The behaviour existed in the settings file but had no button and never worked, so nothing
   changes for anyone who has not just gone looking for it.
-
-## Bug Fixes
-
-## Performance
-
-## Breaking Changes

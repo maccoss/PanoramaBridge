@@ -56,7 +56,13 @@ public interface IStateStore
     /// The new leaf name, required for <see cref="ConflictResolution.Rename"/> and ignored
     /// otherwise.
     /// </param>
-    Task ResolveConflictAsync(
+    /// <returns>
+    /// 1 when the decision was recorded, 0 when it was not because the row is no longer held --
+    /// a sweep having picked the file up while the list was on screen. Returned rather than
+    /// silently discarded so the caller can say so, instead of leaving somebody believing every
+    /// conflict is settled when some are not.
+    /// </returns>
+    Task<int> ResolveConflictAsync(
         string localPath,
         ConflictResolution resolution,
         string? renameTo = null,

@@ -1,5 +1,4 @@
 using System.IO;
-using System.Net.Http;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text;
@@ -176,11 +175,47 @@ public sealed partial class UploadsViewModel : ObservableObject
     /// </remarks>
     private readonly Func<IWebDavClient?> _client;
 
-    public UploadsViewModel(IStateStore store, Func<IWebDavClient?>? client = null)
+    /// <summary>
+    /// Which files are picked, by path, independently of what is on screen.
+    /// </summary>
+    /// <remarks>
+    /// Not a flag on the rows. Rows are rebuilt by every refresh -- which every resolve command
+    /// and every keystroke in the search box causes -- and a row filtered out of view has no flag
+    /// to carry anything. Since no ticks means "every held file", a tick lost while the user
+    /// narrowed the list would silently widen the next decision from one file to all of them.
+    /// </remarks>
+    private readonly HashSet<string> _picked = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Tells the rest of the application that a held file is no longer held.
+    /// </summary>
+    /// <remarks>
+    /// The decision is written straight to the ledger, so nothing else hears about it: the
+    /// progress aggregator went on counting the file under "needs attention" for the life of the
+    /// process. Clear five hundred conflicts and the status bar still asked about five hundred,
+    /// disagreeing with the tab the user had just used to settle them.
+    /// </remarks>
+    private readonly Action<TransferProgress>? _announce;
+
+    public UploadsViewModel(
+        IStateStore store,
+        Func<IWebDavClient?>? client = null,
+        Action<TransferProgress>? announce = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _client = client ?? (static () => null);
+        _announce = announce;
     }
+
+    /// <summary>Reports a resolved file, so the status bar stops asking about it.</summary>
+    private void Announce(UploadRecord record, TransferState state, string phase) =>
+        _announce?.Invoke(new TransferProgress(
+            record.LocalPath,
+            record.RemotePath,
+            state,
+            phase,
+            0,
+            record.Length));
 
     /// <summary>
     /// The records a decision applies to: those picked, or every held file when none is picked.
@@ -194,25 +229,30 @@ public sealed partial class UploadsViewModel : ObservableObject
     /// </remarks>
     private async Task<IReadOnlyList<UploadRecord>> TargetsAsync()
     {
-        var picked = Rows
-            .Where(r => r.IsSelected && r.CanResolve)
-            .Select(r => r.Record)
-            .ToArray();
-
-        if (picked.Length > 0)
-        {
-            return picked;
-        }
-
-        var all = await _store
+        var held = await _store
             .GetByStateAsync([TransferState.Conflict], limit: int.MaxValue)
             .ConfigureAwait(true);
 
-        return all;
+        if (_picked.Count == 0)
+        {
+            return held;
+        }
+
+        // Filtered from the ledger rather than from the rows, so a pick made before the list was
+        // narrowed still counts.
+        return held.Where(r => _picked.Contains(r.LocalPath)).ToArray();
     }
 
-    /// <summary>True when there is anything here to decide about.</summary>
-    public bool HasConflicts => Rows.Any(r => r.CanResolve);
+    /// <summary>True when there is anything at all to decide about.</summary>
+    /// <remarks>
+    /// Counted from the ledger, not from the rows. The rows are capped and narrowed by the filter
+    /// and the search box, so on a machine whose conflicts are all older than the newest few
+    /// thousand entries the banner hid itself -- taking the only buttons that could clear them
+    /// with it, in exactly the case the buttons were widened to handle.
+    /// </remarks>
+    public bool HasConflicts => _heldCount > 0;
+
+    private int _heldCount;
 
     /// <summary>Rows currently shown.</summary>
     public ObservableCollection<UploadRowViewModel> Rows { get; } = [];
@@ -250,6 +290,9 @@ public sealed partial class UploadsViewModel : ObservableObject
     [ObservableProperty]
     private bool _overwriteArmed;
 
+    /// <summary>Exactly the files the pending confirmation counted.</summary>
+    private IReadOnlyList<UploadRecord> _armed = [];
+
     /// <summary>Search text applied to the file name.</summary>
     [ObservableProperty]
     private string _search = string.Empty;
@@ -271,6 +314,7 @@ public sealed partial class UploadsViewModel : ObservableObject
         // A confirmation counted a specific set of files. If the list is being rebuilt, that
         // count no longer describes anything, so the confirmation goes with it.
         OverwriteArmed = false;
+        _armed = [];
 
         try
         {
@@ -303,22 +347,39 @@ public sealed partial class UploadsViewModel : ObservableObject
                     .ToArray();
             }
 
-            // Carried across the reload. Every resolve command ends in a refresh, and so does
-            // typing in the search box, so dropping the ticks would silently widen the next
-            // decision from "these two" to "all of them" between the tick and the click.
-            var picked = Rows
-                .Where(r => r.IsSelected)
-                .Select(r => r.Record.LocalPath)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
             Rows.Clear();
             foreach (var record in records)
             {
-                Rows.Add(new UploadRowViewModel(record)
+                var row = new UploadRowViewModel(record)
                 {
-                    IsSelected = picked.Contains(record.LocalPath),
-                });
+                    IsSelected = _picked.Contains(record.LocalPath),
+                };
+
+                // The row reports back, so a tick outlives the row that made it.
+                row.PropertyChanged += (_, e) =>
+                {
+                    if (e.PropertyName != nameof(UploadRowViewModel.IsSelected))
+                    {
+                        return;
+                    }
+
+                    if (row.IsSelected)
+                    {
+                        _picked.Add(row.Record.LocalPath);
+                    }
+                    else
+                    {
+                        _picked.Remove(row.Record.LocalPath);
+                    }
+                };
+
+                Rows.Add(row);
             }
+
+            _heldCount = (await _store
+                .CountByStateAsync()
+                .ConfigureAwait(true))
+                .GetValueOrDefault(TransferState.Conflict);
 
             OnPropertyChanged(nameof(HasConflicts));
 
@@ -344,6 +405,40 @@ public sealed partial class UploadsViewModel : ObservableObject
     [RelayCommand]
     private async Task ResolveOverwriteAsync()
     {
+        // Confirming does not look at the ledger again. It acts on exactly the list the first
+        // press counted -- the count is the whole point of asking, and a batch landing between
+        // the two presses would otherwise be replaced without ever having been counted. Looking
+        // again also meant a file the engine had picked up in between made this branch conclude
+        // there was nothing to do at all, and the confirmation quietly evaporated.
+        if (OverwriteArmed)
+        {
+            var confirmed = _armed;
+
+            _armed = [];
+            OverwriteArmed = false;
+
+            var applied = 0;
+
+            foreach (var record in confirmed)
+            {
+                var wrote = await _store
+                    .ResolveConflictAsync(record.LocalPath, ConflictResolution.Overwrite)
+                    .ConfigureAwait(true);
+
+                applied += wrote;
+
+                if (wrote > 0)
+                {
+                    Announce(record, TransferState.Discovered, "Waiting");
+                }
+            }
+
+            await RefreshAsync().ConfigureAwait(true);
+
+            ReportShortfall(applied, confirmed.Count);
+            return;
+        }
+
         var targets = await TargetsAsync().ConfigureAwait(true);
 
         // Deliberately not offered for a damaged local file: that would push a short acquisition
@@ -354,7 +449,6 @@ public sealed partial class UploadsViewModel : ObservableObject
 
         if (eligible.Length == 0)
         {
-            OverwriteArmed = false;
             await RefreshAsync().ConfigureAwait(true);
 
             if (targets.Count > 0)
@@ -368,28 +462,34 @@ public sealed partial class UploadsViewModel : ObservableObject
             return;
         }
 
-        if (!OverwriteArmed)
+        _armed = eligible;
+        OverwriteArmed = true;
+
+        ResolveProblem =
+            $"This will replace {eligible.Length} file(s) on the server with the local copies, "
+            + "and what is there now will be gone. Press Replace again to go ahead, or any "
+            + "other button to stop.";
+    }
+
+    /// <summary>
+    /// Says so when a decision did not reach every file it was aimed at.
+    /// </summary>
+    /// <remarks>
+    /// The store refuses to write over a row the engine has moved on to since the list was drawn,
+    /// which is right -- but silently. Without this the user sees no error and reasonably believes
+    /// every conflict is settled, when some are still held and will be offered again.
+    /// </remarks>
+    private void ReportShortfall(int applied, int attempted)
+    {
+        if (applied >= attempted)
         {
-            OverwriteArmed = true;
-
-            ResolveProblem =
-                $"This will replace {eligible.Length} file(s) on the server with the local copies, "
-                + "and what is there now will be gone. Press Replace again to go ahead, or any "
-                + "other button to stop.";
-
             return;
         }
 
-        OverwriteArmed = false;
-
-        foreach (var record in eligible)
-        {
-            await _store
-                .ResolveConflictAsync(record.LocalPath, ConflictResolution.Overwrite)
-                .ConfigureAwait(true);
-        }
-
-        await RefreshAsync().ConfigureAwait(true);
+        ResolveProblem =
+            $"{attempted - applied} of {attempted} file(s) were not changed: a transfer had "
+            + "already picked them up while this list was on screen. They are still held, and can "
+            + "be decided about again.";
     }
 
     /// <summary>Keeps what is on the server and stops offering the local file.</summary>
@@ -398,14 +498,26 @@ public sealed partial class UploadsViewModel : ObservableObject
     {
         OverwriteArmed = false;
 
-        foreach (var record in await TargetsAsync().ConfigureAwait(true))
+        var targets = await TargetsAsync().ConfigureAwait(true);
+        var applied = 0;
+
+        foreach (var record in targets)
         {
-            await _store
+            var wrote = await _store
                 .ResolveConflictAsync(record.LocalPath, ConflictResolution.Keep)
                 .ConfigureAwait(true);
+
+            applied += wrote;
+
+            if (wrote > 0)
+            {
+                Announce(record, TransferState.Declined, "Kept what is on the server");
+            }
         }
 
         await RefreshAsync().ConfigureAwait(true);
+
+        ReportShortfall(applied, targets.Count);
     }
 
     /// <summary>
@@ -445,19 +557,29 @@ public sealed partial class UploadsViewModel : ObservableObject
 
         foreach (var (record, name) in plan.Proposals)
         {
-            await _store
-                .ResolveConflictAsync(record.LocalPath, ConflictResolution.Rename, name)
-                .ConfigureAwait(true);
+            if (await _store
+                    .ResolveConflictAsync(record.LocalPath, ConflictResolution.Rename, name)
+                    .ConfigureAwait(true) > 0)
+            {
+                Announce(record, TransferState.Discovered, "Waiting");
+            }
         }
 
         await RefreshAsync().ConfigureAwait(true);
 
         if (plan.Proposals.Count == 0 && targets.Count > 0)
         {
-            ResolveProblem =
-                "Nothing was renamed. Every file picked is held because its own contents are "
-                + "damaged, and sending a short acquisition under any name is not the answer. "
-                + "Keep is the choice that applies.";
+            // Two ways to get here, and they need opposite remedies. Blaming truncation for a
+            // malformed destination sends somebody to look at an acquisition that is fine.
+            var damaged = targets.Count(r => r.ConflictKind == ConflictKind.LocalFileDamaged);
+
+            ResolveProblem = damaged == targets.Count
+                ? "Nothing was renamed. Every file picked is held because its own contents are "
+                  + "damaged, and sending a short acquisition under any name is not the answer. "
+                  + "Keep is the choice that applies."
+                : "Nothing was renamed. No new name could be worked out for the files picked, "
+                  + "which usually means their recorded destination cannot be read. The "
+                  + "application log records the path for each one.";
         }
     }
 

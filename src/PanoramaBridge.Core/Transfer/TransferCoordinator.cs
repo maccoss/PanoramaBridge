@@ -742,13 +742,56 @@ public sealed class TransferCoordinator : IAsyncDisposable
     {
         var localPath = record.LocalPath;
 
-        // A rename keeps the tree's shape and changes only the leaf, exactly as a packed
-        // acquisition does.
+        // Asked again here, not inherited from when the conflict was raised.
+        //
+        // This path returns before the check that every other route to the server passes
+        // through, so without this it was the one way to upload a file nobody had read. Two ways
+        // in: a row migrated from a build before ConflictKind existed defaults to Unknown, so the
+        // view offers Replace for an acquisition that was held precisely because it is damaged;
+        // and a file can be truncated between the conflict being recorded and the decision being
+        // acted on, which may be a reboot later.
+        //
+        // Uploading a short acquisition over a good remote copy is the outcome this application
+        // exists to prevent, so the decision does not get to override it. A decision to overwrite
+        // is a decision about which copy is wanted, not a warrant to send one that is broken.
+        var rawCheck = InspectRawFile(localPath, stamp.Length);
+
+        if (rawCheck is { IsProvenTruncated: true })
+        {
+            Interlocked.Increment(ref _conflicts);
+
+            await _store
+                .SaveAsync(
+                    record with
+                    {
+                        State = TransferState.Conflict,
+                        LastError = rawCheck.Summary,
+                        RawCheck = rawCheck.Summary,
+                        ConflictKind = ConflictKind.LocalFileDamaged,
+                        Resolution = ConflictResolution.None,
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            _log.LogWarning(
+                "{Path}: not uploaded despite the decision to send it. {Summary}",
+                localPath,
+                rawCheck.Summary);
+
+            Report(localPath, record.RemotePath, TransferState.Conflict, "Incomplete file",
+                0, stamp.Length, message: rawCheck.Summary);
+            return;
+        }
+
+        // Where this file lives, which for one already sent alongside is its renamed leaf and not
+        // its original name. The ternary here previously passed null for anything but a fresh
+        // rename, so pressing Replace on a row living at "run (2).raw" resolved to "run.raw" and
+        // destroyed the very copy the user had chosen to preserve when they picked Rename.
         var destination = PathSafety.ResolveDestination(
             _options.LocalBaseDirectory,
             localPath,
             _options.DestinationRoot,
-            record.Resolution == ConflictResolution.Rename ? record.RenameTo : null);
+            record.DestinationLeaf);
 
         var encoded = destination.ToEncodedString();
 

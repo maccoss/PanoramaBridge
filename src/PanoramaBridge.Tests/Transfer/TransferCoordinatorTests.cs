@@ -224,6 +224,32 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Replacing_a_renamed_file_replaces_the_copy_it_actually_made()
+    {
+        // Sent alongside first, so the row lives at run (2).raw.
+        var file = await WriteAsync("run.raw", "mine");
+        var original = Destination.Append("run.raw");
+        _server.Seed(original, "somebody else's"u8.ToArray());
+
+        await RunWithAsync(NewCoordinator(), file);
+        await _store.ResolveConflictAsync(file, ConflictResolution.Rename, "run (2).raw");
+        await RunWithAsync(NewCoordinator(), file);
+
+        // The local file changes, so its renamed copy is now stale and conflicts afresh.
+        await File.WriteAllTextAsync(file, "mine, edited");
+        await RunWithAsync(NewCoordinator(), file);
+
+        await _store.ResolveConflictAsync(file, ConflictResolution.Overwrite);
+        await RunWithAsync(NewCoordinator(), file);
+
+        // Replace means "replace the copy this row made", not "replace the file somebody chose to
+        // preserve when they picked Rename in the first place".
+        _server.Content(original).ShouldBe("somebody else's"u8.ToArray());
+        _server.Content(Destination.Append("run (2).raw"))
+            .ShouldBe("mine, edited"u8.ToArray());
+    }
+
+    [Fact]
     public async Task A_rename_never_overwrites_something_that_arrived_at_the_new_name()
     {
         var file = await WriteAsync("run.raw", "the local one");
@@ -452,6 +478,37 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         record!.State.ShouldBe(TransferState.Conflict, "and it must be visible, not silently dropped");
         record.RawCheck.ShouldNotBeNullOrEmpty();
         record.LastError!.ShouldContain("Truncated");
+    }
+
+    [Fact]
+    public async Task A_decision_to_overwrite_does_not_license_sending_a_short_file()
+    {
+        // The resolution path returns before the check every other route to the server passes
+        // through, so it was the one way to upload a file nobody had read. Two ways in: a row
+        // migrated from a build before ConflictKind existed defaults to Unknown, so the view
+        // offers Replace for an acquisition held precisely because it is damaged; and a file can
+        // be truncated between the conflict being recorded and the decision being acted on.
+        //
+        // A decision to overwrite says which copy is wanted. It is not a warrant to send one that
+        // is broken.
+        var file = await WriteRawHeaderAsync("cut-short.raw", formatVersion: 66, padding: 0);
+        _server.Seed(Destination.Append("cut-short.raw"), "the good copy"u8.ToArray());
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        // Recorded as Unknown, exactly as a row written by the previous release would be.
+        var held = await _store.GetAsync(file);
+        await _store.SaveAsync(held! with { ConflictKind = ConflictKind.Unknown });
+
+        await _store.ResolveConflictAsync(file, ConflictResolution.Overwrite);
+        await RunWithAsync(NewCoordinator(), file);
+
+        _server.Content(Destination.Append("cut-short.raw"))
+            .ShouldBe("the good copy"u8.ToArray(), "the short file must never reach the server");
+
+        var after = await _store.GetAsync(file);
+        after!.State.ShouldBe(TransferState.Conflict);
+        after.ConflictKind.ShouldBe(ConflictKind.LocalFileDamaged);
     }
 
     [Fact]

@@ -77,7 +77,7 @@ public sealed class CountingStateStore : IStateStore, IAsyncDisposable
         _inner.SetStateAsync(localPath, state, lastError, cancellationToken);
 
     /// <inheritdoc />
-    public Task ResolveConflictAsync(
+    public Task<int> ResolveConflictAsync(
         string localPath,
         ConflictResolution resolution,
         string? renameTo = null,

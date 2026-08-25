@@ -172,7 +172,8 @@ public static class Program
         // captured, because the client comes and goes with the connection.
         services.AddSingleton(provider => new UploadsViewModel(
             provider.GetRequiredService<IStateStore>(),
-            () => provider.GetRequiredService<TransferService>().Client));
+            () => provider.GetRequiredService<TransferService>().Client,
+            p => provider.GetRequiredService<TransferService>().Progress.Report(p)));
         services.AddSingleton<MainViewModel>();
         services.AddSingleton<MainWindow>();
 

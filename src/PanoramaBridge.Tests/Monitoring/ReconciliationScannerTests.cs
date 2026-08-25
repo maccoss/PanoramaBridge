@@ -124,6 +124,40 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         offered.ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task A_verified_acquisition_folder_is_not_offered_again()
+    {
+        // A .d reaches the server as run.d.zip, so a verified row's destination ends in .zip --
+        // while the sweep works out where the folder would go and gets run.d. The two never
+        // match, so every verified Bruker acquisition is offered on every pass for ever.
+        Write(Path.Combine("250314_HeLa.d", "analysis.tdf"), "the index");
+
+        var folder = Path.Combine(_root, "250314_HeLa.d");
+        var measured = DatasetFolder.Measure(folder)!.Value;
+
+        var remote = PathSafety
+            .ResolveDestination(_root, folder, Destination, DatasetFolder.ArchiveNameFor(folder))
+            .ToEncodedString();
+
+        await _store.SaveAsync(new UploadRecord(
+            LocalPath: folder,
+            RemotePath: remote,
+            Length: measured.TotalBytes,
+            LastWriteUnixMs: measured.NewestWriteUnixMs,
+            Md5: "d41d8cd98f00b204e9800998ecf8427e",
+            Sha256: null,
+            State: TransferState.Verified,
+            VerifyMethod: VerifyMethod.ServerMd5,
+            VerifiedUtc: DateTimeOffset.UtcNow,
+            Attempts: 1,
+            LastError: null,
+            IsDataset: true));
+
+        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
+
+        offered.ShouldBeEmpty();
+    }
+
     // -- directory acquisitions ----------------------------------------------------------------
 
     [Fact]

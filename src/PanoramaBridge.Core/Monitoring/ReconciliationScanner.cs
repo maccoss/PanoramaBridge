@@ -352,12 +352,18 @@ public sealed class ReconciliationScanner
 
         try
         {
+            // A directory acquisition reaches the server as one archive, so its verified row
+            // ends in .d.zip while this would otherwise resolve to .d. The two never matched, so
+            // every verified Bruker, Waters and Agilent folder has been offered again on every
+            // pass since directory acquisitions shipped -- each time re-measuring the whole
+            // folder before the engine could work out there was nothing to do. Not a re-upload,
+            // but real disk work on the machine attached to the mass spectrometer, which is the
+            // cost this project measures most carefully.
+            var leaf = record.DestinationLeaf
+                ?? (record.IsDataset ? DatasetFolder.ArchiveNameFor(stamp.Path) : null);
+
             destination = PathSafety
-                .ResolveDestination(
-                    _options.Root,
-                    stamp.Path,
-                    _options.DestinationRoot,
-                    record.DestinationLeaf)
+                .ResolveDestination(_options.Root, stamp.Path, _options.DestinationRoot, leaf)
                 .ToEncodedString();
         }
         catch (ArgumentException)
