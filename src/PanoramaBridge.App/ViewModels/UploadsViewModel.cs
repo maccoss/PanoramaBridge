@@ -182,16 +182,33 @@ public sealed partial class UploadsViewModel : ObservableObject
         _client = client ?? (static () => null);
     }
 
-    /// <summary>Rows picked for a decision, or every conflict when nothing is picked.</summary>
+    /// <summary>
+    /// The records a decision applies to: those picked, or every held file when none is picked.
+    /// </summary>
     /// <remarks>
-    /// Selecting nothing and pressing a button means "all of them", which is what somebody
-    /// looking at a filtered list of conflicts is asking for. Picking rows narrows it.
+    /// When nothing is ticked this asks the ledger rather than reading the rows on screen. The
+    /// list is capped at five thousand and narrowed by the filter and the search box, so "all of
+    /// them" read from the screen would have meant "all of the ones you happen to be looking at"
+    /// -- while the button said otherwise. On an instrument with a long history the conflicts
+    /// outside that window are exactly the old ones somebody is trying to clear.
     /// </remarks>
-    private IReadOnlyList<UploadRowViewModel> Targets()
+    private async Task<IReadOnlyList<UploadRecord>> TargetsAsync()
     {
-        var picked = Rows.Where(r => r.IsSelected && r.CanResolve).ToArray();
+        var picked = Rows
+            .Where(r => r.IsSelected && r.CanResolve)
+            .Select(r => r.Record)
+            .ToArray();
 
-        return picked.Length > 0 ? picked : Rows.Where(r => r.CanResolve).ToArray();
+        if (picked.Length > 0)
+        {
+            return picked;
+        }
+
+        var all = await _store
+            .GetByStateAsync([TransferState.Conflict], limit: int.MaxValue)
+            .ConfigureAwait(true);
+
+        return all;
     }
 
     /// <summary>True when there is anything here to decide about.</summary>
@@ -222,6 +239,17 @@ public sealed partial class UploadsViewModel : ObservableObject
     /// <summary>True when there is something worth a line of red text.</summary>
     public bool HasResolveProblem => ResolveProblem.Length > 0;
 
+    /// <summary>
+    /// True when Replace has been pressed once and is waiting to be confirmed.
+    /// </summary>
+    /// <remarks>
+    /// Cleared by every other action, so a confirmation cannot sit armed while the list, the
+    /// selection or the filter changes underneath it and then fire against a different set of
+    /// files than the one it counted.
+    /// </remarks>
+    [ObservableProperty]
+    private bool _overwriteArmed;
+
     /// <summary>Search text applied to the file name.</summary>
     [ObservableProperty]
     private string _search = string.Empty;
@@ -239,6 +267,10 @@ public sealed partial class UploadsViewModel : ObservableObject
     {
         IsLoading = true;
         ResolveProblem = string.Empty;
+
+        // A confirmation counted a specific set of files. If the list is being rebuilt, that
+        // count no longer describes anything, so the confirmation goes with it.
+        OverwriteArmed = false;
 
         try
         {
@@ -271,10 +303,21 @@ public sealed partial class UploadsViewModel : ObservableObject
                     .ToArray();
             }
 
+            // Carried across the reload. Every resolve command ends in a refresh, and so does
+            // typing in the search box, so dropping the ticks would silently widen the next
+            // decision from "these two" to "all of them" between the tick and the click.
+            var picked = Rows
+                .Where(r => r.IsSelected)
+                .Select(r => r.Record.LocalPath)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
             Rows.Clear();
             foreach (var record in records)
             {
-                Rows.Add(new UploadRowViewModel(record));
+                Rows.Add(new UploadRowViewModel(record)
+                {
+                    IsSelected = picked.Contains(record.LocalPath),
+                });
             }
 
             OnPropertyChanged(nameof(HasConflicts));
@@ -288,43 +331,77 @@ public sealed partial class UploadsViewModel : ObservableObject
         }
     }
 
-    /// <summary>Replaces the remote copy with the local one.</summary>
+    /// <summary>
+    /// Replaces the remote copy with the local one, after asking a second time.
+    /// </summary>
+    /// <remarks>
+    /// The only action here that destroys something, and the one whose scope is easiest to get
+    /// wrong: leaving everything unticked means every held file, which is usually what somebody
+    /// wants and occasionally very much not. So the first press says how many and what will
+    /// happen, and the second carries it out. Two presses of one button rather than a dialog,
+    /// because a dialog in a view model cannot be tested and this is worth testing.
+    /// </remarks>
     [RelayCommand]
     private async Task ResolveOverwriteAsync()
     {
+        var targets = await TargetsAsync().ConfigureAwait(true);
+
         // Deliberately not offered for a damaged local file: that would push a short acquisition
         // over a good remote copy.
-        var targets = Targets();
-        var eligible = targets.Where(r => !r.IsLocalFileProblem).ToArray();
+        var eligible = targets
+            .Where(r => r.ConflictKind != ConflictKind.LocalFileDamaged)
+            .ToArray();
 
-        foreach (var row in eligible)
+        if (eligible.Length == 0)
+        {
+            OverwriteArmed = false;
+            await RefreshAsync().ConfigureAwait(true);
+
+            if (targets.Count > 0)
+            {
+                ResolveProblem =
+                    "Nothing was replaced. Every file picked is held because its own contents are "
+                    + "damaged, and replacing a good copy on the server with a short one is what "
+                    + "that check exists to prevent. Keep is the choice that applies.";
+            }
+
+            return;
+        }
+
+        if (!OverwriteArmed)
+        {
+            OverwriteArmed = true;
+
+            ResolveProblem =
+                $"This will replace {eligible.Length} file(s) on the server with the local copies, "
+                + "and what is there now will be gone. Press Replace again to go ahead, or any "
+                + "other button to stop.";
+
+            return;
+        }
+
+        OverwriteArmed = false;
+
+        foreach (var record in eligible)
         {
             await _store
-                .ResolveConflictAsync(row.Record.LocalPath, ConflictResolution.Overwrite)
+                .ResolveConflictAsync(record.LocalPath, ConflictResolution.Overwrite)
                 .ConfigureAwait(true);
         }
 
         await RefreshAsync().ConfigureAwait(true);
-
-        // Refresh clears this, so it is set afterwards. Doing nothing silently reads as a broken
-        // button rather than as the guard it is.
-        if (eligible.Length == 0 && targets.Count > 0)
-        {
-            ResolveProblem =
-                "Nothing was replaced. Every file picked is held because its own contents are "
-                + "damaged, and replacing a good copy on the server with a short one is what "
-                + "that check exists to prevent. Keep is the choice that applies.";
-        }
     }
 
     /// <summary>Keeps what is on the server and stops offering the local file.</summary>
     [RelayCommand]
     private async Task ResolveKeepAsync()
     {
-        foreach (var row in Targets())
+        OverwriteArmed = false;
+
+        foreach (var record in await TargetsAsync().ConfigureAwait(true))
         {
             await _store
-                .ResolveConflictAsync(row.Record.LocalPath, ConflictResolution.Keep)
+                .ResolveConflictAsync(record.LocalPath, ConflictResolution.Keep)
                 .ConfigureAwait(true);
         }
 
@@ -335,21 +412,15 @@ public sealed partial class UploadsViewModel : ObservableObject
     /// Sends the local file alongside the remote one, under the first free name.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// Names are worked out here, before anything is written, so the list of them can be shown
-    /// and agreed to rather than discovered afterwards. One listing per destination folder covers
-    /// a whole batch, and names handed out within the batch are remembered, so five hundred files
-    /// landing in one folder do not all propose the same name.
-    /// </para>
-    /// <para>
-    /// The engine checks the name again before it sends anything. This proposal can be minutes or
-    /// a reboot old by then, and being merely probably-free is not good enough when the cost of
-    /// being wrong is somebody else's data.
-    /// </para>
+    /// The names come from <see cref="RenamePlanner"/> in Core. They were worked out here at
+    /// first, which put transfer logic in a view model, duplicated the engine's own renaming, and
+    /// could not be tested without a dispatcher.
     /// </remarks>
     [RelayCommand]
     private async Task ResolveRenameAsync()
     {
+        OverwriteArmed = false;
+
         var client = _client();
 
         if (client is null)
@@ -360,82 +431,34 @@ public sealed partial class UploadsViewModel : ObservableObject
             return;
         }
 
-        var taken = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-        var proposals = new List<(UploadRowViewModel Row, string Name)>();
+        var targets = await TargetsAsync().ConfigureAwait(true);
 
-        foreach (var row in Targets().Where(r => !r.IsLocalFileProblem))
+        var plan = await new RenamePlanner(client)
+            .PlanAsync(targets.Where(r => r.ConflictKind != ConflictKind.LocalFileDamaged))
+            .ConfigureAwait(true);
+
+        if (!plan.IsUsable)
         {
-            RemotePath path;
-
-            try
-            {
-                path = RemotePath.Parse(row.Record.RemotePath);
-            }
-            catch (ArgumentException)
-            {
-                continue;
-            }
-
-            var folder = path.Parent;
-            var key = folder.ToEncodedString();
-
-            if (!taken.TryGetValue(key, out var names))
-            {
-                try
-                {
-                    var listing = await client.ListAsync(folder).ConfigureAwait(true);
-                    names = listing.Select(r => r.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                }
-                catch (WebDavException ex)
-                {
-                    ResolveProblem = ex.ToUserMessage();
-                    return;
-                }
-                catch (Exception ex) when (ex is HttpRequestException or IOException
-                    or OperationCanceledException)
-                {
-                    // The client is only null before the first connection, so an unplugged
-                    // network gives a live client and a raw transport failure. Caught here
-                    // because it is the common case, and because the alternative is the generic
-                    // crash box carrying "No such host is known" -- which is not a sentence
-                    // written for somebody looking at a stalled transfer.
-                    ResolveProblem =
-                        "The server could not be reached, so a free name could not be checked. "
-                        + $"Try again once the connection is back. ({ex.Message})";
-                    return;
-                }
-
-                taken[key] = names;
-            }
-
-            var proposed = ConflictNames.NextFree(path.Name, names);
-
-            // The suffix lengthens the name, and the destination has a limit. Refusing here keeps
-            // the failure attached to the decision that caused it, instead of turning into a
-            // Failed row minutes later with a message about character counts.
-            var usable = PathSafety.ValidateSegment(proposed);
-
-            if (!usable.IsValid)
-            {
-                ResolveProblem =
-                    $"'{path.Name}' cannot be renamed automatically: {usable.Message} "
-                    + "Rename it on disk, or keep the copy on the server.";
-                return;
-            }
-
-            // Remembered, so the next file in this batch does not propose the same name.
-            names.Add(proposed);
-            proposals.Add((row, proposed));
+            ResolveProblem = plan.Problem!;
+            return;
         }
 
-        foreach (var (row, name) in proposals)
+        foreach (var (record, name) in plan.Proposals)
         {
             await _store
-                .ResolveConflictAsync(row.Record.LocalPath, ConflictResolution.Rename, name)
+                .ResolveConflictAsync(record.LocalPath, ConflictResolution.Rename, name)
                 .ConfigureAwait(true);
         }
 
         await RefreshAsync().ConfigureAwait(true);
+
+        if (plan.Proposals.Count == 0 && targets.Count > 0)
+        {
+            ResolveProblem =
+                "Nothing was renamed. Every file picked is held because its own contents are "
+                + "damaged, and sending a short acquisition under any name is not the answer. "
+                + "Keep is the choice that applies.";
+        }
     }
 
     /// <summary>

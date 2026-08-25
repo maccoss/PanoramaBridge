@@ -21,6 +21,11 @@ time and update the heading; see `README.md` in this directory for the process.
 
   Your decision is remembered across a restart, so it is safe to decide and walk away.
 
+  **Replace what is on the server** asks twice: the first press says how many files it is about to
+  replace, and the second carries it out. It is the only one of the three that destroys anything,
+  and leaving every file unticked means all of them, so it is worth a second look. Pressing any
+  other button cancels it.
+
   **Send alongside** picks the first free name — `run.raw` becomes `run (2).raw`, keeping the
   extension where Skyline and Panorama look for it. The name is checked against the server again
   before anything is sent, so a file that arrived at that name in the meantime is never replaced.

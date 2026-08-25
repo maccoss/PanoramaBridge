@@ -56,8 +56,21 @@
                                Text="Some files were held because something different already occupies their destination. Tick the ones you want to decide about, or leave everything unticked to decide about all of them." />
 
                     <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                        <Button Content="Replace what is on the server"
-                                Command="{Binding ResolveOverwriteCommand}" />
+                        <!-- Says what it will do next, so the second press is not a surprise. -->
+                        <Button Command="{Binding ResolveOverwriteCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="Replace what is on the server" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding OverwriteArmed}" Value="True">
+                                            <Setter Property="Content" Value="Replace them - press to confirm" />
+                                            <Setter Property="Foreground" Value="#A32100" />
+                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
                         <Button Content="Send alongside, under a new name" Margin="8,0,0,0"
                                 Command="{Binding ResolveRenameCommand}" />
                         <Button Content="Keep what is on the server" Margin="8,0,0,0"

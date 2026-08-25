@@ -189,5 +189,98 @@ public sealed class UploadsConflictTests : IAsyncDisposable
         view.HasResolveProblem.ShouldBeFalse();
     }
 
+    [Fact]
+    public async Task Replacing_asks_twice_before_destroying_anything()
+    {
+        await ConflictAsync("a.raw");
+
+        var view = await LoadedAsync();
+
+        // First press arms and explains. Nothing is decided yet.
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+
+        view.OverwriteArmed.ShouldBeTrue();
+        view.ResolveProblem.ShouldContain("1 file(s)");
+        (await _store.GetAsync(@"C:\data\a.raw"))!.State.ShouldBe(TransferState.Conflict);
+
+        // Second press goes ahead.
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+
+        view.OverwriteArmed.ShouldBeFalse();
+        (await _store.GetAsync(@"C:\data\a.raw"))!.Resolution
+            .ShouldBe(ConflictResolution.Overwrite);
+    }
+
+    [Fact]
+    public async Task Another_action_cancels_a_pending_replace()
+    {
+        await ConflictAsync("a.raw");
+
+        var view = await LoadedAsync();
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+        view.OverwriteArmed.ShouldBeTrue();
+
+        // Pressing something else is how somebody backs out. Leaving it armed would let the next
+        // press of Replace fire against a set of files it never counted.
+        await view.ResolveKeepCommand.ExecuteAsync(null);
+
+        view.OverwriteArmed.ShouldBeFalse();
+        (await _store.GetAsync(@"C:\data\a.raw"))!.State.ShouldBe(TransferState.Declined);
+    }
+
+    [Fact]
+    public async Task A_reload_cancels_a_pending_replace()
+    {
+        await ConflictAsync("a.raw");
+
+        var view = await LoadedAsync();
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+
+        // Typing in the search box rebuilds the list, so the count the confirmation quoted no
+        // longer describes anything.
+        await view.RefreshAsync();
+
+        view.OverwriteArmed.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Ticks_survive_the_reload_that_every_action_causes()
+    {
+        var picked = await ConflictAsync("a.raw");
+        await ConflictAsync("b.raw");
+
+        var view = await LoadedAsync();
+        view.Rows.Single(r => r.Record.LocalPath == picked).IsSelected = true;
+
+        // Every resolve command ends in a refresh, and so does typing in the search box. Dropping
+        // the ticks here would silently widen the next decision from "this one" to "all of them"
+        // between the tick and the click.
+        await view.RefreshAsync();
+
+        view.Rows.Single(r => r.Record.LocalPath == picked).IsSelected.ShouldBeTrue();
+        view.Rows.Single(r => r.Record.LocalPath != picked).IsSelected.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Deciding_about_all_of_them_reaches_rows_the_view_never_loaded()
+    {
+        await ConflictAsync("loaded.raw");
+        await ConflictAsync("elsewhere.raw");
+
+        // The list is narrowed to one row by the search box, which is exactly the situation where
+        // reading the screen would have meant "all of the ones you happen to be looking at" while
+        // the button said "all of them".
+        var view = await LoadedAsync();
+        view.Search = "loaded";
+        await view.RefreshAsync();
+
+        view.Rows.Count.ShouldBe(1);
+
+        await view.ResolveKeepCommand.ExecuteAsync(null);
+
+        var declined = await _store.GetByStateAsync([TransferState.Declined]);
+        declined.Count.ShouldBe(2);
+    }
+
     public ValueTask DisposeAsync() => _store.DisposeAsync();
 }
