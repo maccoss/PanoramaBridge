@@ -1,6 +1,8 @@
 using PanoramaBridge.App.ViewModels;
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Core.Transfer;
+using PanoramaBridge.Core.WebDav;
+using PanoramaBridge.Tests.TestDoubles;
 
 namespace PanoramaBridge.Tests.App;
 
@@ -432,15 +434,71 @@ public sealed class UploadsConflictTests : IAsyncDisposable
         var path = await ConflictAsync("a.raw");
 
         var announced = new List<TransferProgress>();
-        var view = new UploadsViewModel(_store, announce: announced.Add);
+        var forgotten = new List<string>();
+
+        var view = new UploadsViewModel(_store, announce: announced.Add, forget: forgotten.Add);
         await view.RefreshAsync();
 
         await view.ResolveOverwriteCommand.ExecuteAsync(null);
         await _store.SetStateAsync(path, TransferState.Uploading);
         await view.ResolveOverwriteCommand.ExecuteAsync(null);
 
-        // Announcing a decision the store refused would tell the status bar something untrue.
+        // Telling the status bar about a decision the store refused would be telling it something
+        // untrue. Replace retracts rather than announces, so the retraction is what to assert --
+        // checking `announced` alone passed whatever the store did, because this path never
+        // announces anything.
         announced.ShouldBeEmpty();
+        forgotten.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Picking_a_file_that_stops_being_held_does_not_widen_to_everything()
+    {
+        // Pruning stale picks was itself a fix, for the buttons going dead. Falling through to
+        // "all of them" once the picks are gone over-corrects in the opposite direction: the user
+        // aimed at one file, a sweep picked it up before they pressed the button, and every held
+        // conflict on the machine gets decided instead. Silently, and without a confirmation.
+        var aimed = await ConflictAsync("aimed-at.raw");
+        await ConflictAsync("untouched-a.raw");
+        await ConflictAsync("untouched-b.raw");
+
+        var view = await LoadedAsync();
+        view.Rows.Single(r => r.Record.LocalPath == aimed).IsSelected = true;
+
+        // The sweep gets to it first.
+        await _store.SetStateAsync(aimed, TransferState.Uploading);
+
+        await view.ResolveKeepCommand.ExecuteAsync(null);
+
+        (await _store.GetAsync(@"C:\data\untouched-a.raw"))!.State
+            .ShouldBe(TransferState.Conflict, "it was never aimed at");
+        (await _store.GetAsync(@"C:\data\untouched-b.raw"))!.State
+            .ShouldBe(TransferState.Conflict, "it was never aimed at");
+
+        // And the user is told, rather than left thinking their decision landed.
+        view.HasResolveProblem.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task A_damaged_file_left_out_of_a_rename_is_reported()
+    {
+        // Filtered out before planning, so the plan measured against itself said every proposal
+        // succeeded and the counts agreed. The user was left believing both were settled while
+        // the damaged one is still held.
+        await ConflictAsync("a.raw");
+        await ConflictAsync("short.raw", rawCheck: "Incomplete: the file ends before its data does.");
+
+        // A real server, or this takes the "there is no connection" branch and passes without
+        // going anywhere near the planner.
+        var server = new FakeWebDavClient();
+        server.Seed(RemotePath.Parse("/_webdav/uploads/a.raw"), "occupying"u8.ToArray());
+
+        var view = new UploadsViewModel(_store, () => server);
+        await view.RefreshAsync();
+
+        await view.ResolveRenameCommand.ExecuteAsync(null);
+
+        view.ResolveProblem.ShouldContain("not changed");
     }
 
     public ValueTask DisposeAsync() => _store.DisposeAsync();

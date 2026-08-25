@@ -121,6 +121,9 @@ public sealed class TransferProgressAggregator
     /// </remarks>
     public event Action? WorkAppeared;
 
+    /// <summary>Raised when a path is dropped, so a view can take its row away.</summary>
+    public event Action<string>? Dropped;
+
     /// <summary>True when a drain would return something.</summary>
     public bool HasPendingChanges => !_dirty.IsEmpty;
 
@@ -249,7 +252,6 @@ public sealed class TransferProgressAggregator
         return removed;
     }
 
-    /// <summary>Forgets everything.</summary>
     /// <summary>Drops one path, as though it had never been reported.</summary>
     /// <remarks>
     /// For a row that is going to be reported again from the beginning. Restating it as queued
@@ -262,9 +264,22 @@ public sealed class TransferProgressAggregator
         ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
 
         _dirty.TryRemove(localPath, out _);
-        return _latest.TryRemove(localPath, out _);
+
+        if (!_latest.TryRemove(localPath, out _))
+        {
+            return false;
+        }
+
+        // Announced, because removing an entry is invisible otherwise. The view builds its rows
+        // from what has changed, and a row whose entry has simply vanished never comes up -- so
+        // it sat there reading "Needs a decision" while the totals no longer counted it. And with
+        // nothing moving the refresh timer is stopped, which is exactly the state somebody is in
+        // when they sit down to clear conflicts, so nothing would have redrawn it either.
+        Dropped?.Invoke(localPath);
+        return true;
     }
 
+    /// <summary>Forgets everything.</summary>
     public void Clear()
     {
         _latest.Clear();

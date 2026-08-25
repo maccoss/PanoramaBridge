@@ -857,7 +857,11 @@ public sealed class TransferCoordinator : IAsyncDisposable
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                Report(localPath, encoded, TransferState.Conflict, "Needs a decision",
+                // The row's own destination, not the name that turned out to be occupied. The
+                // ledger stopped recording the proposed name a moment ago for exactly this
+                // reason; showing it here would put somebody else's path in front of the user as
+                // though it were theirs.
+                Report(localPath, record.RemotePath, TransferState.Conflict, "Needs a decision",
                     0, stamp.Length, message: reason);
                 return;
             }

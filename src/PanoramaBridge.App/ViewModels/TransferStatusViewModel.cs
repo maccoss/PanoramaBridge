@@ -66,6 +66,39 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
         // forever keeps the processor out of its deep idle states for no benefit. The aggregator
         // wakes us when there is actually something to draw.
         _aggregator.WorkAppeared += Wake;
+        _aggregator.Dropped += Drop;
+    }
+
+    /// <summary>
+    /// Takes away a row whose entry has been dropped. Safe to call from a worker thread.
+    /// </summary>
+    private void Drop(string localPath)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            dispatcher.InvokeAsync(() => Drop(localPath), DispatcherPriority.Background);
+            return;
+        }
+
+        if (_byPath.TryGetValue(localPath, out var row))
+        {
+            var index = Rows.IndexOf(row);
+
+            if (index >= 0)
+            {
+                RemoveRow(index);
+            }
+        }
+
+        // The totals and the attention count are read here rather than left to the timer, which
+        // is stopped whenever nothing is moving -- and nothing is moving in the case this exists
+        // for.
+        var totals = _aggregator.Totals();
+        Summary = totals.Describe();
+        OverallProgress = totals.Fraction;
+        AttentionCount = totals.NeedsAttention;
     }
 
     /// <summary>
@@ -283,6 +316,7 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
     public void Dispose()
     {
         _aggregator.WorkAppeared -= Wake;
+        _aggregator.Dropped -= Drop;
         _timer.Stop();
     }
 }

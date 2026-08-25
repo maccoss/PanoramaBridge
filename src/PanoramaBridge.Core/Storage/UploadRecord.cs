@@ -215,7 +215,6 @@ public sealed record UploadRecord(
     /// carried out. If the local file changes it is sent again, to the same renamed destination,
     /// which is what somebody who chose "send it alongside" meant.
     /// </para>
-    /// </remarks>
     /// <para>
     /// A directory acquisition's leaf is not here. Its archive name is derived from the folder,
     /// and deriving it would make this type reach into monitoring for something only the sweep
