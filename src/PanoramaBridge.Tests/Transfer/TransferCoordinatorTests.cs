@@ -195,6 +195,27 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task The_rename_policy_sends_it_alongside_without_asking()
+    {
+        // This setting shipped in the first release and did nothing: the ladder returned a
+        // conflict saying "a new name is needed" and nothing ever picked one, so choosing Rename
+        // behaved exactly like Ask and files waited for a decision nobody knew to make.
+        var file = await WriteAsync("run.raw", "the local one");
+        var occupied = Destination.Append("run.raw");
+        _server.Seed(occupied, "something else entirely"u8.ToArray());
+
+        await RunWithAsync(NewCoordinator(policy: ConflictPolicy.Rename), file);
+
+        var after = await _store.GetAsync(file);
+        after!.State.ShouldBe(TransferState.Verified);
+        after.RemotePath.ShouldEndWith("run%20%282%29.raw");
+
+        // The copy already there is what the policy exists to preserve.
+        _server.Content(occupied).ShouldBe("something else entirely"u8.ToArray());
+        _server.Content(Destination.Append("run (2).raw")).ShouldBe("the local one"u8.ToArray());
+    }
+
+    [Fact]
     public async Task A_rename_never_overwrites_something_that_arrived_at_the_new_name()
     {
         var file = await WriteAsync("run.raw", "the local one");

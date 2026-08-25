@@ -38,6 +38,40 @@
             </DockPanel>
 
             <TextBlock Margin="0,8,0,0" Text="{Binding Summary}" />
+
+            <!--
+                Shown only when there is something to decide. A row of buttons that is nearly
+                always disabled teaches people to ignore it, and this one matters on the days it
+                appears.
+
+                Nothing here interrupts a transfer: conflicts wait in the ledger until somebody
+                is at the machine. A modal on an instrument PC at three in the morning would turn
+                one held file into a stalled night.
+            -->
+            <Border Margin="0,10,0,0" Padding="10" CornerRadius="3"
+                    Background="#FFF7E6" BorderBrush="#E0C48C" BorderThickness="1"
+                    Visibility="{Binding HasConflicts, Converter={StaticResource BooleanToVisibility}}">
+                <StackPanel>
+                    <TextBlock TextWrapping="Wrap"
+                               Text="Some files were held because something different already occupies their destination. Tick the ones you want to decide about, or leave everything unticked to decide about all of them." />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button Content="Replace what is on the server"
+                                Command="{Binding ResolveOverwriteCommand}" />
+                        <Button Content="Send alongside, under a new name" Margin="8,0,0,0"
+                                Command="{Binding ResolveRenameCommand}" />
+                        <Button Content="Keep what is on the server" Margin="8,0,0,0"
+                                Command="{Binding ResolveKeepCommand}" />
+                    </StackPanel>
+
+                    <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,0" TextWrapping="Wrap"
+                               Text="A file whose own contents are damaged is held here too, and only Keep applies to it: replacing a good remote copy with a short one is the thing this check exists to prevent." />
+
+                    <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Foreground="#A32100"
+                               Text="{Binding RenameProblem}"
+                               Visibility="{Binding HasRenameProblem, Converter={StaticResource BooleanToVisibility}}" />
+                </StackPanel>
+            </Border>
         </StackPanel>
 
         <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}"
@@ -68,6 +102,26 @@
             </DataGrid.RowStyle>
 
             <DataGrid.Columns>
+                <!--
+                    Editable in an otherwise read-only grid, which is why IsReadOnly is set on the
+                    column rather than left to inherit. Ticking a row is not editing the ledger.
+                -->
+                <DataGridCheckBoxColumn Header="" Width="34" IsReadOnly="False"
+                                        Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}">
+                    <DataGridCheckBoxColumn.CellStyle>
+                        <Style TargetType="DataGridCell">
+                            <Setter Property="ToolTip" Value="Pick this file to decide about" />
+                            <Style.Triggers>
+                                <!-- Only a conflict is something a person can decide about. -->
+                                <DataTrigger Binding="{Binding CanResolve}" Value="False">
+                                    <Setter Property="IsEnabled" Value="False" />
+                                    <Setter Property="ToolTip" Value="{x:Null}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGridCheckBoxColumn.CellStyle>
+                </DataGridCheckBoxColumn>
+
                 <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="2*" />
                 <DataGridTextColumn Header="State" Binding="{Binding State}" Width="130" />
 

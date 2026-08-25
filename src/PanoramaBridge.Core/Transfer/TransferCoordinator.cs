@@ -374,6 +374,26 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 return;
 
             case UploadAction.Conflict:
+
+                // Rename is a standing instruction rather than a question, so it is carried out
+                // here instead of being held. The setting has existed since the first release and
+                // did nothing: the decision ladder returned a conflict saying "a new name is
+                // needed" and no caller ever picked one, so choosing Rename behaved exactly like
+                // Ask and files piled up waiting for a decision nobody knew to make.
+                if (_options.ConflictPolicy == ConflictPolicy.Rename)
+                {
+                    var renamed = await RenameAroundAsync(
+                        record, stamp, destination, cancellationToken).ConfigureAwait(false);
+
+                    if (renamed)
+                    {
+                        return;
+                    }
+
+                    // Could not find out what is in the folder, so there is no name to trust.
+                    // Falls through and is held, which is the safe end of that failure.
+                }
+
                 Interlocked.Increment(ref _conflicts);
 
                 // Saved rather than updated: a file seen for the first time has no row yet, and
@@ -605,6 +625,73 @@ public sealed class TransferCoordinator : IAsyncDisposable
             // and it is left inside the folder the sweep walks.
             DatasetArchive.Discard(packed.Path);
         }
+    }
+
+    /// <summary>
+    /// Sends a file alongside the one occupying its name, under the first free one.
+    /// </summary>
+    /// <remarks>
+    /// The names come from the folder snapshot the decision ladder has just taken, so this costs
+    /// nothing beyond what has already been paid for. Returns false when the folder could not be
+    /// read, in which case the caller holds the file: a name chosen without knowing what is there
+    /// is a name that might overwrite something.
+    /// <para>
+    /// That failure branch is untested, and close to unreachable: the ladder has just listed this
+    /// folder successfully, so the call below is served from the cache. It is kept because the
+    /// alternative to a cache miss here is an exception escaping into the worker loop, and said
+    /// to be untested rather than left to look covered.
+    /// </para>
+    /// </remarks>
+    private async Task<bool> RenameAroundAsync(
+        UploadRecord record,
+        LocalFileStamp stamp,
+        RemotePath destination,
+        CancellationToken cancellationToken)
+    {
+        RemoteFolderSnapshot snapshot;
+
+        try
+        {
+            snapshot = await _snapshots
+                .GetAsync(destination.Parent, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (WebDavException ex)
+        {
+            _log.LogWarning(
+                ex,
+                "Could not list {Folder} to find a free name for {Path}; holding it instead.",
+                destination.Parent,
+                record.LocalPath);
+
+            return false;
+        }
+
+        var free = ConflictNames.NextFree(destination.Name, snapshot.Entries.Keys);
+
+        var renamed = PathSafety.ResolveDestination(
+            _options.LocalBaseDirectory,
+            record.LocalPath,
+            _options.DestinationRoot,
+            free);
+
+        _log.LogInformation(
+            "{Path}: '{Taken}' is occupied, sending it as '{Free}' by policy.",
+            record.LocalPath,
+            destination.Name,
+            free);
+
+        var queued = record with
+        {
+            RemotePath = renamed.ToEncodedString(),
+            State = TransferState.Queued,
+        };
+
+        await _store.SaveAsync(queued, cancellationToken).ConfigureAwait(false);
+
+        await UploadAsync(queued, stamp, renamed, cancellationToken).ConfigureAwait(false);
+
+        return true;
     }
 
     /// <summary>

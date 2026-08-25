@@ -5,7 +5,39 @@ time and update the heading; see `README.md` in this directory for the process.
 
 ## New Features
 
+- **Held files can now be decided about.** When something different already occupies a file's
+  destination on Panorama, PanoramaBridge holds the file rather than guessing — but until now
+  there was no way to say what should happen, so it stayed held indefinitely.
+
+  The **Uploads** tab now offers three answers, on the **Needs attention** filter: **Replace what
+  is on the server**, **Send alongside, under a new name**, or **Keep what is on the server**.
+  Tick the files you want to decide about, or leave everything unticked to decide about all of
+  them at once — a plate that produced five hundred conflicts is three clicks rather than five
+  hundred.
+
+  Nothing interrupts a transfer to ask. Conflicts wait until somebody is at the machine, because a
+  dialog appearing on an instrument computer overnight would block every transfer behind it until
+  someone clicked it.
+
+  Your decision is remembered across a restart, so it is safe to decide and walk away.
+
+  **Send alongside** picks the first free name — `run.raw` becomes `run (2).raw`, keeping the
+  extension where Skyline and Panorama look for it. The name is checked against the server again
+  before anything is sent, so a file that arrived at that name in the meantime is never replaced.
+
+  One case is deliberately narrower: a file held because **its own contents are damaged** — a
+  Thermo `.raw` that ends before its data does — offers only **Keep**. Replacing a good copy on
+  the server with a short one is the outcome that check exists to prevent.
+
 ## Bug Fixes
+
+- **The "Rename" conflict setting did nothing.** Setting **When the destination is occupied** to
+  rename has, since the first release, behaved exactly like **Ask**: files were held waiting for a
+  decision rather than being sent under a new name, and nothing said so. It now does what it says
+  — the file is sent alongside under the first free name, without asking.
+
+  If you had this set and wondered why files kept collecting under **Needs attention**, that is
+  why. Those files are still there and can be released with the buttons described above.
 
 ## Performance
 

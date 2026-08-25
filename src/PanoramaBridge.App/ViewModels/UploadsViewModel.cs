@@ -6,11 +6,18 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
 using PanoramaBridge.Core.Storage;
+using PanoramaBridge.Core.Transfer;
+using PanoramaBridge.Core.WebDav;
 
 namespace PanoramaBridge.App.ViewModels;
 
 /// <summary>One row of the upload ledger, as shown in the audit view.</summary>
-public sealed class UploadRowViewModel
+/// <remarks>
+/// Observable only because a row can now be picked for a bulk decision. Everything else about it
+/// is fixed at construction: the ledger is reloaded to reflect a change rather than edited in
+/// place, so a row never has to tell the view that a value it already showed was wrong.
+/// </remarks>
+public sealed partial class UploadRowViewModel : ObservableObject
 {
     public UploadRowViewModel(UploadRecord record)
     {
@@ -77,6 +84,34 @@ public sealed class UploadRowViewModel
     public bool NeedsAttention =>
         Record.State is TransferState.Failed or TransferState.Conflict or TransferState.Superseded;
 
+    /// <summary>True when this row is one a person can actually decide about.</summary>
+    /// <remarks>
+    /// Only a conflict. A failed upload needs retrying rather than deciding, and a superseded one
+    /// resolves itself on the next sweep -- offering the same three buttons for all of them would
+    /// imply choices that do not apply and, for Overwrite, one that is actively wrong.
+    /// </remarks>
+    public bool CanResolve => Record.State == TransferState.Conflict;
+
+    /// <summary>
+    /// True when the conflict is that the local file is damaged rather than that the destination
+    /// is occupied.
+    /// </summary>
+    /// <remarks>
+    /// A proven-truncated acquisition is held in the same state as a destination clash, and the
+    /// two want opposite things. Offering Overwrite here would let somebody push a short file
+    /// over a good remote copy -- the exact outcome the truncation check exists to prevent -- so
+    /// the view offers only Keep, and says why.
+    /// </remarks>
+    public bool IsLocalFileProblem =>
+        Record.State == TransferState.Conflict
+        && Record.RawCheck is { Length: > 0 }
+        && Record.LastError is { Length: > 0 }
+        && string.Equals(Record.RawCheck, Record.LastError, StringComparison.Ordinal);
+
+    /// <summary>Whether this row is picked for a bulk decision.</summary>
+    [ObservableProperty]
+    private bool _isSelected;
+
     private static string FormatBytes(long bytes)
     {
         string[] units = ["B", "KB", "MB", "GB", "TB"];
@@ -131,8 +166,37 @@ public sealed partial class UploadsViewModel : ObservableObject
 
     private readonly IStateStore _store;
 
-    public UploadsViewModel(IStateStore store) =>
+    /// <summary>
+    /// How to reach the server, when there is one. Null while disconnected.
+    /// </summary>
+    /// <remarks>
+    /// A delegate rather than the transfer service itself, so the audit tab stays a reader of the
+    /// ledger and gains exactly one capability: listing a folder to find a free name. It is
+    /// resolved per call because the client comes and goes with the connection, and a captured
+    /// one would be stale the first time somebody edits the server settings.
+    /// </remarks>
+    private readonly Func<IWebDavClient?> _client;
+
+    public UploadsViewModel(IStateStore store, Func<IWebDavClient?>? client = null)
+    {
         _store = store ?? throw new ArgumentNullException(nameof(store));
+        _client = client ?? (static () => null);
+    }
+
+    /// <summary>Rows picked for a decision, or every conflict when nothing is picked.</summary>
+    /// <remarks>
+    /// Selecting nothing and pressing a button means "all of them", which is what somebody
+    /// looking at a filtered list of conflicts is asking for. Picking rows narrows it.
+    /// </remarks>
+    private IReadOnlyList<UploadRowViewModel> Targets()
+    {
+        var picked = Rows.Where(r => r.IsSelected && r.CanResolve).ToArray();
+
+        return picked.Length > 0 ? picked : Rows.Where(r => r.CanResolve).ToArray();
+    }
+
+    /// <summary>True when there is anything here to decide about.</summary>
+    public bool HasConflicts => Rows.Any(r => r.CanResolve);
 
     /// <summary>Rows currently shown.</summary>
     public ObservableCollection<UploadRowViewModel> Rows { get; } = [];
@@ -146,6 +210,14 @@ public sealed partial class UploadsViewModel : ObservableObject
 
     [ObservableProperty]
     private UploadFilter _filter = UploadFilter.All;
+
+    /// <summary>Why a rename could not be worked out, for the view to show.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasRenameProblem))]
+    private string _renameProblem = string.Empty;
+
+    /// <summary>True when there is a rename problem worth a line of red text.</summary>
+    public bool HasRenameProblem => RenameProblem.Length > 0;
 
     /// <summary>Search text applied to the file name.</summary>
     [ObservableProperty]
@@ -200,6 +272,8 @@ public sealed partial class UploadsViewModel : ObservableObject
                 Rows.Add(new UploadRowViewModel(record));
             }
 
+            OnPropertyChanged(nameof(HasConflicts));
+
             await UpdateSummaryAsync().ConfigureAwait(true);
         }
         finally
@@ -207,6 +281,119 @@ public sealed partial class UploadsViewModel : ObservableObject
             IsLoading = false;
             OnPropertyChanged(nameof(IsEmpty));
         }
+    }
+
+    /// <summary>Replaces the remote copy with the local one.</summary>
+    [RelayCommand]
+    private async Task ResolveOverwriteAsync()
+    {
+        // Deliberately not offered for a damaged local file: that would push a short acquisition
+        // over a good remote copy.
+        foreach (var row in Targets().Where(r => !r.IsLocalFileProblem))
+        {
+            await _store
+                .ResolveConflictAsync(row.Record.LocalPath, ConflictResolution.Overwrite)
+                .ConfigureAwait(true);
+        }
+
+        await RefreshAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>Keeps what is on the server and stops offering the local file.</summary>
+    [RelayCommand]
+    private async Task ResolveKeepAsync()
+    {
+        foreach (var row in Targets())
+        {
+            await _store
+                .ResolveConflictAsync(row.Record.LocalPath, ConflictResolution.Keep)
+                .ConfigureAwait(true);
+        }
+
+        await RefreshAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Sends the local file alongside the remote one, under the first free name.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Names are worked out here, before anything is written, so the list of them can be shown
+    /// and agreed to rather than discovered afterwards. One listing per destination folder covers
+    /// a whole batch, and names handed out within the batch are remembered, so five hundred files
+    /// landing in one folder do not all propose the same name.
+    /// </para>
+    /// <para>
+    /// The engine checks the name again before it sends anything. This proposal can be minutes or
+    /// a reboot old by then, and being merely probably-free is not good enough when the cost of
+    /// being wrong is somebody else's data.
+    /// </para>
+    /// </remarks>
+    [RelayCommand]
+    private async Task ResolveRenameAsync()
+    {
+        var client = _client();
+
+        if (client is null)
+        {
+            RenameProblem =
+                "A free name has to be checked against the server, and there is no connection at "
+                + "the moment. Test the connection on the Server tab, then try again.";
+            return;
+        }
+
+        RenameProblem = string.Empty;
+
+        var taken = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var proposals = new List<(UploadRowViewModel Row, string Name)>();
+
+        foreach (var row in Targets().Where(r => !r.IsLocalFileProblem))
+        {
+            RemotePath path;
+
+            try
+            {
+                path = RemotePath.Parse(row.Record.RemotePath);
+            }
+            catch (ArgumentException)
+            {
+                continue;
+            }
+
+            var folder = path.Parent;
+            var key = folder.ToEncodedString();
+
+            if (!taken.TryGetValue(key, out var names))
+            {
+                try
+                {
+                    var listing = await client.ListAsync(folder).ConfigureAwait(true);
+                    names = listing.Select(r => r.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                }
+                catch (WebDavException ex)
+                {
+                    RenameProblem = ex.ToUserMessage();
+                    return;
+                }
+
+                taken[key] = names;
+            }
+
+            var proposed = ConflictNames.NextFree(path.Name, names);
+
+            // Remembered, so the next file in this batch does not propose the same name.
+            names.Add(proposed);
+            proposals.Add((row, proposed));
+        }
+
+        foreach (var (row, name) in proposals)
+        {
+            await _store
+                .ResolveConflictAsync(row.Record.LocalPath, ConflictResolution.Rename, name)
+                .ConfigureAwait(true);
+        }
+
+        await RefreshAsync().ConfigureAwait(true);
     }
 
     /// <summary>

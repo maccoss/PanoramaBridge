@@ -167,7 +167,12 @@ public static class Program
         services.AddSingleton(provider => new TransferStatusViewModel(
             provider.GetRequiredService<TransferService>().Progress));
 
-        services.AddSingleton<UploadsViewModel>();
+        // The audit tab gets one capability beyond reading the ledger: listing a folder, so a
+        // rename can be given a name that is actually free. Resolved per call rather than
+        // captured, because the client comes and goes with the connection.
+        services.AddSingleton(provider => new UploadsViewModel(
+            provider.GetRequiredService<IStateStore>(),
+            () => provider.GetRequiredService<TransferService>().Client));
         services.AddSingleton<MainViewModel>();
         services.AddSingleton<MainWindow>();
 
