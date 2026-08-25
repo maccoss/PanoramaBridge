@@ -364,5 +364,84 @@ public sealed class UploadsConflictTests : IAsyncDisposable
             .ShouldBe(TransferState.Conflict, "it was never counted, so it was never confirmed");
     }
 
+    [Fact]
+    public async Task A_pick_that_is_no_longer_held_stops_counting()
+    {
+        // Picks live outside the rows now, so nothing prunes one when its file stops being a
+        // conflict -- and the row's tick box is disabled the moment it stops being resolvable, so
+        // it cannot be cleared by hand either. A single settled pick then makes every later
+        // decision target "the held files that are picked", of which there are none: the buttons
+        // go quietly dead for the rest of the session.
+        var first = await ConflictAsync("a.raw");
+        await ConflictAsync("b.raw");
+
+        var view = await LoadedAsync();
+        view.Rows.Single(r => r.Record.LocalPath == first).IsSelected = true;
+
+        await view.ResolveKeepCommand.ExecuteAsync(null);
+        (await _store.GetAsync(first))!.State.ShouldBe(TransferState.Declined);
+
+        // Nothing is ticked any more in any sense the user can see, so this means "all of them".
+        await view.ResolveKeepCommand.ExecuteAsync(null);
+
+        (await _store.GetAsync(@"C:\data\b.raw"))!.State.ShouldBe(TransferState.Declined);
+    }
+
+    [Fact]
+    public async Task Keeping_a_file_tells_the_rest_of_the_application_it_is_settled()
+    {
+        // The decision goes straight to the ledger, so nothing else hears about it unless it is
+        // announced. Without this the progress aggregator counted the file under "needs
+        // attention" for the life of the process and the status bar disagreed with the tab that
+        // had just cleared it.
+        await ConflictAsync("a.raw");
+
+        var announced = new List<TransferProgress>();
+        var view = new UploadsViewModel(_store, announce: announced.Add);
+        await view.RefreshAsync();
+
+        await view.ResolveKeepCommand.ExecuteAsync(null);
+
+        announced.Single().State.ShouldBe(TransferState.Declined);
+    }
+
+    [Fact]
+    public async Task Replacing_retracts_the_row_rather_than_restating_it()
+    {
+        await ConflictAsync("a.raw");
+
+        var announced = new List<TransferProgress>();
+        var forgotten = new List<string>();
+
+        var view = new UploadsViewModel(_store, announce: announced.Add, forget: forgotten.Add);
+        await view.RefreshAsync();
+
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+
+        // The sweep will report it from the start. Restating it as queued would leave a row
+        // nothing ever removes, and the refresh timer awake for the life of the process -- on a
+        // machine where that is the one thing this application must not do.
+        forgotten.ShouldBe([Path.Combine(@"C:\data", "a.raw")]);
+        announced.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Nothing_is_announced_for_a_decision_that_did_not_land()
+    {
+        var path = await ConflictAsync("a.raw");
+
+        var announced = new List<TransferProgress>();
+        var view = new UploadsViewModel(_store, announce: announced.Add);
+        await view.RefreshAsync();
+
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+        await _store.SetStateAsync(path, TransferState.Uploading);
+        await view.ResolveOverwriteCommand.ExecuteAsync(null);
+
+        // Announcing a decision the store refused would tell the status bar something untrue.
+        announced.ShouldBeEmpty();
+    }
+
     public ValueTask DisposeAsync() => _store.DisposeAsync();
 }

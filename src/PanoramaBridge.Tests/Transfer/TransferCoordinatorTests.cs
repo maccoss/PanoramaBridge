@@ -250,6 +250,39 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_rename_that_could_not_be_carried_out_still_knows_where_the_file_lives()
+    {
+        // Sent alongside once, so the row lives at run (2).raw.
+        var file = await WriteAsync("run.raw", "mine");
+        var original = Destination.Append("run.raw");
+        _server.Seed(original, "somebody else's"u8.ToArray());
+
+        await RunWithAsync(NewCoordinator(), file);
+        await _store.ResolveConflictAsync(file, ConflictResolution.Rename, "run (2).raw");
+        await RunWithAsync(NewCoordinator(), file);
+
+        // It changes and conflicts again; the user picks Rename a second time, but the proposed
+        // name turns out to be occupied, so the rename cannot be carried out.
+        await File.WriteAllTextAsync(file, "mine, edited");
+        await RunWithAsync(NewCoordinator(), file);
+
+        _server.Seed(Destination.Append("run (3).raw"), "someone else again"u8.ToArray());
+        await _store.ResolveConflictAsync(file, ConflictResolution.Rename, "run (3).raw");
+        await RunWithAsync(NewCoordinator(), file);
+
+        // Held, as it should be. But it must not have forgotten where its own copy is: clearing
+        // that sends the next Replace to run.raw and destroys the file the user chose to keep.
+        var after = await _store.GetAsync(file);
+        after!.State.ShouldBe(TransferState.Conflict);
+        after.RenameTo.ShouldBe("run (2).raw");
+
+        await _store.ResolveConflictAsync(file, ConflictResolution.Overwrite);
+        await RunWithAsync(NewCoordinator(), file);
+
+        _server.Content(original).ShouldBe("somebody else's"u8.ToArray());
+    }
+
+    [Fact]
     public async Task A_rename_never_overwrites_something_that_arrived_at_the_new_name()
     {
         var file = await WriteAsync("run.raw", "the local one");

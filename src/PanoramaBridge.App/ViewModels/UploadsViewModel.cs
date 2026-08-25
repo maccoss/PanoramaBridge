@@ -197,14 +197,19 @@ public sealed partial class UploadsViewModel : ObservableObject
     /// </remarks>
     private readonly Action<TransferProgress>? _announce;
 
+    /// <summary>Drops a file from the progress view, for one about to be sent afresh.</summary>
+    private readonly Action<string>? _forget;
+
     public UploadsViewModel(
         IStateStore store,
         Func<IWebDavClient?>? client = null,
-        Action<TransferProgress>? announce = null)
+        Action<TransferProgress>? announce = null,
+        Action<string>? forget = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _client = client ?? (static () => null);
         _announce = announce;
+        _forget = forget;
     }
 
     /// <summary>Reports a resolved file, so the status bar stops asking about it.</summary>
@@ -229,18 +234,36 @@ public sealed partial class UploadsViewModel : ObservableObject
     /// </remarks>
     private async Task<IReadOnlyList<UploadRecord>> TargetsAsync()
     {
-        var held = await _store
-            .GetByStateAsync([TransferState.Conflict], limit: int.MaxValue)
-            .ConfigureAwait(true);
-
-        if (_picked.Count == 0)
+        // Picked files are fetched by name rather than by pulling every conflict on the machine
+        // into memory to filter it down. On the long-history instrument this whole method exists
+        // for, that read was the largest allocation the tab made, once per button press.
+        if (_picked.Count > 0)
         {
-            return held;
+            var byPath = await _store
+                .GetManyAsync([.. _picked])
+                .ConfigureAwait(true);
+
+            var still = byPath.Values
+                .Where(r => r.State == TransferState.Conflict)
+                .ToArray();
+
+            // A pick only means anything while its file is still held. Nothing pruned these when
+            // a file was settled, and the tick box is disabled the moment a row stops being
+            // resolvable, so it could not be cleared by hand either -- one settled pick made
+            // every later decision target "the held files that are picked", of which there were
+            // none, and the buttons went quietly dead for the rest of the session.
+            _picked.IntersectWith(still.Select(r => r.LocalPath));
+
+            if (still.Length > 0)
+            {
+                return still;
+            }
         }
 
-        // Filtered from the ledger rather than from the rows, so a pick made before the list was
-        // narrowed still counts.
-        return held.Where(r => _picked.Contains(r.LocalPath)).ToArray();
+        // Nothing picked, or nothing picked is still held: all of them.
+        return await _store
+            .GetByStateAsync([TransferState.Conflict], limit: int.MaxValue)
+            .ConfigureAwait(true);
     }
 
     /// <summary>True when there is anything at all to decide about.</summary>
@@ -283,9 +306,11 @@ public sealed partial class UploadsViewModel : ObservableObject
     /// True when Replace has been pressed once and is waiting to be confirmed.
     /// </summary>
     /// <remarks>
-    /// Cleared by every other action, so a confirmation cannot sit armed while the list, the
-    /// selection or the filter changes underneath it and then fire against a different set of
-    /// files than the one it counted.
+    /// What makes the confirmation safe is <c>_armed</c>, which holds exactly the files the
+    /// first press counted, so a second press cannot act on anything else however long it waits.
+    /// This flag is additionally cleared by the other buttons and by any reload -- but note that
+    /// ticking a row does not clear it, because ticking no longer refreshes anything. Safe, but
+    /// not for the reason an earlier version of this remark claimed.
     /// </remarks>
     [ObservableProperty]
     private bool _overwriteArmed;
@@ -376,11 +401,6 @@ public sealed partial class UploadsViewModel : ObservableObject
                 Rows.Add(row);
             }
 
-            _heldCount = (await _store
-                .CountByStateAsync()
-                .ConfigureAwait(true))
-                .GetValueOrDefault(TransferState.Conflict);
-
             OnPropertyChanged(nameof(HasConflicts));
 
             await UpdateSummaryAsync().ConfigureAwait(true);
@@ -429,7 +449,10 @@ public sealed partial class UploadsViewModel : ObservableObject
 
                 if (wrote > 0)
                 {
-                    Announce(record, TransferState.Discovered, "Waiting");
+                    // Retracted, not restated as queued. The sweep will report it from the start,
+                    // and a queued row nothing ever removes keeps the refresh timer awake for
+                    // ever.
+                    _forget?.Invoke(record.LocalPath);
                 }
             }
 
@@ -486,10 +509,14 @@ public sealed partial class UploadsViewModel : ObservableObject
             return;
         }
 
+        // Deliberately does not name a cause. Zero rows changed means the row is no longer
+        // held, which is usually a transfer having picked it up -- but it is also what a second
+        // window, a double press, or a deleted row produces, and those need different remedies.
+        // Sending somebody to look for a transfer that never ran is worse than saying less.
         ResolveProblem =
-            $"{attempted - applied} of {attempted} file(s) were not changed: a transfer had "
-            + "already picked them up while this list was on screen. They are still held, and can "
-            + "be decided about again.";
+            $"{attempted - applied} of {attempted} file(s) were not changed, because they are no "
+            + "longer held: something else settled them while this list was on screen. Refresh to "
+            + "see where they stand.";
     }
 
     /// <summary>Keeps what is on the server and stops offering the local file.</summary>
@@ -555,17 +582,25 @@ public sealed partial class UploadsViewModel : ObservableObject
             return;
         }
 
+        var applied = 0;
+
         foreach (var (record, name) in plan.Proposals)
         {
-            if (await _store
-                    .ResolveConflictAsync(record.LocalPath, ConflictResolution.Rename, name)
-                    .ConfigureAwait(true) > 0)
+            var wrote = await _store
+                .ResolveConflictAsync(record.LocalPath, ConflictResolution.Rename, name)
+                .ConfigureAwait(true);
+
+            applied += wrote;
+
+            if (wrote > 0)
             {
-                Announce(record, TransferState.Discovered, "Waiting");
+                _forget?.Invoke(record.LocalPath);
             }
         }
 
         await RefreshAsync().ConfigureAwait(true);
+
+        ReportShortfall(applied, plan.Proposals.Count);
 
         if (plan.Proposals.Count == 0 && targets.Count > 0)
         {
@@ -633,6 +668,11 @@ public sealed partial class UploadsViewModel : ObservableObject
     private async Task UpdateSummaryAsync()
     {
         var counts = await _store.CountByStateAsync().ConfigureAwait(true);
+
+        // Taken from the same scan the summary needs. Asking twice per reload meant two GROUP BY
+        // passes over the whole table for every keystroke in the search box.
+        _heldCount = counts.GetValueOrDefault(TransferState.Conflict);
+        OnPropertyChanged(nameof(HasConflicts));
 
         if (counts.Count == 0)
         {

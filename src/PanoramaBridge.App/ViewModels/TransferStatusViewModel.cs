@@ -271,7 +271,8 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
 
         for (var i = Rows.Count - 1; i >= 0 && Rows.Count > MaxRows; i--)
         {
-            if (Rows[i].State is TransferState.Verified or TransferState.Skipped)
+            if (Rows[i].State is TransferState.Verified or TransferState.Skipped
+                or TransferState.Declined)
             {
                 RemoveRow(i);
             }

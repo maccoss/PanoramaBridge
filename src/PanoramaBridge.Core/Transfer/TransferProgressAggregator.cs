@@ -250,6 +250,21 @@ public sealed class TransferProgressAggregator
     }
 
     /// <summary>Forgets everything.</summary>
+    /// <summary>Drops one path, as though it had never been reported.</summary>
+    /// <remarks>
+    /// For a row that is going to be reported again from the beginning. Restating it as queued
+    /// instead would leave the UI counting work that has not started, and nothing removes a
+    /// queued row: the totals would keep the refresh timer awake for the life of the process,
+    /// which on an instrument computer is the one thing this application must not do.
+    /// </remarks>
+    public bool Forget(string localPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
+
+        _dirty.TryRemove(localPath, out _);
+        return _latest.TryRemove(localPath, out _);
+    }
+
     public void Clear()
     {
         _latest.Clear();

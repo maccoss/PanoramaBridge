@@ -509,25 +509,16 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         }
     }
 
-    private async Task ExecuteWriteAsync(
+    /// <remarks>
+    /// Defers to the counting form rather than repeating it. Two copies of the write-lock, open,
+    /// bind and execute sequence would have to be kept in step, and a busy retry or a transaction
+    /// added to one of them would silently apply to only half the store's writes.
+    /// </remarks>
+    private Task ExecuteWriteAsync(
         string sql,
         Action<SqliteCommand> bind,
-        CancellationToken cancellationToken)
-    {
-        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
-            await using var command = connection.CreateCommand();
-            command.CommandText = sql;
-            bind(command);
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
-    }
+        CancellationToken cancellationToken) =>
+        ExecuteWriteCountingAsync(sql, bind, cancellationToken);
 
     private void Initialize()
     {

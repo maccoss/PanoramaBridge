@@ -764,6 +764,13 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 .SaveAsync(
                     record with
                     {
+                        // The measurement that was just taken, or the row goes on describing the
+                        // file as it was before it was truncated -- so the sweep sees a changed
+                        // file, offers it again, and pays for a whole decision-ladder pass
+                        // (listing, possibly a remote hash) before rediscovering the same
+                        // truncation. The branch this mirrors has always stored it.
+                        Length = stamp.Length,
+                        LastWriteUnixMs = stamp.LastWriteUnixMs,
                         State = TransferState.Conflict,
                         LastError = rawCheck.Summary,
                         RawCheck = rawCheck.Summary,
@@ -819,16 +826,33 @@ public sealed class TransferCoordinator : IAsyncDisposable
                     ? $"'{destination.Name}' on the server is already identical to this file."
                     : $"'{destination.Name}' is occupied as well. {check.Reason}";
 
+                // Neither the proposed destination nor a cleared one.
+                //
+                // The rename did not happen, so the row still lives wherever it lived before --
+                // which its own recorded destination still names, because nothing has been
+                // written yet. Storing the name that turned out to be occupied would point the
+                // row at somebody else's file; clearing it would point the row at its original
+                // name, and the next Replace would then destroy the very copy the user chose to
+                // preserve when they first sent theirs alongside. That is the bug this branch was
+                // added to avoid, reintroduced one level down.
+                var lives = RemotePath.Parse(record.RemotePath).Name;
+
+                var ownName = PathSafety.ResolveDestination(
+                    _options.LocalBaseDirectory,
+                    localPath,
+                    _options.DestinationRoot).Name;
+
                 await _store
                     .SaveAsync(
                         record with
                         {
-                            RemotePath = encoded,
                             State = TransferState.Conflict,
                             LastError = reason,
                             ConflictKind = ConflictKind.DestinationOccupied,
                             Resolution = ConflictResolution.None,
-                            RenameTo = null,
+                            RenameTo = string.Equals(lives, ownName, StringComparison.OrdinalIgnoreCase)
+                                ? null
+                                : lives,
                         },
                         cancellationToken)
                     .ConfigureAwait(false);

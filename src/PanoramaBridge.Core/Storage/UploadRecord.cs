@@ -216,6 +216,14 @@ public sealed record UploadRecord(
     /// which is what somebody who chose "send it alongside" meant.
     /// </para>
     /// </remarks>
+    /// <para>
+    /// A directory acquisition's leaf is not here. Its archive name is derived from the folder,
+    /// and deriving it would make this type reach into monitoring for something only the sweep
+    /// needs -- the engine routes a directory to its own path long before anything asks this.
+    /// The sweep applies that fallback itself, and the comment there says why; if a third caller
+    /// ever appears, the fallback belongs in one place rather than two.
+    /// </para>
+    /// </remarks>
     public string? DestinationLeaf => RenameTo;
 
     /// <summary>
