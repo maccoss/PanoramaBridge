@@ -283,6 +283,117 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task An_acquisition_folder_does_not_overwrite_an_archive_it_did_not_put_there()
+    {
+        // Every other route to the server asks the decision ladder first. This one never did, so
+        // a directory acquisition was packed and PUT over whatever occupied its destination with
+        // no conflict raised and no regard for the conflict setting.
+        //
+        // The way in is ordinary: install PanoramaBridge on a second instrument computer, point
+        // it at a folder another machine already sent, and the empty ledger means every .d is
+        // repacked -- gigabytes of disk work on the acquisition machine -- and written over the
+        // archive already on the server. If the folders differ at all, that copy is gone, with
+        // nothing recorded and nothing for anybody to see.
+        var folder = Path.Combine(_local, "250314_HeLa.d");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "analysis.tdf"), "our index");
+
+        var occupied = Destination.Append("250314_HeLa.d.zip");
+        _server.Seed(occupied, "somebody else's archive"u8.ToArray());
+
+        await RunWithAsync(NewCoordinator(), folder);
+
+        _server.Content(occupied).ShouldBe("somebody else's archive"u8.ToArray());
+
+        var after = await _store.GetAsync(folder);
+        after!.State.ShouldBe(TransferState.Conflict, "and it must be visible, not silently lost");
+        after.ConflictKind.ShouldBe(ConflictKind.DestinationOccupied);
+    }
+
+    [Fact]
+    public async Task A_decision_about_an_acquisition_is_used_up_like_any_other()
+    {
+        // The occupied check is skipped while a decision is pending, which is right -- the
+        // decision answers it. But the decision has to be consumed, or the check is skipped for
+        // that folder for ever and the next stranger's archive is overwritten silently.
+        var folder = Path.Combine(_local, "250314_HeLa.d");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "analysis.tdf"), "ours");
+
+        _server.Seed(
+            Destination.Append("250314_HeLa.d.zip"), "somebody else's"u8.ToArray());
+
+        await RunWithAsync(NewCoordinator(), folder);
+        (await _store.GetAsync(folder))!.State.ShouldBe(TransferState.Conflict);
+
+        await _store.ResolveConflictAsync(folder, ConflictResolution.Overwrite);
+        await RunWithAsync(NewCoordinator(), folder);
+
+        var after = await _store.GetAsync(folder);
+        after!.State.ShouldBe(TransferState.Verified);
+        after.Resolution.ShouldBe(ConflictResolution.None, "the decision is spent");
+    }
+
+    [Fact]
+    public async Task An_acquisition_folder_still_updates_the_archive_it_did_put_there()
+    {
+        // The other half: a folder this application already sent, changed since, must go up again
+        // without asking. Treating our own older archive as a stranger's would make every second
+        // upload of an acquisition need a decision.
+        var folder = Path.Combine(_local, "250314_HeLa.d");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "analysis.tdf"), "first");
+
+        await RunWithAsync(NewCoordinator(), folder);
+        (await _store.GetAsync(folder))!.State.ShouldBe(TransferState.Verified);
+
+        await File.WriteAllTextAsync(Path.Combine(folder, "analysis.tdf"), "second, longer");
+
+        await RunWithAsync(NewCoordinator(), folder);
+
+        (await _store.GetAsync(folder))!.State.ShouldBe(TransferState.Verified);
+    }
+
+    [Fact]
+    public async Task A_renamed_acquisition_goes_to_the_archive_it_was_sent_under()
+    {
+        // The engine derived a folder's archive name from the folder every time, discarding any
+        // rename the row carried -- while the sweep preferred the rename. That is the two of them
+        // holding different opinions about where a file belongs, which sends the folder round on
+        // every pass and lands the upload on the copy the rename existed to preserve.
+        var folder = Path.Combine(_local, "250314_HeLa.d");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "analysis.tdf"), "the index");
+
+        var measured = DatasetFolder.Measure(folder)!.Value;
+
+        await _store.SaveAsync(new UploadRecord(
+            LocalPath: folder,
+            RemotePath: Destination.Append("250314_HeLa (2).d.zip").ToEncodedString(),
+            Length: measured.TotalBytes,
+            LastWriteUnixMs: measured.NewestWriteUnixMs,
+            Md5: null,
+            Sha256: null,
+            State: TransferState.Conflict,
+            VerifyMethod: VerifyMethod.None,
+            VerifiedUtc: null,
+            Attempts: 0,
+            LastError: "Occupied.",
+            IsDataset: true,
+            RawCheck: null,
+            Resolution: ConflictResolution.None,
+            RenameTo: "250314_HeLa (2).d.zip"));
+
+        await RunWithAsync(NewCoordinator(), folder);
+
+        var after = await _store.GetAsync(folder);
+        after!.RemotePath.ShouldEndWith("250314_HeLa%20%282%29.d.zip");
+
+        _server.Content(Destination.Append("250314_HeLa.d.zip"))
+            .ShouldBeNull("the name the rename existed to avoid must be left alone");
+    }
+
+    [Fact]
     public async Task A_rename_never_overwrites_something_that_arrived_at_the_new_name()
     {
         var file = await WriteAsync("run.raw", "the local one");

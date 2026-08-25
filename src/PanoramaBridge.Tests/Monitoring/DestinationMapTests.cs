@@ -14,17 +14,20 @@ namespace PanoramaBridge.Tests.Monitoring;
 /// rename setting that destruction up again. These are those four, asked of the one type that
 /// answers now.
 /// </remarks>
-public sealed class DestinationMapTests : IDisposable
+public sealed class DestinationMapTests
 {
     private static readonly RemotePath Uploads = RemotePath.Parse("/_webdav/uploads/");
 
-    private readonly string _root = Directory.CreateTempSubdirectory("pb-dest-").FullName;
+    // A constant, because nothing here reads the disk: the type does string work and RemotePath
+    // parsing. Creating and deleting a real directory was ceremony, and its teardown caught only
+    // IOException while Windows can refuse a delete with UnauthorizedAccessException.
+    private const string Root = @"C:\data";
 
-    private DestinationMap Map => new(_root, Uploads);
+    private static readonly DestinationMap Map = new(Root, Uploads);
 
-    private UploadRecord Row(string relative, bool dataset = false, string? renamedTo = null) =>
+    private static UploadRecord Row(string relative, bool dataset = false, string? renamedTo = null) =>
         new(
-            LocalPath: Path.Combine(_root, relative),
+            LocalPath: Path.Combine(Root, relative),
             RemotePath: string.Empty,
             Length: 1,
             LastWriteUnixMs: 1,
@@ -70,31 +73,43 @@ public sealed class DestinationMapTests : IDisposable
     }
 
     [Fact]
-    public void The_sweep_and_the_engine_cannot_disagree()
+    public void A_blank_rename_is_no_rename_rather_than_an_empty_name()
     {
-        // The property the whole type exists for. Two maps built from the same two values give
-        // the same answer for the same row, whatever kind of row it is -- which is what the sweep
-        // and the engine each hold.
-        var sweep = new DestinationMap(_root, Uploads);
-        var engine = new DestinationMap(_root, Uploads);
+        // ResolveDestination treats whitespace as "no leaf given", so testing only for null here
+        // let a blank rename short-circuit the acquisition rule and then get ignored downstream:
+        // a .d resolving to its folder name, which is not where its archive lives.
+        Map.For(Row("250314_HeLa.d", dataset: true, renamedTo: "")).Name
+            .ShouldBe("250314_HeLa.d.zip");
 
-        UploadRecord[] rows =
-        [
-            Row("run.raw"),
-            Row("run.raw", renamedTo: "run (2).raw"),
-            Row("250314_HeLa.d", dataset: true),
-            Row("250314_HeLa.d", dataset: true, renamedTo: "250314_HeLa (2).d.zip"),
-        ];
+        Map.For(Row("250314_HeLa.d", dataset: true, renamedTo: "   ")).Name
+            .ShouldBe("250314_HeLa.d.zip");
+    }
 
-        foreach (var row in rows)
-        {
-            sweep.For(row).ToEncodedString().ShouldBe(engine.For(row).ToEncodedString());
-        }
+    [Fact]
+    public void What_is_on_disk_decides_whether_it_is_an_acquisition()
+    {
+        // IsDataset is never cleared once set. A .d folder replaced by a plain .d file would
+        // otherwise be sent to the archive name and land on top of the acquisition, so the engine
+        // passes what it is actually holding rather than what the row remembers.
+        var stale = Row("250314_HeLa.d", dataset: true);
+
+        Map.For(stale.LocalPath, isDataset: false, stale).Name.ShouldBe("250314_HeLa.d");
+    }
+
+    [Fact]
+    public void The_path_in_hand_wins_over_the_one_the_ledger_recorded()
+    {
+        // The ledger is NOCASE, so a row can hold a different casing from the file on disk.
+        // Resolving from the row meant renaming a file's case left every later upload going to
+        // the old-cased remote name.
+        var row = Row("Run.RAW");
+
+        Map.For(Path.Combine(Root, "run.raw"), isDataset: false, row).Name.ShouldBe("run.raw");
     }
 
     [Fact]
     public void A_name_chosen_for_a_rename_is_used_as_given() =>
-        Map.Under(Path.Combine(_root, "run.raw"), "run (3).raw").Name.ShouldBe("run (3).raw");
+        Map.Under(Path.Combine(Root, "run.raw"), "run (3).raw").Name.ShouldBe("run (3).raw");
 
     [Fact]
     public void The_tree_shape_is_kept_and_only_the_leaf_changes()
@@ -104,14 +119,4 @@ public sealed class DestinationMapTests : IDisposable
         nested.ToEncodedString().ShouldEndWith("/2026-08/run%20%282%29.raw");
     }
 
-    public void Dispose()
-    {
-        try
-        {
-            Directory.Delete(_root, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-    }
 }

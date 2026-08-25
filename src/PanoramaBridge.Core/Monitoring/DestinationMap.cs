@@ -55,41 +55,69 @@ public sealed class DestinationMap
     /// <param name="destinationRoot">Where that folder maps to on the server.</param>
     public DestinationMap(string localBaseDirectory, RemotePath destinationRoot)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(localBaseDirectory);
-
-        _localBaseDirectory = localBaseDirectory;
+        // Deliberately tolerant. An unset monitored folder is a settings problem, and
+        // AppSettings.Validate already says so in a sentence written for a scientist. Throwing
+        // here would turn it into a parameter-name exception out of a constructor, before any
+        // progress reporting exists to carry it.
+        _localBaseDirectory = localBaseDirectory ?? string.Empty;
         _destinationRoot = destinationRoot ?? throw new ArgumentNullException(nameof(destinationRoot));
     }
 
     /// <summary>
-    /// The leaf name a row's copy occupies, or null when it occupies its own name.
+    /// Where a file goes, given what is on disk now and what the ledger remembers about it.
     /// </summary>
     /// <remarks>
-    /// A rename wins over the acquisition rule: a <c>.d</c> sent alongside as
-    /// <c>250314 (2).d.zip</c> lives there, not at the name its folder would otherwise produce.
+    /// <para>
+    /// The path comes from the caller rather than from the row, because the row records whatever
+    /// case the ledger was written with and the ledger is <c>NOCASE</c>. Resolving from the stored
+    /// path meant renaming a file's case on disk left every later upload going to the old-cased
+    /// remote name, which the listing and the checksum sidecar then disagree with.
+    /// </para>
+    /// <para>
+    /// Whether this is a directory acquisition comes from the caller too, for the same reason: it
+    /// is a fact about what is on disk at this moment. <c>IsDataset</c> is never cleared once set,
+    /// so a <c>.d</c> folder later replaced by a plain <c>.d</c> file would otherwise be sent to
+    /// the archive name and land on top of the acquisition.
+    /// </para>
+    /// <para>
+    /// Only the rename comes from the row, because only the row knows it.
+    /// </para>
     /// </remarks>
-    public static string? LeafFor(UploadRecord record)
-    {
-        ArgumentNullException.ThrowIfNull(record);
+    /// <param name="localPath">The path as it is on disk.</param>
+    /// <param name="isDataset">Whether that path is a directory acquisition, right now.</param>
+    /// <param name="record">The row, when there is one.</param>
+    public RemotePath For(string localPath, bool isDataset, UploadRecord? record = null) =>
+        Resolve(localPath, Leaf(record?.RenameTo, localPath, isDataset));
 
-        return record.RenameTo ?? LeafFor(record.LocalPath, record.IsDataset);
-    }
-
-    /// <summary>The leaf name a file with no row yet would occupy.</summary>
-    public static string? LeafFor(string localPath, bool isDataset) =>
-        isDataset ? DatasetFolder.ArchiveNameFor(localPath) : null;
-
-    /// <summary>Where an existing row's copy is, or would go.</summary>
+    /// <summary>
+    /// Where a row's copy is, according to the row alone.
+    /// </summary>
+    /// <remarks>
+    /// For the sweep, which reasons about rows rather than about what it is holding. The engine
+    /// uses the overload that takes the path, because it has the file in front of it.
+    /// </remarks>
     public RemotePath For(UploadRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
 
-        return Resolve(record.LocalPath, LeafFor(record));
+        return For(record.LocalPath, record.IsDataset, record);
     }
 
-    /// <summary>Where a file with no row yet would go.</summary>
-    public RemotePath For(string localPath, bool isDataset = false) =>
-        Resolve(localPath, LeafFor(localPath, isDataset));
+    /// <summary>
+    /// The leaf a file occupies: its rename if it has one, its archive name if it is an
+    /// acquisition folder, otherwise its own name.
+    /// </summary>
+    /// <remarks>
+    /// Blank counts as absent, not as a name. <see cref="PathSafety.ResolveDestination"/> treats
+    /// whitespace as "no leaf given", so testing only for null here meant an empty rename
+    /// short-circuited the acquisition rule and then got ignored downstream -- a <c>.d</c>
+    /// resolving to its folder name. Two notions of "no leaf" inside the one type built so that
+    /// callers cannot hold two notions of anything.
+    /// </remarks>
+    private static string? Leaf(string? renameTo, string localPath, bool isDataset) =>
+        string.IsNullOrWhiteSpace(renameTo)
+            ? isDataset ? DatasetFolder.ArchiveNameFor(localPath) : null
+            : renameTo;
 
     /// <summary>
     /// Where a file would go under a name chosen for it.

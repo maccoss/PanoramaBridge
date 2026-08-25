@@ -295,9 +295,9 @@ public sealed class TransferCoordinator : IAsyncDisposable
             return;
         }
 
-        var destination = decided is { } row
-            ? _destinations.For(row)
-            : _destinations.For(localPath);
+        // The path in hand, and not-a-dataset because Directory.Exists said so a moment ago.
+        // Only the rename comes from the row.
+        var destination = _destinations.For(localPath, isDataset: false, decided);
 
         var encoded = destination.ToEncodedString();
 
@@ -320,8 +320,11 @@ public sealed class TransferCoordinator : IAsyncDisposable
                     message: Explain(step)))
             .ConfigureAwait(false);
 
-        var record = await _store.GetAsync(localPath, cancellationToken).ConfigureAwait(false)
-            ?? UploadRecord.ForNewFile(stamp, encoded);
+        // The row read before the decision, reused. Reading it again here cost a second SQLite
+        // round trip per file on the monitoring path, and worse: a decision made by a person
+        // during the ladder's network round trip would be picked up by the second read and then
+        // overwritten by the save below, discarding it silently.
+        var record = decided ?? UploadRecord.ForNewFile(stamp, encoded);
 
         // What the file says about itself, which is a different question from what the file
         // system says about it. The readiness gate has already established that nothing holds it
@@ -522,12 +525,17 @@ public sealed class TransferCoordinator : IAsyncDisposable
         var stamp = new LocalFileStamp(
             folder, stampedFolder.TotalBytes, stampedFolder.NewestWriteUnixMs);
 
-        var destination = _destinations.For(folder, isDataset: true);
+        var held = await _store.GetAsync(folder, cancellationToken).ConfigureAwait(false);
+
+        // Through the row, so a renamed acquisition keeps the archive it was sent under. Deriving
+        // the archive name here regardless made this the one caller still holding its own opinion
+        // about where a file belongs -- the sweep preferred the rename, this did not, and the two
+        // disagreeing is what sends a folder round for ever.
+        var destination = _destinations.For(folder, isDataset: true, held);
 
         var encoded = destination.ToEncodedString();
 
-        var record = await _store.GetAsync(folder, cancellationToken).ConfigureAwait(false)
-            ?? UploadRecord.ForNewFile(stamp, encoded);
+        var record = held ?? UploadRecord.ForNewFile(stamp, encoded);
 
         // Asked of the row as it was stored, before it is brought up to date. Updating it first
         // and then comparing compares the new measurement with itself, which is always equal --
@@ -543,6 +551,12 @@ public sealed class TransferCoordinator : IAsyncDisposable
             Length = stampedFolder.TotalBytes,
             LastWriteUnixMs = stampedFolder.NewestWriteUnixMs,
             IsDataset = true,
+
+            // Spent here, as it is on the file path. It answered the conflict that was raised,
+            // not every conflict this folder will ever have -- and leaving it set would skip the
+            // occupied check for this folder for ever, so the next stranger's archive would be
+            // overwritten silently.
+            Resolution = ConflictResolution.None,
         };
 
         if (settled)
@@ -555,6 +569,69 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 message: "Unchanged since it was uploaded.");
 
             return;
+        }
+
+        // Is something already there that this application did not put there?
+        //
+        // Every other route to the server asks the decision ladder before sending. This one never
+        // did: it measured, checked the ledger, packed and PUT. So a second instrument computer
+        // pointed at a folder another machine had already sent -- empty ledger, so nothing looks
+        // accounted for -- repacked every acquisition and wrote it over the archive on the
+        // server, silently, with no conflict raised and the conflict setting never consulted.
+        //
+        // Asked before packing, for the same reason the settled check is: packing six gigabytes
+        // to discover the answer is the most expensive way to reach it. And asked without the
+        // archive's hash, which does not exist yet -- the question here is whether the thing on
+        // the server is ours, which the ledger's own recorded hash answers.
+        // Asked of the row as it was loaded. The copy above has already had the decision cleared
+        // from it, so reading it there would find nothing pending and run the check the decision
+        // exists to answer.
+        if (held is not { HasPendingResolution: true })
+        {
+            var occupied = await OccupiedByAnotherAsync(destination, record, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (occupied is { } reason)
+            {
+                var action = _options.ConflictPolicy switch
+                {
+                    ConflictPolicy.Overwrite => UploadAction.Upload,
+                    ConflictPolicy.Skip => UploadAction.Skip,
+                    _ => UploadAction.Conflict,
+                };
+
+                if (action == UploadAction.Skip)
+                {
+                    Interlocked.Increment(ref _skipped);
+
+                    Report(folder, encoded, TransferState.Skipped, "Left alone",
+                        0, stampedFolder.TotalBytes,
+                        message: reason + " Skipped by policy.");
+
+                    return;
+                }
+
+                if (action == UploadAction.Conflict)
+                {
+                    Interlocked.Increment(ref _conflicts);
+
+                    await _store
+                        .SaveAsync(
+                            record with
+                            {
+                                State = TransferState.Conflict,
+                                LastError = reason,
+                                ConflictKind = ConflictKind.DestinationOccupied,
+                            },
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    Report(folder, encoded, TransferState.Conflict, "Needs a decision",
+                        0, stampedFolder.TotalBytes, message: reason);
+
+                    return;
+                }
+            }
         }
 
         var archivePath = DatasetArchive.StagingPathFor(folder);
@@ -712,6 +789,66 @@ public sealed class TransferCoordinator : IAsyncDisposable
     }
 
     /// <summary>
+    /// Whether an acquisition's destination holds something this application did not put there.
+    /// </summary>
+    /// <remarks>
+    /// Returns the sentence to show, or null when the destination is free or holds our own older
+    /// copy. Deliberately cheap: the folder listing is one request the ladder pays for anyway, and
+    /// the hash is asked for only when a name actually matches. It compares the server's hash
+    /// against the one the ledger recorded for this row, which is the same question tier one of
+    /// the ladder asks -- and unlike the ladder it needs no local hash, because the archive does
+    /// not exist yet and packing one to ask would be the expensive answer.
+    /// </remarks>
+    private async Task<string?> OccupiedByAnotherAsync(
+        RemotePath destination,
+        UploadRecord record,
+        CancellationToken cancellationToken)
+    {
+        RemoteFolderSnapshot snapshot;
+
+        try
+        {
+            snapshot = await _snapshots
+                .GetAsync(destination.Parent, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (WebDavException)
+        {
+            // Could not look. Saying "occupied" would hold every acquisition on a hiccup; the
+            // upload itself is still guarded by verification, so let it proceed and fail there
+            // if it must.
+            return null;
+        }
+
+        var existing = snapshot.Find(destination.Name);
+
+        if (existing is null)
+        {
+            return null;
+        }
+
+        if (existing.IsCollection)
+        {
+            return $"A folder named '{destination.Name}' already occupies the destination.";
+        }
+
+        var remoteHash = await _snapshots
+            .HashOfAsync(snapshot, destination.Name, cancellationToken)
+            .ConfigureAwait(false);
+
+        // Ours, and the folder has changed since: a new version to send rather than a clash.
+        if (remoteHash is not null
+            && record.Md5 is not null
+            && string.Equals(remoteHash, record.Md5, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return $"'{destination.Name}' on the server was not put there by this computer, "
+            + "and would be replaced.";
+    }
+
+    /// <summary>
     /// Carries out what a person decided about a conflict.
     /// </summary>
     /// <remarks>
@@ -821,7 +958,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 // added to avoid, reintroduced one level down.
                 var lives = RemotePath.Parse(record.RemotePath).Name;
 
-                var ownName = _destinations.For(localPath, record.IsDataset).Name;
+                var ownName = _destinations.For(localPath, isDataset: false).Name;
 
                 await _store
                     .SaveAsync(
