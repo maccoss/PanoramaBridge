@@ -335,6 +335,30 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task An_acquisition_folder_is_held_when_the_destination_cannot_be_checked()
+    {
+        // The check that stops a folder replacing somebody else's archive swallowed any server
+        // error and answered "not occupied", so a transient 500 or a timeout re-enabled the exact
+        // silent overwrite it was added to prevent. It has to fail closed: not being able to look
+        // is not evidence that nothing is there.
+        //
+        // Verification does not cover this. It proves the bytes we sent arrived; it cannot notice
+        // that they landed on top of somebody else's acquisition.
+        var folder = Path.Combine(_local, "250314_HeLa.d");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "analysis.tdf"), "ours");
+
+        var occupied = Destination.Append("250314_HeLa.d.zip");
+        _server.Seed(occupied, "somebody else's archive"u8.ToArray());
+
+        _server.FailListingsOnce = true;
+
+        await RunWithAsync(NewCoordinator(), folder);
+
+        _server.Content(occupied).ShouldBe("somebody else's archive"u8.ToArray());
+    }
+
+    [Fact]
     public async Task An_acquisition_folder_still_updates_the_archive_it_did_put_there()
     {
         // The other half: a folder this application already sent, changed since, must go up again

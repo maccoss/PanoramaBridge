@@ -804,21 +804,20 @@ public sealed class TransferCoordinator : IAsyncDisposable
         UploadRecord record,
         CancellationToken cancellationToken)
     {
-        RemoteFolderSnapshot snapshot;
-
-        try
-        {
-            snapshot = await _snapshots
-                .GetAsync(destination.Parent, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (WebDavException)
-        {
-            // Could not look. Saying "occupied" would hold every acquisition on a hiccup; the
-            // upload itself is still guarded by verification, so let it proceed and fail there
-            // if it must.
-            return null;
-        }
+        // Not being able to look is not evidence that nothing is there.
+        //
+        // This caught WebDavException and answered "not occupied", so any transient error --
+        // a 500, a 503, a timeout on a busy server -- re-enabled the silent overwrite this check
+        // exists to prevent. The justification written here was that verification would catch it,
+        // which is wrong: verification proves the bytes we sent arrived, and cannot notice that
+        // they landed on top of somebody else's acquisition.
+        //
+        // So it is not caught. The exception reaches the worker loop, the folder is recorded
+        // failed with a reason, and the sweep offers it again -- which is exactly what the file
+        // path does, because DecideAsync does not catch this either.
+        var snapshot = await _snapshots
+            .GetAsync(destination.Parent, cancellationToken)
+            .ConfigureAwait(false);
 
         var existing = snapshot.Find(destination.Name);
 
