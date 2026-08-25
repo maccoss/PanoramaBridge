@@ -646,6 +646,43 @@ public sealed class TransferCoordinator : IAsyncDisposable
             record.Resolution,
             record.Resolution == ConflictResolution.Rename ? $" ({record.RenameTo})" : string.Empty);
 
+        // A rename is checked against its new destination before anything is sent. The name was
+        // free when it was offered to the user, which may have been minutes or a reboot ago, and
+        // "send it alongside" must never turn into "replace whatever arrived there since". An
+        // overwrite needs no such check: replacing what is there is the decision.
+        if (record.Resolution == ConflictResolution.Rename)
+        {
+            var check = await _decisions
+                .DecideAsync(stamp, destination, ConflictPolicy.Ask, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (check.Action != UploadAction.Upload)
+            {
+                Interlocked.Increment(ref _conflicts);
+
+                var reason = check.Action == UploadAction.Skip
+                    ? $"'{destination.Name}' on the server is already identical to this file."
+                    : $"'{destination.Name}' is occupied as well. {check.Reason}";
+
+                await _store
+                    .SaveAsync(
+                        record with
+                        {
+                            RemotePath = encoded,
+                            State = TransferState.Conflict,
+                            LastError = reason,
+                            Resolution = ConflictResolution.None,
+                            RenameTo = null,
+                        },
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                Report(localPath, encoded, TransferState.Conflict, "Needs a decision",
+                    0, stamp.Length, message: reason);
+                return;
+            }
+        }
+
         var queued = record with
         {
             RemotePath = encoded,

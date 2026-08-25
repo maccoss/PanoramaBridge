@@ -161,7 +161,13 @@ public sealed class FakeWebDavClient : IWebDavClient
             if (path.StartsWith(prefix, StringComparison.Ordinal)
                 && !path[prefix.Length..].Contains('/', StringComparison.Ordinal))
             {
-                var name = path[prefix.Length..];
+                // Decoded, as a real server reports it. Keys here are encoded paths, so the
+                // raw segment of "run (2).raw" is "run%20%282%29.raw" -- and RemotePath.Name,
+                // which is what every lookup compares against, is decoded. Returning the encoded
+                // form made the two agree only for names with nothing to encode, so a listing
+                // silently lost every file with a space or a bracket in it and this fake
+                // reported the destination free when it was occupied.
+                var name = Uri.UnescapeDataString(path[prefix.Length..]);
                 results.Add(new WebDavResource(
                     name,
                     collection.AsCollection().Append(name),
@@ -182,7 +188,7 @@ public sealed class FakeWebDavClient : IWebDavClient
                 && folder[prefix.Length..].TrimEnd('/').Length > 0
                 && !folder[prefix.Length..].TrimEnd('/').Contains('/', StringComparison.Ordinal))
             {
-                var name = folder[prefix.Length..].TrimEnd('/');
+                var name = Uri.UnescapeDataString(folder[prefix.Length..].TrimEnd('/'));
                 results.Add(new WebDavResource(
                     name,
                     collection.AsCollection().Append(name, isCollection: true),

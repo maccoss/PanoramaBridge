@@ -195,6 +195,35 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_rename_never_overwrites_something_that_arrived_at_the_new_name()
+    {
+        var file = await WriteAsync("run.raw", "the local one");
+        _server.Seed(Destination.Append("run.raw"), "something else entirely"u8.ToArray());
+
+        await RunWithAsync(NewCoordinator(), file);
+        await _store.ResolveConflictAsync(file, ConflictResolution.Rename, "run (2).raw");
+
+        // Somebody else put a file at the new name between the decision and the transfer. That
+        // gap can be minutes or a reboot, and "send it alongside" must not quietly become
+        // "replace whatever is there now" -- which would destroy data while carrying out an
+        // instruction whose entire purpose was to avoid destroying data.
+        var target = Destination.Append("run (2).raw");
+        _server.Seed(target, "somebody else's file"u8.ToArray());
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        _server.Content(target).ShouldBe("somebody else's file"u8.ToArray());
+
+        var after = await _store.GetAsync(file);
+        after!.State.ShouldBe(TransferState.Conflict);
+        after.LastError!.ShouldContain("occupied as well");
+
+        // The spent decision is cleared, so the next pass asks rather than retrying a name that
+        // is now known to be taken.
+        after.Resolution.ShouldBe(ConflictResolution.None);
+    }
+
+    [Fact]
     public async Task A_decision_is_honoured_without_asking_the_policy_again()
     {
         var file = await WriteAsync("run.raw", "the local one");
