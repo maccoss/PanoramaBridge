@@ -74,6 +74,9 @@ public sealed class TransferCoordinator : IAsyncDisposable
     private readonly IStateStore _store;
     private readonly UploadDecisionService _decisions;
     private readonly RemoteSnapshotCache _snapshots;
+
+    /// <summary>The only thing here that decides where a file goes.</summary>
+    private readonly DestinationMap _destinations;
     private readonly TransferEngineOptions _options;
     private readonly ILogger<TransferCoordinator> _log;
 
@@ -105,6 +108,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _log = log ?? NullLogger<TransferCoordinator>.Instance;
 
+        _destinations = new DestinationMap(_options.LocalBaseDirectory, _options.DestinationRoot);
         _snapshots = snapshots ?? new RemoteSnapshotCache(client);
         _decisions = decisions ?? new UploadDecisionService(store, _snapshots);
 
@@ -291,13 +295,9 @@ public sealed class TransferCoordinator : IAsyncDisposable
             return;
         }
 
-        // The renamed leaf, when this file has one. The sweep resolves the same way, and the
-        // two agreeing is what keeps a renamed file from looking unaccounted-for on every pass.
-        var destination = PathSafety.ResolveDestination(
-            _options.LocalBaseDirectory,
-            localPath,
-            _options.DestinationRoot,
-            decided?.DestinationLeaf);
+        var destination = decided is { } row
+            ? _destinations.For(row)
+            : _destinations.For(localPath);
 
         var encoded = destination.ToEncodedString();
 
@@ -522,11 +522,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
         var stamp = new LocalFileStamp(
             folder, stampedFolder.TotalBytes, stampedFolder.NewestWriteUnixMs);
 
-        var destination = PathSafety.ResolveDestination(
-            _options.LocalBaseDirectory,
-            folder,
-            _options.DestinationRoot,
-            DatasetFolder.ArchiveNameFor(folder));
+        var destination = _destinations.For(folder, isDataset: true);
 
         var encoded = destination.ToEncodedString();
 
@@ -674,11 +670,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         var free = ConflictNames.NextFree(destination.Name, snapshot.Entries.Keys);
 
-        var renamed = PathSafety.ResolveDestination(
-            _options.LocalBaseDirectory,
-            record.LocalPath,
-            _options.DestinationRoot,
-            free);
+        var renamed = _destinations.Under(record.LocalPath, free);
 
         // Checked before sending, exactly as the path a person drives is. The names came from a
         // snapshot that may be minutes old, and this path runs unattended and continuously with
@@ -790,15 +782,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
             return;
         }
 
-        // Where this file lives, which for one already sent alongside is its renamed leaf and not
-        // its original name. The ternary here previously passed null for anything but a fresh
-        // rename, so pressing Replace on a row living at "run (2).raw" resolved to "run.raw" and
-        // destroyed the very copy the user had chosen to preserve when they picked Rename.
-        var destination = PathSafety.ResolveDestination(
-            _options.LocalBaseDirectory,
-            localPath,
-            _options.DestinationRoot,
-            record.DestinationLeaf);
+        var destination = _destinations.For(record);
 
         var encoded = destination.ToEncodedString();
 
@@ -837,10 +821,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 // added to avoid, reintroduced one level down.
                 var lives = RemotePath.Parse(record.RemotePath).Name;
 
-                var ownName = PathSafety.ResolveDestination(
-                    _options.LocalBaseDirectory,
-                    localPath,
-                    _options.DestinationRoot).Name;
+                var ownName = _destinations.For(localPath, record.IsDataset).Name;
 
                 await _store
                     .SaveAsync(

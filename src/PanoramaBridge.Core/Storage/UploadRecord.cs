@@ -199,33 +199,6 @@ public sealed record UploadRecord(
     public bool HasPendingResolution => Resolution != ConflictResolution.None;
 
     /// <summary>
-    /// The leaf name this file is sent under, or null when it goes under its own.
-    /// </summary>
-    /// <remarks>
-    /// <see cref="RenameTo"/> outlives the decision that set it, which is what stops a renamed
-    /// file being sent for ever. Everything that asks "is this file accounted for?" works out
-    /// where the file <em>would</em> go, and for a renamed one that is not where it went: the
-    /// sweep compared a row verified at <c>run (2).raw</c> against a destination of
-    /// <c>run.raw</c>, decided the row described somewhere else, and offered the file again --
-    /// whereupon the ladder found <c>run.raw</c> still occupied and sent it as <c>run (3).raw</c>.
-    /// Then <c>(4)</c>, on every sweep, for ever. Nothing bounded it, because the attempt limit
-    /// only applies to rows that failed.
-    /// <para>
-    /// So the name is a property of where this file belongs now, not an instruction waiting to be
-    /// carried out. If the local file changes it is sent again, to the same renamed destination,
-    /// which is what somebody who chose "send it alongside" meant.
-    /// </para>
-    /// <para>
-    /// A directory acquisition's leaf is not here. Its archive name is derived from the folder,
-    /// and deriving it would make this type reach into monitoring for something only the sweep
-    /// needs -- the engine routes a directory to its own path long before anything asks this.
-    /// The sweep applies that fallback itself, and the comment there says why; if a third caller
-    /// ever appears, the fallback belongs in one place rather than two.
-    /// </para>
-    /// </remarks>
-    public string? DestinationLeaf => RenameTo;
-
-    /// <summary>
     /// True when this file is known to be safely on the server, unchanged since.
     /// </summary>
     /// <remarks>
