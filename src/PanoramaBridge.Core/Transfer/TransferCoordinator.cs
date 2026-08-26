@@ -366,7 +366,45 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         var stamp = LocalFileStamp.FromFile(localPath);
 
-        var destination = _destinations.For(localPath);
+        RemotePath destination;
+
+        try
+        {
+            destination = _destinations.For(localPath);
+        }
+        catch (ArgumentException)
+        {
+            // The ledger outlives the monitored-folder setting, so it holds rows for files that
+            // are no longer under it. Working out where such a file belongs is not a question
+            // with an answer, and it never becomes one by trying again.
+            //
+            // This used to fall through to the general handler further down, which puts
+            // exception.Message straight into the row. What a person then read on the Transfers
+            // tab was a framework sentence ending in "(Parameter 'localFilePath')", against a
+            // file that would be retried until its attempts ran out and could not have succeeded
+            // on any of them.
+            Interlocked.Increment(ref _failed);
+
+            var reason =
+                $"This file is not inside the folder being monitored "
+                + $"({_options.LocalBaseDirectory}), so there is nowhere on the server it "
+                + "belongs. It was recorded when a different folder was being monitored. Nothing "
+                + "has been sent and the file has not been touched. Point the monitored folder "
+                + "back at it, or leave it - it will not be tried again.";
+
+            _log.LogWarning(
+                "{Path} is outside the monitored folder {Root} and cannot be placed.",
+                localPath,
+                _options.LocalBaseDirectory);
+
+            await SafeSetStateAsync(localPath, TransferState.Failed, reason)
+                .ConfigureAwait(false);
+
+            // No remote path to report: working one out is exactly what just failed.
+            Report(localPath, string.Empty, TransferState.Failed,
+                "Outside the monitored folder", 0, stamp.Length, message: reason);
+            return;
+        }
 
         var encoded = destination.ToEncodedString();
 
@@ -385,7 +423,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
         // decision that was then thrown away. Reading the row here is safe where writing one is
         // not: it is the write below that would erase the verified standing the ladder reads.
         if (stamp.Matches(record.Length, record.LastWriteUnixMs)
-            && record.IsHeldRegardlessOf(_options.ConflictPolicy))
+            && record.IsHeldRegardlessOfPolicy)
         {
             // Counted, like every other conflict. Left out, a pbctl sync over a folder of held
             // files reported nothing found and nothing done, which reads as "there was nothing

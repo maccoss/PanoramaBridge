@@ -136,17 +136,6 @@ public enum ConflictKind
     /// </remarks>
     LocalFileDamaged = 2,
 
-    /// <summary>
-    /// Held because an earlier version recorded a per-file decision this build cannot act on.
-    /// </summary>
-    /// <remarks>
-    /// A file kept by choice, or sent under a different name, by v26.3.0—v26.4.6. The row's
-    /// destination no longer describes where its copy actually is, so <em>Overwrite must not
-    /// release it</em>: it would replace a file at the original name — the very copy the old
-    /// decision existed to preserve — on nobody's current say-so. Skip retires it safely, and a
-    /// change to the local file reopens the question.
-    /// </remarks>
-    WithdrawnDecision = 3,
 }
 
 /// <summary>
@@ -216,6 +205,17 @@ public sealed record UploadRecord(
     /// </summary>
     /// <remarks>
     /// <para>
+    /// One reason, currently: the local file is damaged. A second, for decisions carried over
+    /// from the withdrawn per-file feature, was written and then removed — it protected no rows
+    /// that exist. The ledger on the machine that ran every one of those builds, through the whole
+    /// life of the feature, holds 806 rows and not one of them was kept by choice or sent under a
+    /// different name. What it did produce was a value v26.4.x reads but does not define, which
+    /// that build's bulk actions then swept up, and a documented Skip route that sent the file
+    /// whenever its original name happened to be free.
+    /// </para>
+    /// </remarks>
+    /// <remarks>
+    /// <para>
     /// One predicate, two callers — the sweep, which uses it to avoid queueing the file at all,
     /// and the coordinator, which uses it as the actual gate. It lives here because putting it
     /// only in the sweep is what made it bypassable: a file reaches the coordinator from the
@@ -235,19 +235,13 @@ public sealed record UploadRecord(
     /// these holds are meant to be reopened by fixing or replacing the file.
     /// </para>
     /// </remarks>
-    public bool IsHeldRegardlessOf(ConflictPolicy policy) =>
+    public bool IsHeldRegardlessOfPolicy =>
         ConflictKind switch
         {
             // The policy answers "something else is at the destination". It is not an answer to
             // "this file is broken": Skip would bury a damaged acquisition, and Overwrite would
             // push it over a good remote copy.
             ConflictKind.LocalFileDamaged => true,
-
-            // A decision recorded by a withdrawn feature. The row no longer describes where the
-            // file's copy actually is, so Overwrite would send it to its original name and
-            // replace the very copy that decision existed to preserve. Skip retires it safely,
-            // because it sends nothing.
-            ConflictKind.WithdrawnDecision => policy != ConflictPolicy.Skip,
 
             _ => false,
         };

@@ -265,29 +265,11 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         offered.ShouldBe([path]);
     }
 
-    [Fact]
-    public async Task A_withdrawn_decision_is_not_released_by_overwrite()
-    {
-        // The row records a person's choice from a withdrawn feature -- a file kept, or sent
-        // under a different name. Its destination no longer describes where its copy actually
-        // is, so releasing it under Overwrite would send the file to its original name and
-        // replace the very copy the old decision existed to preserve, on nobody's current
-        // say-so.
-        var path = Write("run1.raw");
-        await RecordAsync(path, TransferState.Conflict, VerifyMethod.None,
-            kind: ConflictKind.WithdrawnDecision);
-
-        var (_, offered) = await SweepAsync(
-            NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
-
-        offered.ShouldBeEmpty();
-    }
-
     [Theory]
     [InlineData(TransferState.Skipped)]
     [InlineData(TransferState.Queued)]
     [InlineData(TransferState.Discovered)]
-    public async Task A_withdrawn_decision_is_held_whatever_state_the_row_reached(
+    public async Task A_damaged_file_is_held_whatever_state_the_row_reached(
         TransferState state)
     {
         // The hold used to be written as an arm of the state switch, matching Conflict only, and
@@ -295,9 +277,9 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         // Skipped with its kind intact, then set Overwrite and nothing was looking at the kind
         // any more -- the file went to its original name and replaced the preserved copy. The
         // reason a row is held outlives the state it was recorded in.
-        var path = Write("run1.raw");
+        var path = Write("short.raw");
         await RecordAsync(path, state, VerifyMethod.None,
-            kind: ConflictKind.WithdrawnDecision);
+            kind: ConflictKind.LocalFileDamaged);
 
         var (_, offered) = await SweepAsync(
             NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
@@ -317,40 +299,6 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
             NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
 
         offered.ShouldBeEmpty();
-    }
-
-    [Fact]
-    public async Task A_withdrawn_decision_is_reopened_by_changing_the_file()
-    {
-        // The escape hatch every one of these holds is documented to have. Replacing the local
-        // file is a new question about new bytes, so the old decision stops applying and the row
-        // is offered like any other -- the ladder then answers it under whatever policy is set.
-        var path = Write("run1.raw");
-        await RecordAsync(path, TransferState.Conflict, VerifyMethod.None,
-            kind: ConflictKind.WithdrawnDecision);
-
-        await File.AppendAllTextAsync(path, "a newly acquired version");
-
-        var (_, offered) = await SweepAsync(
-            NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
-
-        offered.ShouldBe([path]);
-    }
-
-    [Fact]
-    public async Task A_withdrawn_decision_is_retired_safely_by_skip()
-    {
-        // Skip sends nothing, so it is the one policy that can clear these rows without any risk
-        // of undoing what the person chose. The ladder resolves the offered file to Skipped and
-        // the backlog empties.
-        var path = Write("run1.raw");
-        await RecordAsync(path, TransferState.Conflict, VerifyMethod.None,
-            kind: ConflictKind.WithdrawnDecision);
-
-        var (_, offered) = await SweepAsync(
-            NewScanner(conflictPolicy: ConflictPolicy.Skip));
-
-        offered.ShouldBe([path]);
     }
 
     [Fact]

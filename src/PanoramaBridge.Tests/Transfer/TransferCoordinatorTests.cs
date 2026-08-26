@@ -860,6 +860,39 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_file_outside_the_monitored_folder_fails_in_words_a_person_can_act_on()
+    {
+        // Taken from a real ledger. Three rows sat on the Transfers tab reading
+        //
+        //   '\...\2026-04-Shock-ITP-Plasma\...F10_198.raw' is not inside
+        //   '\...\2025-Levitt-AHA-StrokeEV-Plt1n2\Plate 1-QuantFiles'. (Parameter 'localFilePath')
+        //
+        // because the monitored folder had been changed and the ledger outlived the setting. The
+        // general failure handler puts exception.Message into the row, so a framework sentence
+        // naming a parameter was what a scientist read, against a file that would be retried
+        // until its attempts ran out and could not have succeeded on any of them.
+        var outside = Path.Combine(Path.GetDirectoryName(_local)!, "a-different-project");
+        Directory.CreateDirectory(outside);
+
+        var file = Path.Combine(outside, "run.raw");
+        await File.WriteAllTextAsync(file, "acquired under a different setting");
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        var row = await _store.GetAsync(file);
+        row!.State.ShouldBe(TransferState.Failed);
+
+        row.LastError.ShouldNotBeNull();
+        row.LastError!.ShouldNotContain("Parameter", Case.Insensitive);
+        row.LastError.ShouldNotContain("localFilePath");
+        row.LastError.ShouldContain("not inside the folder being monitored");
+        row.LastError.ShouldContain("has not been touched");
+
+        _server.TotalCalls.ShouldBe(0, "nothing can be asked of the server about it");
+        File.Exists(file).ShouldBeTrue("and the file itself is left alone");
+    }
+
+    [Fact]
     public async Task A_repaired_file_stops_carrying_the_marker_that_says_it_is_broken()
     {
         // Clearing this only on a successful upload stranded the file: a repaired acquisition
@@ -948,18 +981,18 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
             with
             {
                 State = TransferState.Conflict,
-                ConflictKind = ConflictKind.WithdrawnDecision,
-                LastError = "Held from an earlier version.",
+                ConflictKind = ConflictKind.LocalFileDamaged,
+                LastError = "This file ends before its data does.",
             });
 
         await RunWithAsync(NewCoordinator(policy: ConflictPolicy.Overwrite), file);
 
-        _server.UploadCalls.ShouldBe(0, "the preserved copy must not be replaced");
+        _server.UploadCalls.ShouldBe(0, "a damaged file must not be sent");
         _server.TotalCalls.ShouldBe(0, "and it costs nothing to keep holding it");
 
         var row = await _store.GetAsync(file);
         row!.State.ShouldBe(TransferState.Conflict);
-        row.ConflictKind.ShouldBe(ConflictKind.WithdrawnDecision, "the marker survives");
+        row.ConflictKind.ShouldBe(ConflictKind.LocalFileDamaged, "the marker survives");
     }
 
     [Fact]

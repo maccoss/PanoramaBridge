@@ -21,27 +21,22 @@ time and update the heading; see `README.md` in this directory for the process.
 
 ## Bug Fixes
 
-- **A decision made in an older version can no longer be undone by the conflict setting.** Files
-  you chose to keep the server's copy of, or sent under a new name, in v26.3.0—v26.4.6 are held
-  under **Needs attention**. Setting **Replace the copy on the server** used to release them on
-  the next folder check and send each file to its *original* name — replacing the very
-  copy your earlier choice existed to preserve, without asking. They now stay held under that
-  setting. **Leave the copy on the server alone** still clears them, safely, because it sends
-  nothing; and changing the file itself reopens the question.
+- **Records left by the withdrawn per-file conflict choices are carried over every time, not
+  once.** A file you chose to keep the server's copy of, or sent under a new name, in
+  v26.3.0—v26.4.6 becomes an ordinary held file under **Needs attention**, with an explanation
+  of where it came from. This now happens on every start rather than only on the first update, so
+  it still applies if such a record is written after moving back to an older version and coming
+  forward again.
 
-  This also holds if such a record is written after moving back to an older version and updating
-  again — previously it was converted only once, on the first update.
+- **A damaged file stays held whichever setting you choose, and whichever way it is found.** A
+  file held because reading it shows it ends before its data does was released by *Leave the copy
+  on the server alone* and by *Replace the copy on the server*, and released again if you simply
+  saved it and the folder watcher noticed. Neither setting is an answer to a broken file, so it
+  now stays held until the file itself changes — which is the way out, and works as soon as you
+  re-copy it. Holding one costs no request to the server.
 
-- **A file held for a reason the setting cannot answer stays held, whichever route reaches it.**
-  Two holds — a damaged file, and a decision carried over from v26.3.0—v26.4.6 — were only
-  applied during a folder check, and only while the file's state had not moved on. So there were
-  two ways past them: set *Leave the copy on the server alone* once and then change to *Replace
-  the copy on the server*, or simply save the file again and let the folder watcher pick it up.
-  Either sent a file that was being protected. The check now travels with the file rather than
-  with how it was found, and a held file costs no request to the server while it waits.
-
-  Replacing the file itself still reopens the question, as before. That is the way out of both
-  holds.
+  Previously it was also re-checked against the server on every folder check, reading the whole
+  acquisition each time, only to be held again.
 
 - **A damaged file is no longer re-examined on every folder check.** A file held because reading
   it shows it ends before its data does was released by the *Leave alone* and *Replace* settings,

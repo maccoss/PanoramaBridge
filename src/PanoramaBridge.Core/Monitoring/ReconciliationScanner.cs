@@ -388,7 +388,7 @@ public sealed class ReconciliationScanner
         // before the switch because the reason outlives the state: a row retired under Skip is
         // saved Skipped with its kind intact, and arms that matched only Conflict stopped
         // applying to it — which let a change to Overwrite send a file that was being protected.
-        if (record.IsHeldRegardlessOf(_options.ConflictPolicy))
+        if (record.IsHeldRegardlessOfPolicy)
         {
             return true;
         }

@@ -539,16 +539,16 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         // so a converted row can never match again, and on the databases that need nothing it is
         // one indexed scan finding zero rows.
         //
-        // conflict_kind is stamped so the sweep knows these rows carry a person's decision from a
-        // withdrawn feature: Overwrite must not release them, because it would replace a file at
-        // the original name — the very copy the old decision existed to preserve — on
-        // nobody's current say-so.
+        // Deliberately stamps no conflict_kind. A value meaning "carried over from the withdrawn
+        // feature" was written here and then removed: v26.4.x reads this column and switches on
+        // it, so a value those builds do not define was swept up by their bulk actions — the
+        // conversion defeating the rollback it exists to survive. These become ordinary held
+        // conflicts, which the default of holding them already handles.
         command.Parameters.Clear();
         command.CommandText =
             """
             UPDATE uploads
                SET state = $conflict,
-                   conflict_kind = $withdrawn,
                    rename_to = NULL,
                    last_error = CASE
                        WHEN rename_to IS NOT NULL
@@ -563,7 +563,6 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             """;
 
         command.Parameters.AddWithValue("$conflict", (int)TransferState.Conflict);
-        command.Parameters.AddWithValue("$withdrawn", (int)ConflictKind.WithdrawnDecision);
         command.ExecuteNonQuery();
     }
 

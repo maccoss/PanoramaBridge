@@ -119,8 +119,10 @@ public sealed class UpgradeFromWithdrawnFeaturesTests : IDisposable
         row!.State.ShouldBe(TransferState.Conflict);
         row.LastError!.ShouldContain(expected);
 
-        // Stamped, so the sweep knows Overwrite must not release what a person once decided.
-        row.ConflictKind.ShouldBe(ConflictKind.WithdrawnDecision);
+        // No kind is stamped. v26.4.x reads this column and switches on it, so writing a value
+        // those builds do not define had their bulk actions sweep these rows up — the
+        // conversion defeating the rollback it exists to survive.
+        row.ConflictKind.ShouldBe(ConflictKind.Unknown);
     }
 
     [Fact]
