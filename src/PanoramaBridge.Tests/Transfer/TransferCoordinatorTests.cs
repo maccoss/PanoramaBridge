@@ -54,6 +54,9 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         return path;
     }
 
+    /// <summary>Directories made outside <c>_local</c>, which DisposeAsync does not cover.</summary>
+    private readonly List<string> _extraDirectories = [];
+
     private async Task<TransferSummary> RunWithAsync(
         TransferCoordinator coordinator,
         params string[] files)
@@ -147,7 +150,15 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
 
         summary.Total.ShouldBe(0);
         _server.UploadCalls.ShouldBe(0);
-        (await _store.GetAsync(directory)).ShouldBeNull();
+
+        // Recorded rather than dropped with a debug line. Returning quietly left any ledger row
+        // for the folder sitting wherever it was, to be re-offered and dropped again on every
+        // pass, with the only trace in a log nobody opens.
+        var row = await _store.GetAsync(directory);
+        row.ShouldNotBeNull();
+        row!.State.ShouldBe(TransferState.Failed);
+        row.LastError!.ShouldContain("folder as a single archive has been removed");
+        Directory.Exists(directory).ShouldBeTrue("the folder itself is untouched");
     }
 
     [Fact]
@@ -838,7 +849,7 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
 
         var row = await _store.GetAsync(missing);
         row!.State.ShouldBe(TransferState.Uploading, "waiting for the share, not gone");
-        row.LastError.ShouldBeNull();
+        row.LastError!.ShouldContain("cannot be seen");
     }
 
     /// <summary>A drive letter this machine does not have, standing in for a share that is not
@@ -871,8 +882,8 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         // general failure handler puts exception.Message into the row, so a framework sentence
         // naming a parameter was what a scientist read, against a file that would be retried
         // until its attempts ran out and could not have succeeded on any of them.
-        var outside = Path.Combine(Path.GetDirectoryName(_local)!, "a-different-project");
-        Directory.CreateDirectory(outside);
+        var outside = Directory.CreateTempSubdirectory("pb-other-project-").FullName;
+        _extraDirectories.Add(outside);
 
         var file = Path.Combine(outside, "run.raw");
         await File.WriteAllTextAsync(file, "acquired under a different setting");
@@ -932,7 +943,7 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
             new UploadRecord(gone, Destination.Append("run.raw").ToEncodedString(),
                 10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null));
 
-        var coordinator = NewCoordinator();
+        await using var coordinator = NewCoordinator();
 
         (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
 
@@ -962,7 +973,13 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
 
         var row = await _store.GetAsync(elsewhere);
         row!.State.ShouldBe(TransferState.Uploading, "waiting for that drive, not gone");
-        row.LastError.ShouldBeNull();
+
+        // The state is deliberately untouched so it resumes when the drive returns -- but a row
+        // saying only "Uploading" is a row claiming an upload is under way, showing under neither
+        // Verified nor Needs attention, with its reason only in a log.
+        row.LastError.ShouldNotBeNull();
+        row.LastError!.ShouldContain("cannot be seen");
+        row.LastError.ShouldContain("has not been touched");
     }
 
     [Fact]
@@ -1008,7 +1025,7 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
             new UploadRecord(folder, Destination.Append("250314_HeLa.d.zip").ToEncodedString(),
                 10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null));
 
-        var coordinator = NewCoordinator();
+        await using var coordinator = NewCoordinator();
 
         (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
 
@@ -1193,14 +1210,41 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         summary.Failed.ShouldBe(1);
         _server.UploadCalls.ShouldBe(0);
         (await _store.GetAsync(file))?.State.ShouldBe(TransferState.Failed);
+
+        // The message, not just the state. Asserting only Failed let a handler added for a
+        // different rejection catch this one too and replace its text with a claim that the file
+        // was outside the monitored folder -- false, and it threw away the one instruction that
+        // fixes it. The row must still say what the server does and what to do about it.
+        var row = await _store.GetAsync(file);
+        row!.LastError.ShouldNotBeNull();
+        row.LastError!.ShouldContain("semicolon");
+        row.LastError.ShouldContain("Rename it before uploading");
+        row.LastError.ShouldNotContain("monitored", Case.Insensitive);
+
+        // And no framework noise: this text is shown to a scientist on the Transfers tab.
+        row.LastError.ShouldNotContain("Parameter", Case.Insensitive);
     }
 
     public async ValueTask DisposeAsync()
     {
         await _store.DisposeAsync();
-        if (Directory.Exists(_local))
+
+        foreach (var extra in _extraDirectories.Append(_local))
         {
-            Directory.Delete(_local, recursive: true);
+            if (!Directory.Exists(extra))
+            {
+                continue;
+            }
+
+            try
+            {
+                Directory.Delete(extra, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Something still has a handle open. Leaving a temp directory behind is not worth
+                // failing an otherwise green run over.
+            }
         }
     }
 }

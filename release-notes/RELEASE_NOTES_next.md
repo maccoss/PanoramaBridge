@@ -28,6 +28,26 @@ time and update the heading; see `README.md` in this directory for the process.
   it still applies if such a record is written after moving back to an older version and coming
   forward again.
 
+- **A file that cannot be placed on the server says why, in words you can act on.** If you
+  change the folder being monitored, PanoramaBridge still holds records for files under the old
+  one, and there is nowhere on the server those belong. They were retried and shown with a
+  programmer's error ending in *(Parameter 'localFilePath')*. Each now fails once and says which
+  folder it is outside of, that nothing was sent, that the file has not been touched, and what
+  would change that. Files rejected for other reasons — a semicolon in the name, which Panorama
+  truncates at — keep their own advice, which tells you to rename the file.
+
+- **A folder is recorded as not sendable rather than quietly ignored.** Sending a folder as a
+  single archive was withdrawn. Such a folder was then dropped with nothing written down, so
+  anything already tracking it stayed as it was and it was picked up and dropped again on every
+  check — and one interrupted mid-upload by an older version sat at *uploading* forever. Both
+  now say why, and the folder itself is untouched. Its files can still be sent individually if
+  their types are listed.
+
+- **A transfer waiting on a drive that is not there says so.** These are left alone until the
+  drive or share comes back, which was already true, but the row said only that an upload was in
+  progress — it appeared under neither *Verified* nor *Needs attention* and the reason was only
+  in the log. The row now carries it.
+
 - **A damaged file stays held whichever setting you choose, and whichever way it is found.** A
   file held because reading it shows it ends before its data does was released by *Leave the copy
   on the server alone* and by *Replace the copy on the server*, and released again if you simply
@@ -35,14 +55,7 @@ time and update the heading; see `README.md` in this directory for the process.
   now stays held until the file itself changes — which is the way out, and works as soon as you
   re-copy it. Holding one costs no request to the server.
 
-  Previously it was also re-checked against the server on every folder check, reading the whole
-  acquisition each time, only to be held again.
-
-- **A damaged file is no longer re-examined on every folder check.** A file held because reading
-  it shows it ends before its data does was released by the *Leave alone* and *Replace* settings,
-  re-checked against the server, and held again — on every check, indefinitely. Neither setting
-  is an answer to a broken file, so it now stays held, whatever the setting, until the file
-  changes. It was never at risk of being sent.
+  Nothing about it was ever at risk of being sent.
 
 - **Nothing is written off while its drive or share is unreachable.** Interrupted transfers are
   checked at startup, which on a network share is often before the share is available — and an
@@ -52,11 +65,14 @@ time and update the heading; see `README.md` in this directory for the process.
   record of them outlives that setting. A drive that is reachable with the folder genuinely gone is
   still recorded as gone.
 
-- **An interrupted folder upload from an older version now fails with a reason.** Sending folders
-  as a single archive has been removed, so such an upload cannot be resumed — but it was being
-  quietly re-queued and dropped on every start, staying "uploading" forever. It is now marked
-  failed with an explanation, and the folder itself is untouched.
+- **A held file no longer costs a folder listing and a full read of the acquisition.** Every check
+  of a file that was being held asked the server what was at its destination and, when the name and
+  size matched, read the whole acquisition through to compare it — to reach the answer it already
+  had. On a folder of held acquisitions that was gigabytes of reading per check, repeated for as
+  long as they stayed held. Holding one now costs nothing.
 
-## Performance
+- **Starting up no longer reads the whole upload record.** A check for records left by the
+  withdrawn per-file conflict choices runs at every start, and was reading every row to find them.
+  It is answered from an index now.
 
 ## Breaking Changes

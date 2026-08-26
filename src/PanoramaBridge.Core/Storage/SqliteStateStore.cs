@@ -24,6 +24,31 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
 {
     private const int CurrentSchemaVersion = 5;
 
+    /// <summary>
+    /// The state value v26.3.0—v26.4.6 wrote for "a person chose to keep the copy on the
+    /// server", which no longer exists.
+    /// </summary>
+    /// <remarks>
+    /// Named, and asserted against the live enum below, because the statement that converts these
+    /// rows runs on every open and is not guarded by the schema version — it cannot be, since a
+    /// rolled-back build can write one of these rows after the version is already current. A bare
+    /// 10 in a SQL string is invisible to the compiler, so the next state anybody adds takes the
+    /// value and every row in it is silently rewritten, on every launch, for ever. There is no
+    /// test that would fail, because the rule lives in a string.
+    /// </remarks>
+    private const int WithdrawnKeptOnServerState = 10;
+
+    static SqliteStateStore()
+    {
+        if (Enum.IsDefined(typeof(TransferState), WithdrawnKeptOnServerState))
+        {
+            throw new InvalidOperationException(
+                $"TransferState now defines {WithdrawnKeptOnServerState}, which the conversion "
+                + "in Initialize treats as a withdrawn state and rewrites on every open. Give the "
+                + "new state a different value, or retire that conversion.");
+        }
+    }
+
     private readonly string _connectionString;
 
     /// <summary>
@@ -527,6 +552,22 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             command.ExecuteNonQuery();
         }
 
+        // After Migrate, which is where rename_to is added: the schema block above runs before
+        // it, and on a database written before schema 3 the column is not there yet, so creating
+        // an index on it would throw on open.
+        //
+        // Partial, so it holds only rows a withdrawn build left a rename on — none, on every
+        // ledger this was measured against. Both halves of the conversion's OR have to be indexed
+        // or SQLite cannot use the OR-by-union plan and reads the whole table instead, on every
+        // launch, to find nothing.
+        command.CommandText =
+            """
+            CREATE INDEX IF NOT EXISTS ix_uploads_renamed ON uploads(rename_to)
+                WHERE rename_to IS NOT NULL;
+            """;
+
+        command.ExecuteNonQuery();
+
         // Every open, not a one-shot migration.
         //
         // This started life inside Migrate, guarded by the schema stamp — and the stamp cannot
@@ -536,8 +577,14 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         // row is misread for ever — invisible to every filter, re-offered by every sweep.
         //
         // So it is idempotent instead of guarded. Converting sets the state and clears rename_to,
-        // so a converted row can never match again, and on the databases that need nothing it is
-        // one indexed scan finding zero rows.
+        // so a converted row can never match again.
+        //
+        // Both halves of the OR are indexed, which they have to be: this runs synchronously in the
+        // constructor on every start, and an instrument ledger holds hundreds of thousands of
+        // rows. ix_uploads_state covers the state; the partial index below covers rename_to, and
+        // being partial it holds only the rows that have one — on the ledgers this was measured
+        // against, none. Without it SQLite cannot use the OR-by-union plan and falls back to
+        // reading the whole table, every launch, to find nothing.
         //
         // Deliberately stamps no conflict_kind. A value meaning "carried over from the withdrawn
         // feature" was written here and then removed: v26.4.x reads this column and switches on
@@ -559,10 +606,11 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                             || 'the server. That choice is no longer stored, so it is held '
                             || 'for a decision.'
                    END
-             WHERE state = 10 OR rename_to IS NOT NULL;
+             WHERE state = $withdrawn OR rename_to IS NOT NULL;
             """;
 
         command.Parameters.AddWithValue("$conflict", (int)TransferState.Conflict);
+        command.Parameters.AddWithValue("$withdrawn", WithdrawnKeptOnServerState);
         command.ExecuteNonQuery();
     }
 

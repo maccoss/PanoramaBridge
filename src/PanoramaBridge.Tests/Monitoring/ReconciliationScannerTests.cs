@@ -288,20 +288,6 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task A_damaged_file_is_held_after_being_retired_by_skip()
-    {
-        // Same shape for the damaged marker, which has no policy that answers it at all.
-        var path = Write("short.raw");
-        await RecordAsync(path, TransferState.Skipped, VerifyMethod.None,
-            kind: ConflictKind.LocalFileDamaged);
-
-        var (_, offered) = await SweepAsync(
-            NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
-
-        offered.ShouldBeEmpty();
-    }
-
-    [Fact]
     public async Task A_skipped_conflict_is_asked_about_again_once_the_policy_changes()
     {
         // Skip is not a permanent answer. Changing the setting has to be able to clear the

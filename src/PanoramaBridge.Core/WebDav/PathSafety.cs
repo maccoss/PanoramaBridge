@@ -1,6 +1,44 @@
 namespace PanoramaBridge.Core.WebDav;
 
 /// <summary>Why a name cannot be used as a remote path segment.</summary>
+/// <summary>
+/// A file that cannot be given a place on the server, and why.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Derives from <see cref="ArgumentException"/> because that is what these throw sites raised
+/// before, and callers and tests catching that keep working.
+/// </para>
+/// <para>
+/// <see cref="UserMessage"/> exists because <see cref="ArgumentException.Message"/> appends
+/// <c>(Parameter 'localFilePath')</c>, and the coordinator puts the message it catches straight
+/// into the row a person then reads on the Transfers tab. A scientist looking at a stalled
+/// transfer was being shown a parameter name.
+/// </para>
+/// <para>
+/// <see cref="Reason"/> exists because the alternative is telling the rejections apart by their
+/// wording. A handler added for one of them caught all of them and replaced a message that says
+/// exactly what to do — rename the file, the server truncates at the semicolon — with one
+/// claiming the file was outside the monitored folder, which for that file was simply untrue.
+/// </para>
+/// </remarks>
+public sealed class PathNotPlaceableException : ArgumentException
+{
+    public PathNotPlaceableException(
+        PathRejectionReason reason, string userMessage, string paramName)
+        : base(userMessage, paramName)
+    {
+        Reason = reason;
+        UserMessage = userMessage;
+    }
+
+    /// <summary>Which rejection this is, without parsing the message.</summary>
+    public PathRejectionReason Reason { get; }
+
+    /// <summary>The message alone, fit to show to somebody.</summary>
+    public string UserMessage { get; }
+}
+
 public enum PathRejectionReason
 {
     /// <summary>The name is usable.</summary>
@@ -11,6 +49,9 @@ public enum PathRejectionReason
 
     /// <summary>A relative-path segment that would escape the destination.</summary>
     Traversal,
+
+    /// <summary>The file is not underneath the folder being monitored.</summary>
+    OutsideMonitoredFolder,
 
     /// <summary>
     /// Contains a semicolon, which the server silently truncates the name at.
@@ -199,15 +240,25 @@ public static class PathSafety
 
         if (Path.IsPathRooted(relative) || relative.StartsWith("..", StringComparison.Ordinal))
         {
-            throw new ArgumentException(
-                $"'{localFilePath}' is not inside '{localBaseDirectory}'.",
+            throw new PathNotPlaceableException(
+                PathRejectionReason.OutsideMonitoredFolder,
+                $"This file is not inside the folder being monitored"
+                + (string.IsNullOrWhiteSpace(localBaseDirectory)
+                    ? ". No folder to monitor has been chosen yet"
+                    : $" ({localBaseDirectory})")
+                + ", so there is nowhere on the server it belongs. Nothing has been sent and the "
+                + "file has not been touched.",
                 nameof(localFilePath));
         }
 
         var validation = ValidateRelativePath(relative);
         if (!validation.IsValid)
         {
-            throw new ArgumentException(validation.Message, nameof(localFilePath));
+            // Message is non-null whenever Reason is not None, which is the branch this is in.
+            throw new PathNotPlaceableException(
+                validation.Reason,
+                validation.Message ?? "This file's name cannot be used on the server.",
+                nameof(localFilePath));
         }
 
         var root = destinationRoot.AsCollection();
@@ -215,8 +266,11 @@ public static class PathSafety
 
         if (!resolved.IsUnder(root))
         {
-            throw new ArgumentException(
-                $"Refusing to upload outside the destination folder: '{resolved}'.",
+            throw new PathNotPlaceableException(
+                PathRejectionReason.Traversal,
+                $"This file would be placed outside the destination folder on the server "
+                + $"('{resolved}'), so it has not been sent. Its name or the folders above it "
+                + "would have to change.",
                 nameof(localFilePath));
         }
 

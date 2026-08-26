@@ -27,11 +27,15 @@
             -->
             <TextBlock TextWrapping="Wrap" Foreground="#663C00">
                 <Run Text="{Binding AttentionCount, Mode=OneWay}" />
-                <Run Text="transfer(s) need attention. Each row says which it is, and why, under Detail." />
+                <Run Text="transfer(s) need attention, and none of them is being retried silently. Each row says which it is, and why, under Detail." />
                 <LineBreak />
-                <Run Text="A row reading Held is waiting on you: something different is already on the server, and nothing will be sent or replaced until you say so. Choose what should happen on the Local Monitoring tab, under &quot;When a different file is already on the server&quot;, then save. It applies to every held file at once, at the next folder check - or straight away if you press the button above the folder list. To settle one file on its own, rename or move it instead." />
+                <Run Text="Held means something different is already on the server. Choose what should happen on the Local Monitoring tab, under &quot;When a different file is already on the server&quot;, and save - it applies to every file held for that reason, at the next folder check, or straight away with the button at the bottom of the window. To settle one file on its own, rename or move it instead." />
                 <LineBreak />
-                <Run Text="A row reading Failed or Changed is not waiting on you and is retried on its own." />
+                <Run Text="Held - damaged means reading the file showed it ends before its data does. No setting sends that one; replace the file and it is picked up on its own." />
+                <LineBreak />
+                <Run Text="Cannot be placed means there is nowhere on the server the file belongs, usually because it is not inside the folder being monitored. The row says what would change that." />
+                <LineBreak />
+                <Run Text="Failed is an upload that did not complete. Those are retried on their own until their attempts run out, and then they stop and wait for you." />
             </TextBlock>
         </Border>
 

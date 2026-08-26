@@ -205,34 +205,21 @@ public sealed record UploadRecord(
     /// </summary>
     /// <remarks>
     /// <para>
-    /// One reason, currently: the local file is damaged. A second, for decisions carried over
-    /// from the withdrawn per-file feature, was written and then removed — it protected no rows
-    /// that exist. The ledger on the machine that ran every one of those builds, through the whole
-    /// life of the feature, holds 806 rows and not one of them was kept by choice or sent under a
-    /// different name. What it did produce was a value v26.4.x reads but does not define, which
-    /// that build's bulk actions then swept up, and a documented Skip route that sent the file
-    /// whenever its original name happened to be free.
-    /// </para>
-    /// </remarks>
-    /// <remarks>
-    /// <para>
     /// One predicate, two callers — the sweep, which uses it to avoid queueing the file at all,
     /// and the coordinator, which uses it as the actual gate. It lives here because putting it
     /// only in the sweep is what made it bypassable: a file reaches the coordinator from the
     /// folder watcher and from <c>pbctl sync</c> as well, and neither goes past the sweep.
-    /// Duplicating this decision rather than sharing it is the mistake that cost the most in this
-    /// area already.
     /// </para>
     /// <para>
-    /// Deliberately independent of <see cref="State"/>. Tying it to <see cref="TransferState.Conflict"/>
-    /// left a two-step way round: retire the row under Skip, which saves it
-    /// <see cref="TransferState.Skipped"/> with the kind intact, then change to Overwrite — and
-    /// a check that only looked at Conflict rows no longer applied. The reason a row is held
-    /// outlives the state it was recorded in.
+    /// Deliberately independent of <see cref="State"/>. Tying it to
+    /// <see cref="TransferState.Conflict"/> left a two-step way round: retire the row under Skip,
+    /// which saves it <see cref="TransferState.Skipped"/> with the kind intact, then change to
+    /// Overwrite — and a check that only looked at Conflict rows no longer applied. The reason a
+    /// row is held outlives the state it was recorded in.
     /// </para>
     /// <para>
-    /// Callers must test the stamp first. A file that changed is a new question, and both of
-    /// these holds are meant to be reopened by fixing or replacing the file.
+    /// Callers must test the stamp first. A file that changed is a new question, and this hold is
+    /// meant to be reopened by fixing or replacing the file.
     /// </para>
     /// </remarks>
     public bool IsHeldRegardlessOfPolicy =>
