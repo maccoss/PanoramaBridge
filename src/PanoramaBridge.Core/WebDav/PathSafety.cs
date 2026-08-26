@@ -1,6 +1,32 @@
 namespace PanoramaBridge.Core.WebDav;
 
 /// <summary>Why a name cannot be used as a remote path segment.</summary>
+public enum PathRejectionReason
+{
+    /// <summary>The name is usable.</summary>
+    None,
+
+    /// <summary>Empty, or entirely whitespace.</summary>
+    Empty,
+
+    /// <summary>A relative-path segment that would escape the destination.</summary>
+    Traversal,
+
+    /// <summary>The file is not underneath the folder being monitored.</summary>
+    OutsideMonitoredFolder,
+
+    /// <summary>
+    /// Contains a semicolon, which the server silently truncates the name at.
+    /// </summary>
+    SemicolonTruncatesOnServer,
+
+    /// <summary>Contains a character that cannot appear in a path segment at all.</summary>
+    IllegalCharacter,
+
+    /// <summary>Longer than the server will accept.</summary>
+    TooLong,
+}
+
 /// <summary>
 /// A file that cannot be given a place on the server, and why.
 /// </summary>
@@ -37,32 +63,6 @@ public sealed class PathNotPlaceableException : ArgumentException
 
     /// <summary>The message alone, fit to show to somebody.</summary>
     public string UserMessage { get; }
-}
-
-public enum PathRejectionReason
-{
-    /// <summary>The name is usable.</summary>
-    None,
-
-    /// <summary>Empty, or entirely whitespace.</summary>
-    Empty,
-
-    /// <summary>A relative-path segment that would escape the destination.</summary>
-    Traversal,
-
-    /// <summary>The file is not underneath the folder being monitored.</summary>
-    OutsideMonitoredFolder,
-
-    /// <summary>
-    /// Contains a semicolon, which the server silently truncates the name at.
-    /// </summary>
-    SemicolonTruncatesOnServer,
-
-    /// <summary>Contains a character that cannot appear in a path segment at all.</summary>
-    IllegalCharacter,
-
-    /// <summary>Longer than the server will accept.</summary>
-    TooLong,
 }
 
 /// <summary>The outcome of validating one name.</summary>
@@ -238,16 +238,21 @@ public static class PathSafety
             relative = string.IsNullOrEmpty(parent) ? remoteName : Path.Combine(parent, remoteName);
         }
 
-        if (Path.IsPathRooted(relative) || relative.StartsWith("..", StringComparison.Ordinal))
+        // Two dots followed by a separator, or nothing else at all — not merely a name that
+        // begins with two dots. "..2026-Levitt-AHA" is a legal Windows folder, and treating it as
+        // an escape told somebody their file was outside the folder being monitored when it was
+        // sitting inside it, along with advice that could not work.
+        var escapes = relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal)
+            || string.Equals(relative, "..", StringComparison.Ordinal);
+
+        if (Path.IsPathRooted(relative) || escapes)
         {
             throw new PathNotPlaceableException(
                 PathRejectionReason.OutsideMonitoredFolder,
-                $"This file is not inside the folder being monitored"
-                + (string.IsNullOrWhiteSpace(localBaseDirectory)
-                    ? ". No folder to monitor has been chosen yet"
-                    : $" ({localBaseDirectory})")
-                + ", so there is nowhere on the server it belongs. Nothing has been sent and the "
-                + "file has not been touched.",
+                $"This file is not inside the folder being monitored "
+                + $"({localBaseDirectory}), so there is nowhere on the server it belongs. "
+                + "Nothing has been sent and the file has not been touched.",
                 nameof(localFilePath));
         }
 

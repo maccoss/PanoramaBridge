@@ -597,6 +597,13 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             UPDATE uploads
                SET state = $conflict,
                    rename_to = NULL,
+
+                   -- Cleared with rename_to, never on its own. v26.4.x asks only whether
+                   -- resolution is set before acting, and clearing the target while leaving the
+                   -- intention gave a rolled-back build a pending rename with nowhere to go: it
+                   -- resolves to the file's original name and replaces the copy the rename
+                   -- existed to preserve. SaveAsync clears both together for this reason.
+                   resolution = 0,
                    last_error = CASE
                        WHEN rename_to IS NOT NULL
                            THEN 'This file was sent under a different name by an earlier '

@@ -384,15 +384,12 @@ public sealed class ReconciliationScanner
             return false;
         }
 
-        // Held for a reason the policy cannot answer, whatever state the row is in. Checked
-        // before the switch because the reason outlives the state: a row retired under Skip is
-        // saved Skipped with its kind intact, and arms that matched only Conflict stopped
-        // applying to it — which let a change to Overwrite send a file that was being protected.
-        if (record.IsHeldRegardlessOfPolicy)
-        {
-            return true;
-        }
-
+        // A damaged row is deliberately NOT accounted for here. Holding it in the sweep meant it
+        // was never offered, so nothing reported it, and the Transfers tab and the attention count
+        // — both built from reports — lost it on the next restart, while the settings hint and
+        // the banner promised it would be shown. The coordinator turns it back before the ladder,
+        // so offering it costs a queue trip and not one request, and the report is what keeps it
+        // visible. The decision itself lives there, where every route arrives.
         return record.State switch
         {
             // Held, and staying held only while the answer is still "ask me". Any other policy

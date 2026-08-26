@@ -148,7 +148,9 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
 
         var summary = await RunWithAsync(NewCoordinator(), directory);
 
-        summary.Total.ShouldBe(0);
+        // Counted, where it used to return silently. pbctl printed "failed 0" over a folder it
+        // had refused, which reads as "there was nothing to do".
+        summary.Failed.ShouldBe(1);
         _server.UploadCalls.ShouldBe(0);
 
         // Recorded rather than dropped with a debug line. Returning quietly left any ledger row
@@ -967,7 +969,7 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
 
         // The monitored folder is the ordinary local one and exists, so the whole-root check
         // passed and fell straight through to writing this row off.
-        var coordinator = NewCoordinator();
+        await using var coordinator = NewCoordinator();
 
         (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
 
@@ -1007,6 +1009,16 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         _server.UploadCalls.ShouldBe(0, "a damaged file must not be sent");
         _server.TotalCalls.ShouldBe(0, "and it costs nothing to keep holding it");
 
+        // Reported, because the Transfers tab and the attention count are built from reports and
+        // nothing else. A hold that says nothing is a file that disappears from the window while
+        // its own guidance says it will be listed.
+        lock (_reported)
+        {
+            _reported.ShouldContain(
+                r => r.LocalPath == file && r.Phase == "Held - damaged",
+                "the row has to stay visible while it is held");
+        }
+
         var row = await _store.GetAsync(file);
         row!.State.ShouldBe(TransferState.Conflict);
         row.ConflictKind.ShouldBe(ConflictKind.LocalFileDamaged, "the marker survives");
@@ -1025,9 +1037,19 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
             new UploadRecord(folder, Destination.Append("250314_HeLa.d.zip").ToEncodedString(),
                 10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null));
 
-        await using var coordinator = NewCoordinator();
+        // Recovery no longer carries its own copy of this rule. It queues the row like any other
+        // and the worker records the refusal, so there is one wording and one place that decides
+        // -- the comment in ProcessAsync used to claim exactly this while recovery still held a
+        // duplicate with different words.
+        var coordinator = NewCoordinator();
 
-        (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
+        await coordinator.RecoverInterruptedAsync();
+        coordinator.CompleteAdding();
+
+        var summary = await coordinator.RunAsync();
+
+        summary.Failed.ShouldBe(1);
+        _server.UploadCalls.ShouldBe(0);
 
         var row = await _store.GetAsync(folder);
         row!.State.ShouldBe(TransferState.Failed);

@@ -65,6 +65,8 @@ time and update the heading; see `README.md` in this directory for the process.
   record of them outlives that setting. A drive that is reachable with the folder genuinely gone is
   still recorded as gone.
 
+## Performance
+
 - **A held file no longer costs a folder listing and a full read of the acquisition.** Every check
   of a file that was being held asked the server what was at its destination and, when the name and
   size matched, read the whole acquisition through to compare it — to reach the answer it already

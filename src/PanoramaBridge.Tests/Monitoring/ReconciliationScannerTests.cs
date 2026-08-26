@@ -233,19 +233,23 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
     [Theory]
     [InlineData(ConflictPolicy.Skip)]
     [InlineData(ConflictPolicy.Overwrite)]
-    public async Task A_damaged_file_is_held_whatever_the_policy(ConflictPolicy policy)
+    public async Task A_damaged_file_is_still_offered_so_that_something_reports_it(
+        ConflictPolicy policy)
     {
-        // The policy answers "the destination is occupied"; it is not an answer to "the file is
-        // broken". Releasing a damaged row under Skip buried a broken acquisition, and under
-        // Overwrite sent it through the whole ladder every sweep only for the truncation check to
-        // hold it again -- a listing and a header read, per file, per sweep, for ever.
+        // Deliberately offered, not held here. Holding it in the sweep kept it off the queue, so
+        // nothing reported it -- and the Transfers tab and the attention count are built from
+        // reports, so after a restart the row vanished from both while the settings hint and the
+        // banner promised it would be shown under Needs attention.
+        //
+        // The coordinator turns it back before the decision ladder, so this costs a queue trip
+        // and not one request to the server, and the report it emits is what keeps it visible.
         var path = Write("short.raw");
         await RecordAsync(path, TransferState.Conflict, VerifyMethod.None,
             kind: ConflictKind.LocalFileDamaged);
 
         var (_, offered) = await SweepAsync(NewScanner(conflictPolicy: policy));
 
-        offered.ShouldBeEmpty();
+        offered.ShouldBe([path]);
     }
 
     [Fact]
@@ -263,28 +267,6 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
             NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
 
         offered.ShouldBe([path]);
-    }
-
-    [Theory]
-    [InlineData(TransferState.Skipped)]
-    [InlineData(TransferState.Queued)]
-    [InlineData(TransferState.Discovered)]
-    public async Task A_damaged_file_is_held_whatever_state_the_row_reached(
-        TransferState state)
-    {
-        // The hold used to be written as an arm of the state switch, matching Conflict only, and
-        // that left a two-step way straight round it: set Skip once and the row is retired to
-        // Skipped with its kind intact, then set Overwrite and nothing was looking at the kind
-        // any more -- the file went to its original name and replaced the preserved copy. The
-        // reason a row is held outlives the state it was recorded in.
-        var path = Write("short.raw");
-        await RecordAsync(path, state, VerifyMethod.None,
-            kind: ConflictKind.LocalFileDamaged);
-
-        var (_, offered) = await SweepAsync(
-            NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
-
-        offered.ShouldBeEmpty();
     }
 
     [Fact]
