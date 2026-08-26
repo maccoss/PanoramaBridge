@@ -15,9 +15,34 @@ public enum ConflictPolicy
     /// <summary>Replace the remote copy.</summary>
     Overwrite = 2,
 
-    /// <summary>Upload alongside it under a new name.</summary>
+    /// <summary>
+    /// Withdrawn. Retained only so a settings file that names it can still be read.
+    /// </summary>
+    /// <remarks>
+    /// Sending a file alongside under a free name needed a per-file record of where it actually
+    /// went. Without that record the sweep resolves the file to its original name, decides the row
+    /// describes somewhere else, and offers it again on every pass for ever — a loop that was
+    /// found and fixed twice before the feature was withdrawn.
+    /// <para>
+    /// The member stays because removing it is not free: settings are stored as JSON with a string
+    /// enum converter, so a file saying <c>"ConflictPolicy": "Rename"</c> throws while parsing, and
+    /// the store's response to an unreadable file is to move it aside and start from defaults.
+    /// Deleting this would have cost anyone who chose it their server, their monitored folder and
+    /// every other setting, on the first launch after updating.
+    /// </para>
+    /// <para>
+    /// Treated as <see cref="Ask"/> wherever a policy is acted on, which is the safe reading: hold
+    /// the file and show it rather than guess.
+    /// </para>
+    /// </remarks>
     Rename = 3,
 }
+
+// Rename was a fourth choice: send it alongside under a free name. It is gone with the per-file
+// conflict machinery, because recording where a renamed file actually went needs a column on the
+// row -- and without that record the sweep resolves the file to its original name, decides the row
+// describes somewhere else, and offers it again on every pass for ever. That loop was found and
+// fixed twice. Three choices that work beat four where one needs a subsystem to be correct.
 
 /// <summary>What should happen to a file.</summary>
 public enum UploadAction

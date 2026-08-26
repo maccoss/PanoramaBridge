@@ -253,6 +253,18 @@ public sealed record AppSettings
     }
 
     /// <summary>
+    /// Replaces persisted values for withdrawn settings with their safe current meaning.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ConflictPolicy.Rename"/> remains in the enum solely so an older JSON settings
+    /// file can be read. The current UI has no radio button for it and every transfer path already
+    /// treats it as <see cref="ConflictPolicy.Ask"/>, so carrying it forward would make the file
+    /// say something the application cannot do.
+    /// </remarks>
+    public AppSettings NormalizeWithdrawnValues() =>
+        ConflictPolicy == ConflictPolicy.Rename ? this with { ConflictPolicy = ConflictPolicy.Ask } : this;
+
+    /// <summary>
     /// Parses <see cref="Extensions"/> from the comma-separated form the UI shows, normalising
     /// each entry to a lower-case leading-dot extension.
     /// </summary>

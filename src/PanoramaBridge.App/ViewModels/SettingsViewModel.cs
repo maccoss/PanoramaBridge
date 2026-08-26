@@ -33,9 +33,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     public SettingsViewModel(ISettingsStore store, AppSettings initial)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
-        _saved = initial ?? throw new ArgumentNullException(nameof(initial));
+        _saved = (initial ?? throw new ArgumentNullException(nameof(initial)))
+            .NormalizeWithdrawnValues();
 
-        LoadFrom(initial);
+        LoadFrom(_saved);
     }
 
     // -- Local monitoring ---------------------------------------------------------------------

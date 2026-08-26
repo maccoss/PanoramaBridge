@@ -1,5 +1,6 @@
 using PanoramaBridge.Core.Monitoring;
 using PanoramaBridge.Core.Storage;
+using PanoramaBridge.Core.Transfer;
 using PanoramaBridge.Core.WebDav;
 using PanoramaBridge.Tests.TestDoubles;
 
@@ -26,7 +27,8 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         RemotePath? destination = null,
         bool includeSubdirectories = true,
         int maxUploadAttempts = 5,
-        string[]? extensions = null) =>
+        string[]? extensions = null,
+        ConflictPolicy conflictPolicy = ConflictPolicy.Ask) =>
         new(
             _store,
             new ReconciliationOptions
@@ -36,6 +38,7 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
                 Filter = new CandidateFilter(extensions ?? [".raw"]),
                 IncludeSubdirectories = includeSubdirectories,
                 MaxUploadAttempts = maxUploadAttempts,
+                ConflictPolicy = conflictPolicy,
             });
 
     private string Write(string relative, string content = "acquisition")
@@ -70,8 +73,7 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
             VerifyMethod: verified,
             VerifiedUtc: DateTimeOffset.UtcNow,
             Attempts: attempts,
-            LastError: state == TransferState.Failed ? "The server refused it." : null,
-            IsDataset: false));
+            LastError: state == TransferState.Failed ? "The server refused it." : null));
     }
 
     private static async Task<(SweepResult Result, List<string> Offered)> SweepAsync(
@@ -89,143 +91,20 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task A_file_sent_under_a_new_name_is_not_offered_again()
+    public async Task A_directory_is_walked_into_as_an_ordinary_folder()
     {
-        // A renamed acquisition is verified at "run (2).raw", while the sweep works out where the
-        // file *would* go, which is always "run.raw". Comparing the two says the row does not
-        // describe this destination, so the file is offered again -- and the ladder finds run.raw
-        // still occupied, renames it to run (3).raw, and does the whole thing again on the next
-        // sweep. A seven-gigabyte acquisition re-sent every quarter of an hour, for ever, filling
-        // the destination with copies. Nothing bounds it: the attempt limit only applies to rows
-        // that failed.
-        var path = Write("run.raw");
-
-        var stamp = LocalFileStamp.FromFile(path);
-
-        await _store.SaveAsync(new UploadRecord(
-            LocalPath: stamp.Path,
-            RemotePath: Destination.Append("run (2).raw").ToEncodedString(),
-            Length: stamp.Length,
-            LastWriteUnixMs: stamp.LastWriteUnixMs,
-            Md5: "d41d8cd98f00b204e9800998ecf8427e",
-            Sha256: null,
-            State: TransferState.Verified,
-            VerifyMethod: VerifyMethod.ServerMd5,
-            VerifiedUtc: DateTimeOffset.UtcNow,
-            Attempts: 1,
-            LastError: null,
-            IsDataset: false,
-            RawCheck: null,
-            Resolution: ConflictResolution.None,
-            RenameTo: "run (2).raw"));
-
-        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
-
-        offered.ShouldBeEmpty();
-    }
-
-    [Fact]
-    public async Task A_verified_acquisition_folder_is_not_offered_again()
-    {
-        // A .d reaches the server as run.d.zip, so a verified row's destination ends in .zip --
-        // while the sweep works out where the folder would go and gets run.d. The two never
-        // match, so every verified Bruker acquisition is offered on every pass for ever.
         Write(Path.Combine("250314_HeLa.d", "analysis.tdf"), "the index");
+        Write(Path.Combine("250314_HeLa.d", "analysis.tdf_bin"), "the data");
 
-        var folder = Path.Combine(_root, "250314_HeLa.d");
-        var measured = DatasetFolder.Measure(folder)!.Value;
-
-        var remote = PathSafety
-            .ResolveDestination(_root, folder, Destination, DatasetFolder.ArchiveNameFor(folder))
-            .ToEncodedString();
-
-        await _store.SaveAsync(new UploadRecord(
-            LocalPath: folder,
-            RemotePath: remote,
-            Length: measured.TotalBytes,
-            LastWriteUnixMs: measured.NewestWriteUnixMs,
-            Md5: "d41d8cd98f00b204e9800998ecf8427e",
-            Sha256: null,
-            State: TransferState.Verified,
-            VerifyMethod: VerifyMethod.ServerMd5,
-            VerifiedUtc: DateTimeOffset.UtcNow,
-            Attempts: 1,
-            LastError: null,
-            IsDataset: true));
+        // A file inside that does match, so "walked into" is provable rather than assumed:
+        // asserting only that the folder was not offered would pass if the sweep found nothing at
+        // all, or threw and was swallowed.
+        Write(Path.Combine("250314_HeLa.d", "extra.raw"), "a thermo file inside the folder");
 
         var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
 
-        offered.ShouldBeEmpty();
-    }
-
-    // -- directory acquisitions ----------------------------------------------------------------
-
-    [Fact]
-    public async Task A_bruker_folder_is_offered_as_one_thing()
-    {
-        // A .d is one acquisition, not a folder of candidates. It reaches Panorama as a single
-        // .d.zip, so the sweep has to hand over the folder itself.
-        Write(Path.Combine("250314_HeLa_DIA_01.d", "analysis.tdf"), "the sqlite index");
-        Write(Path.Combine("250314_HeLa_DIA_01.d", "analysis.tdf_bin"), "the binary data");
-
-        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
-
-        offered.ShouldHaveSingleItem();
-        offered[0].ShouldEndWith("250314_HeLa_DIA_01.d");
-    }
-
-    [Fact]
-    public async Task The_files_inside_a_bruker_folder_are_never_offered_separately()
-    {
-        // The property that matters. Descending into a .d is how a folder still being written
-        // transfers in pieces -- and a piece of an acquisition on the server is worse than
-        // nothing there, because it looks like a complete upload.
-        Write(Path.Combine("run.d", "analysis.tdf"), "index");
-        Write(Path.Combine("run.d", "inner", "buried.raw"), "a file that matches the filter");
-
-        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
-
-        offered.ShouldHaveSingleItem();
-        offered[0].ShouldEndWith("run.d");
-        offered.ShouldNotContain(p => p.EndsWith("buried.raw", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task A_folder_the_user_did_not_ask_for_is_still_walked_into()
-    {
-        // Only extensions the user listed become acquisitions. An ordinary subfolder is still a
-        // subfolder, and the files inside it are still candidates.
-        Write(Path.Combine("2026-03-14", "run.raw"), "an ordinary acquisition");
-
-        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
-
-        offered.ShouldHaveSingleItem();
-        offered[0].ShouldEndWith("run.raw");
-    }
-
-    [Fact]
-    public async Task An_empty_bruker_folder_is_not_offered()
-    {
-        // Created but not written into. Offering it would pack an archive of nothing.
-        Directory.CreateDirectory(Path.Combine(_root, "empty.d"));
-
-        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
-
-        offered.ShouldBeEmpty();
-    }
-
-    [Fact]
-    public async Task The_working_archive_beside_an_acquisition_is_not_offered()
-    {
-        // It is built inside the folder being swept. The tilde is what keeps it out, and this is
-        // the test that says so at the level where it would do damage.
-        Write(Path.Combine("run.d", "analysis.tdf"), "index");
-        File.WriteAllText(Path.Combine(_root, "~run.d.zip"), "a working archive");
-
-        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d", ".zip"]));
-
-        offered.ShouldHaveSingleItem();
-        offered[0].ShouldEndWith("run.d");
+        offered.ShouldNotContain(Path.Combine(_root, "250314_HeLa.d"));
+        offered.ShouldContain(Path.Combine(_root, "250314_HeLa.d", "extra.raw"));
     }
 
     [Fact]
@@ -332,6 +211,34 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
 
         var (_, afterChange) = await SweepAsync(NewScanner());
         afterChange.ShouldBe([path]);
+    }
+
+    [Fact]
+    public async Task A_conflict_the_ladder_skipped_by_policy_is_not_asked_about_again()
+    {
+        // The ladder resolves a Skip conflict to State.Skipped with no server hash, so it never
+        // matches the settled check above. Without an arm for it here, the file went through the
+        // whole ladder again on every sweep for as long as the policy stayed Skip -- another
+        // listing, and sometimes another collection hash, to reach the same answer as last time.
+        var path = Write("run1.raw");
+        await RecordAsync(path, TransferState.Skipped, VerifyMethod.None);
+
+        var (_, offered) = await SweepAsync(NewScanner(conflictPolicy: ConflictPolicy.Skip));
+
+        offered.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_skipped_conflict_is_asked_about_again_once_the_policy_changes()
+    {
+        // Skip is not a permanent answer. Changing the setting has to be able to clear the
+        // backlog, so a row it produced must not be held the way an Ask conflict is.
+        var path = Write("run1.raw");
+        await RecordAsync(path, TransferState.Skipped, VerifyMethod.None);
+
+        var (_, offered) = await SweepAsync(NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
+
+        offered.ShouldBe([path]);
     }
 
     [Fact]

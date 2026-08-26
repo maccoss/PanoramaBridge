@@ -22,7 +22,7 @@ namespace PanoramaBridge.Core.Storage;
 /// </remarks>
 public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposable
 {
-    private const int CurrentSchemaVersion = 4;
+    private const int CurrentSchemaVersion = 5;
 
     private readonly string _connectionString;
 
@@ -83,22 +83,23 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     {
         ArgumentNullException.ThrowIfNull(record);
 
+        // resolution/rename_to/conflict_kind are cleared on every save so a row this build
+        // fully rewrites cannot still carry a stale value a rolled-back build would act on.
         await ExecuteWriteAsync(
             """
             INSERT INTO uploads
               (local_path, remote_path, size, mtime_utc, md5, sha256,
                state, verify_method, verified_utc, attempts, last_error, is_dataset,
-               raw_check, resolution, rename_to, conflict_kind)
+               raw_check)
             VALUES
               ($path, $remote, $size, $mtime, $md5, $sha256,
-               $state, $verify, $verified, $attempts, $error, $dataset, $rawcheck,
-               $resolution, $renameto, $kind)
+               $state, $verify, $verified, $attempts, $error, 0, $rawcheck)
             ON CONFLICT(local_path) DO UPDATE SET
-              remote_path = $remote, size = $size, mtime_utc = $mtime,
+              local_path = $path, remote_path = $remote, size = $size, mtime_utc = $mtime,
               md5 = $md5, sha256 = $sha256, state = $state, verify_method = $verify,
               verified_utc = $verified, attempts = $attempts, last_error = $error,
-              is_dataset = $dataset, raw_check = $rawcheck,
-              resolution = $resolution, rename_to = $renameto, conflict_kind = $kind;
+              is_dataset = 0, raw_check = $rawcheck,
+              resolution = 0, rename_to = NULL, conflict_kind = 0;
             """,
             command =>
             {
@@ -110,10 +111,6 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                 command.Parameters.AddWithValue("$sha256", record.Sha256 ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue(
                     "$rawcheck", record.RawCheck ?? (object)DBNull.Value);
-                command.Parameters.AddWithValue("$resolution", (int)record.Resolution);
-                command.Parameters.AddWithValue("$kind", (int)record.ConflictKind);
-                command.Parameters.AddWithValue(
-                    "$renameto", record.RenameTo ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue("$state", (int)record.State);
                 command.Parameters.AddWithValue("$verify", (int)record.VerifyMethod);
                 command.Parameters.AddWithValue(
@@ -121,79 +118,13 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                     record.VerifiedUtc?.ToUnixTimeMilliseconds() ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue("$attempts", record.Attempts);
                 command.Parameters.AddWithValue("$error", record.LastError ?? (object)DBNull.Value);
-                command.Parameters.AddWithValue("$dataset", record.IsDataset ? 1 : 0);
             },
             cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
-    public Task<int> ResolveConflictAsync(
-        string localPath,
-        ConflictResolution resolution,
-        string? renameTo = null,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
-
-        if (resolution == ConflictResolution.None)
-        {
-            throw new ArgumentException(
-                "Resolving a conflict needs an actual decision.", nameof(resolution));
-        }
-
-        if (resolution == ConflictResolution.Rename && string.IsNullOrWhiteSpace(renameTo))
-        {
-            throw new ArgumentException(
-                "Renaming needs the name to rename to.", nameof(renameTo));
-        }
-
-        var keep = resolution == ConflictResolution.Keep;
-
-        // Keep is finished the moment it is recorded, so it stores no pending resolution: there
-        // is nothing left for the engine to do. The message is stored where every other reason
-        // for a row's state is stored, so the Uploads tab explains it without a special case.
-        return ExecuteWriteCountingAsync(
-            """
-            UPDATE uploads
-               SET state      = $state,
-                   resolution = $resolution,
-                   rename_to  = CASE WHEN $renaming = 1 THEN $renameto ELSE rename_to END,
-                   last_error = $error
-             WHERE local_path = $path
-               AND state      = $conflict;
-            """,
-            command =>
-            {
-                command.Parameters.AddWithValue("$path", localPath);
-
-                // Only a row still held. The Uploads tab is a snapshot that can be minutes old,
-                // and a sweep may have re-offered one of these files since: writing Declined
-                // underneath a running upload would flip a transfer's state from beneath it.
-                command.Parameters.AddWithValue("$conflict", (int)TransferState.Conflict);
-                command.Parameters.AddWithValue(
-                    "$state", (int)(keep ? TransferState.Declined : TransferState.Discovered));
-                command.Parameters.AddWithValue(
-                    "$resolution", (int)(keep ? ConflictResolution.None : resolution));
-                // Only a rename writes this column. It is where the file lives, not a pending
-                // instruction: clearing it when somebody presses Keep or Replace on a row that
-                // already lives at "run (2).raw" would lose that, and the sweep would go back to
-                // resolving the row to its original name -- re-opening the unbounded re-send this
-                // column was added to close.
-                command.Parameters.AddWithValue(
-                    "$renaming", resolution == ConflictResolution.Rename ? 1 : 0);
-                command.Parameters.AddWithValue(
-                    "$renameto", renameTo ?? (object)DBNull.Value);
-                command.Parameters.AddWithValue(
-                    "$error",
-                    keep
-                        ? "Kept the copy already on the server."
-                        : (object)DBNull.Value);
-            },
-            cancellationToken);
-    }
-
     /// <inheritdoc />
-    public Task SetStateAsync(
+    public async Task SetStateAsync(
         string localPath,
         TransferState state,
         string? lastError = null,
@@ -203,7 +134,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
 
         // Attempts increments only when an upload actually starts, so the count reflects
         // transfers tried rather than state changes made.
-        return ExecuteWriteAsync(
+        var changed = await ExecuteWriteAsync(
             """
             UPDATE uploads
                SET state = $state,
@@ -218,11 +149,13 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                 command.Parameters.AddWithValue("$uploading", (int)TransferState.Uploading);
                 command.Parameters.AddWithValue("$error", lastError ?? (object)DBNull.Value);
             },
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+
+        EnsureExistingRow(changed, localPath);
     }
 
     /// <inheritdoc />
-    public Task MarkVerifiedAsync(
+    public async Task MarkVerifiedAsync(
         string localPath,
         VerifyMethod method,
         DateTimeOffset verifiedUtc,
@@ -230,7 +163,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
 
-        return ExecuteWriteAsync(
+        var changed = await ExecuteWriteAsync(
             """
             UPDATE uploads
                SET state = $state, verify_method = $verify, verified_utc = $verified,
@@ -244,7 +177,9 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                 command.Parameters.AddWithValue("$verify", (int)method);
                 command.Parameters.AddWithValue("$verified", verifiedUtc.ToUnixTimeMilliseconds());
             },
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+
+        EnsureExistingRow(changed, localPath);
     }
 
     /// <summary>
@@ -456,9 +391,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
 
     private const string SelectColumns =
         """
-        SELECT local_path, remote_path, size, mtime_utc, md5, sha256,
-               state, verify_method, verified_utc, attempts, last_error, is_dataset,
-               raw_check, resolution, rename_to, conflict_kind
+         SELECT local_path, remote_path, size, mtime_utc, md5, sha256,
+             state, verify_method, verified_utc, attempts, last_error, raw_check
         """;
 
     private static UploadRecord Read(SqliteDataReader reader) => new(
@@ -475,11 +409,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             : DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(8)),
         Attempts: reader.GetInt32(9),
         LastError: reader.IsDBNull(10) ? null : reader.GetString(10),
-        IsDataset: reader.GetInt32(11) != 0,
-        RawCheck: reader.IsDBNull(12) ? null : reader.GetString(12),
-        Resolution: (ConflictResolution)reader.GetInt32(13),
-        RenameTo: reader.IsDBNull(14) ? null : reader.GetString(14),
-        ConflictKind: (ConflictKind)reader.GetInt32(15));
+        RawCheck: reader.IsDBNull(11) ? null : reader.GetString(11));
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {
@@ -514,11 +444,20 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     /// bind and execute sequence would have to be kept in step, and a busy retry or a transaction
     /// added to one of them would silently apply to only half the store's writes.
     /// </remarks>
-    private Task ExecuteWriteAsync(
+    private Task<int> ExecuteWriteAsync(
         string sql,
         Action<SqliteCommand> bind,
         CancellationToken cancellationToken) =>
         ExecuteWriteCountingAsync(sql, bind, cancellationToken);
+
+    private static void EnsureExistingRow(int changed, string localPath)
+    {
+        if (changed == 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot transition an unknown upload record: {localPath}. Save the row first.");
+        }
+    }
 
     private void Initialize()
     {
@@ -621,6 +560,45 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             command.CommandText =
                 "ALTER TABLE uploads ADD COLUMN conflict_kind INTEGER NOT NULL DEFAULT 0;";
             command.ExecuteNonQuery();
+        }
+
+        if (from < 5)
+        {
+            // Two kinds of row were written by v26.3.0—v26.4.6 and cannot be read correctly any
+            // more, so they are brought somewhere honest rather than left to be misread.
+            //
+            // A row at state 10 meant "a person chose to keep the copy on the server". That state
+            // no longer exists, so nothing would list it — not even the All filter, which builds
+            // its WHERE from the enum's values — while the sweep, seeing a state it does not
+            // recognise, would offer the file again and undo the choice.
+            //
+            // A row with rename_to recorded a file sent under a different name. Nothing resolves
+            // destinations through that column now, so the sweep would work out the file's
+            // original name, find the row pointing elsewhere, and offer it again. Under Overwrite
+            // that overwrites the copy the rename existed to preserve.
+            //
+            // Both become held conflicts: visible, not sent, and answerable with the conflict
+            // setting. Held is the safe end of "this row means something this build cannot act
+            // on".
+            command.CommandText =
+                """
+                UPDATE uploads
+                   SET state = $conflict,
+                       last_error = CASE
+                           WHEN rename_to IS NOT NULL
+                               THEN 'This file was sent under a different name by an earlier '
+                                    || 'version. Sending files under a new name has been removed, '
+                                    || 'so it is held for a decision.'
+                           ELSE 'An earlier version recorded that you chose to keep the copy on '
+                                || 'the server. That choice is no longer stored, so it is held '
+                                || 'for a decision.'
+                       END
+                 WHERE state = 10 OR rename_to IS NOT NULL;
+                """;
+
+            command.Parameters.AddWithValue("$conflict", (int)TransferState.Conflict);
+            command.ExecuteNonQuery();
+            command.Parameters.Clear();
         }
     }
 

@@ -83,6 +83,17 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
+    public void A_withdrawn_conflict_policy_is_shown_as_ask_me()
+    {
+        var view = new SettingsViewModel(
+            new InMemorySettingsStore(),
+            Distinctive() with { ConflictPolicy = ConflictPolicy.Rename });
+
+        view.ConflictPolicy.ShouldBe(ConflictPolicy.Ask);
+        view.HasUnsavedChanges.ShouldBeFalse();
+    }
+
+    [Fact]
     public void Editing_a_field_is_noticed()
     {
         var view = new SettingsViewModel(new InMemorySettingsStore(), Distinctive());

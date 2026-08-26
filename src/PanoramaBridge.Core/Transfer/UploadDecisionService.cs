@@ -242,10 +242,6 @@ public sealed class UploadDecisionService
             ConflictPolicy.Overwrite => new UploadDecision(
                 UploadAction.Upload, tier, reason + " Overwriting by policy.", hashes, null, elsewhere),
 
-            // Renaming is the caller's job, since it has to pick a name that is still free.
-            ConflictPolicy.Rename => new UploadDecision(
-                UploadAction.Conflict, tier, reason + " A new name is needed.", hashes, remoteHash, elsewhere),
-
             _ => new UploadDecision(
                 UploadAction.Conflict, tier, reason, hashes, remoteHash, elsewhere),
         };

@@ -212,6 +212,32 @@ public sealed class JsonSettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Withdrawn_settings_are_normalized_without_losing_the_rest_of_the_file()
+    {
+        // FolderAcquisitions was retired as well. System.Text.Json deliberately ignores it as an
+        // unknown property, so an upgrade keeps every setting it still understands.
+        await File.WriteAllTextAsync(
+            SettingsPath,
+            """
+            {
+              "LocalDirectory": "D:\\Data",
+              "ConflictPolicy": "Rename",
+              "FolderAcquisitions": true
+            }
+            """);
+
+        var loaded = await new JsonSettingsStore(SettingsPath).LoadAsync();
+
+        loaded.LocalDirectory.ShouldBe(@"D:\Data");
+        loaded.ConflictPolicy.ShouldBe(ConflictPolicy.Ask);
+
+        var rewritten = await File.ReadAllTextAsync(SettingsPath);
+        rewritten.ShouldNotContain("Rename");
+        rewritten.ShouldNotContain("FolderAcquisitions");
+        rewritten.ShouldContain("Ask");
+    }
+
+    [Fact]
     public async Task A_save_leaves_no_temporary_file_behind()
     {
         // The write is temp-then-move so a crash cannot leave a half-written file that fails to

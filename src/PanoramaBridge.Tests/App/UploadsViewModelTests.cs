@@ -32,8 +32,7 @@ public sealed class UploadsViewModelTests : IAsyncDisposable
             VerifyMethod: verified,
             VerifiedUtc: verified == VerifyMethod.ServerMd5 ? DateTimeOffset.UtcNow : null,
             Attempts: 1,
-            LastError: error,
-            IsDataset: false));
+            LastError: error));
     }
 
     private async Task<UploadsViewModel> LoadedAsync()

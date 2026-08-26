@@ -63,12 +63,37 @@ public sealed class JsonSettingsStore : ISettingsStore
 
         try
         {
-            await using var stream = File.OpenRead(_path);
-            var settings = await JsonSerializer
-                .DeserializeAsync<AppSettings>(stream, Options, cancellationToken)
-                .ConfigureAwait(false);
+            AppSettings? loaded;
 
-            return settings ?? new AppSettings();
+            await using (var stream = File.OpenRead(_path))
+            {
+                loaded = await JsonSerializer
+                    .DeserializeAsync<AppSettings>(stream, Options, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            var settings = loaded ?? new AppSettings();
+            var normalized = settings.NormalizeWithdrawnValues();
+
+            if (!ReferenceEquals(settings, normalized))
+            {
+                _log.LogInformation(
+                    "Normalized the withdrawn Rename conflict policy to Ask in {Path}.",
+                    _path);
+
+                try
+                {
+                    await SaveAsync(normalized, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // The parsed settings still describe the safe behavior. A read-only settings
+                    // directory must not make them look corrupt or discard unrelated values.
+                    _log.LogWarning(ex, "Could not persist normalized settings to {Path}.", _path);
+                }
+            }
+
+            return normalized;
         }
         catch (Exception ex) when (ex is JsonException or IOException)
         {

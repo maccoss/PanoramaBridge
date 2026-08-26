@@ -253,6 +253,7 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
                     DestinationRoot = monitorOptions.DestinationRoot,
                     Filter = monitorOptions.Filter,
                     IncludeSubdirectories = monitorOptions.IncludeSubdirectories,
+                    ConflictPolicy = monitorOptions.ConflictPolicy,
                     MaxUploadAttempts = monitorOptions.MaxUploadAttempts,
                 },
                 _loggerFactory.CreateLogger<ReconciliationScanner>());
@@ -360,7 +361,19 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         var monitoring = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var engine = NewCoordinator(settings);
 
-        await engine.RecoverInterruptedAsync(monitoring.Token).ConfigureAwait(false);
+        try
+        {
+            await engine.RecoverInterruptedAsync(monitoring.Token).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Recovery can start worker tasks before it fails partway through the ledger. Left
+            // unhandled, engine and monitoring were never assigned to a field, so nothing would
+            // ever complete the queue those workers are blocked reading from.
+            await engine.DisposeAsync().ConfigureAwait(false);
+            monitoring.Dispose();
+            throw;
+        }
 
         var monitor = new ContinuousMonitor(
             _store,
@@ -531,10 +544,9 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             _ => TransferState.Discovered,
         };
 
-        // Missing and Empty are both "there is nothing here to send", which is not a state
-        // worth a row in the transfer list: the first has gone, and the second is a folder the
-        // sweep will offer again if an acquisition is ever written into it.
-        if (readiness.Reason is not (ReadinessReason.Missing or ReadinessReason.Empty))
+        // A file that has gone is not worth a row in the transfer list. It is usually a working
+        // name that was renamed into place a moment later.
+        if (readiness.Reason != ReadinessReason.Missing)
         {
             Progress.Report(new TransferProgress(
                 report.Path,

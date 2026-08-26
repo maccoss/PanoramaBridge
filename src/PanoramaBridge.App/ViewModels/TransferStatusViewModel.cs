@@ -66,46 +66,6 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
         // forever keeps the processor out of its deep idle states for no benefit. The aggregator
         // wakes us when there is actually something to draw.
         _aggregator.WorkAppeared += Wake;
-        _aggregator.Dropped += Drop;
-    }
-
-    /// <summary>
-    /// Takes away a row whose entry has been dropped. Safe to call from a worker thread.
-    /// </summary>
-    private void Drop(string localPath)
-    {
-        var dispatcher = Application.Current?.Dispatcher;
-
-        if (dispatcher is not null && !dispatcher.CheckAccess())
-        {
-            dispatcher.InvokeAsync(() => Drop(localPath), DispatcherPriority.Background);
-            return;
-        }
-
-        if (_byPath.TryGetValue(localPath, out var row))
-        {
-            var index = Rows.IndexOf(row);
-
-            if (index >= 0)
-            {
-                RemoveRow(index);
-            }
-        }
-
-        // The totals are left to the next refresh rather than recomputed here.
-        //
-        // This is called once per file from a bulk decision, and Totals() walks every entry the
-        // aggregator holds -- which on a machine that has been uploading for weeks is not small.
-        // Recomputing per file made settling five hundred conflicts a five-hundred-pass scan on
-        // the UI thread, with three property notifications each driving the status bar and the
-        // taskbar indicator behind them. The window stopped responding for the length of the
-        // batch.
-        //
-        // Waking instead starts the refresh timer, which recomputes once and then stops itself
-        // when nothing is moving. That is the mechanism the rest of this class already uses, and
-        // it is what makes the redraw happen at all: the timer is stopped whenever nothing is
-        // transferring, which is exactly the state somebody is in when they clear conflicts.
-        Wake();
     }
 
     /// <summary>
@@ -311,8 +271,7 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
 
         for (var i = Rows.Count - 1; i >= 0 && Rows.Count > MaxRows; i--)
         {
-            if (Rows[i].State is TransferState.Verified or TransferState.Skipped
-                or TransferState.Declined)
+            if (Rows[i].State is TransferState.Verified or TransferState.Skipped)
             {
                 RemoveRow(i);
             }
@@ -323,7 +282,6 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
     public void Dispose()
     {
         _aggregator.WorkAppeared -= Wake;
-        _aggregator.Dropped -= Drop;
         _timer.Stop();
     }
 }

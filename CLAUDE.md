@@ -79,9 +79,9 @@ These skip cleanly unless their environment variables are set, and clean up afte
 |---|---|
 | SMB share monitoring | `PANORAMABRIDGE_SMB_PATH` |
 
-`PANORAMABRIDGE_IT_URL`, `PANORAMABRIDGE_IT_APIKEY` and `PANORAMABRIDGE_IT_PATH` are read by
-`pbctl`, not by any test. A live-server suite is still to be written -- see the handoff's open
-items for why it matters.
+`PANORAMABRIDGE_IT_URL`, `PANORAMABRIDGE_IT_APIKEY` and `PANORAMABRIDGE_IT_PATH` run the opt-in
+live WebDAV contract suite as well as `pbctl`. The tests create and remove a unique folder beneath
+the configured path.
 
 **Never commit a secret.** Credentials come from the environment or Windows Credential Manager,
 never from a file in the repository or a command-line argument.
@@ -183,8 +183,9 @@ untested, and one holding state in a plain `Dictionary` cannot test concurrency.
 2. Put logic in `Core`, keep the WPF layer thin.
 3. Add tests, including cost assertions where a fast path matters.
 4. `dotnet test` must be green with no warnings.
-5. **Add the release note in the same commit** if a user can observe the change. See below.
-6. Note anything surprising in the handoff's traps section.
+5. Before requesting review, complete [`docs/REVIEW_READINESS.md`](docs/REVIEW_READINESS.md).
+6. **Add the release note in the same commit** if a user can observe the change. See below.
+7. Note anything surprising in the handoff's traps section.
 
 ### Fixing a bug
 
@@ -192,7 +193,8 @@ untested, and one holding state in a plain `Dictionary` cannot test concurrency.
    reproduced under concurrency, or on CI, or against a real file handle.
 2. Fix it, and record *why* the fix is what it is if the cause was non-obvious.
 3. Run the full suite; several of these components interact.
-4. **Add the release note in the same commit** if a user could have hit the bug. See below.
+4. Before requesting review, complete [`docs/REVIEW_READINESS.md`](docs/REVIEW_READINESS.md).
+5. **Add the release note in the same commit** if a user could have hit the bug. See below.
 
 ### The release note goes in the commit that makes the change
 

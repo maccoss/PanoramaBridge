@@ -41,66 +41,6 @@ public enum TransferState
 
     /// <summary>Gave up. <see cref="UploadRecord.LastError"/> says why.</summary>
     Failed = 9,
-
-    /// <summary>
-    /// A conflict a person resolved by keeping the remote copy. Nothing was sent, and nothing
-    /// will be until the local file changes.
-    /// </summary>
-    /// <remarks>
-    /// Deliberately not <see cref="Skipped"/>, which means an identical copy was already there
-    /// and carries a verified standing to prove it. Here the two copies differ and somebody
-    /// chose the remote one. Folding that into Skipped would be the "one Completed label meaning
-    /// three things" mistake this enum exists to avoid, and it would claim a verification that
-    /// was never performed.
-    /// </remarks>
-    Declined = 10,
-}
-
-/// <summary>Why a row is being held.</summary>
-/// <remarks>
-/// Two very different situations reach <see cref="TransferState.Conflict"/> and they want
-/// opposite things, so which one it is has to be recorded rather than inferred. It was inferred
-/// at first, by comparing the held reason against the raw-check summary and calling them the same
-/// thing when the strings matched -- which they did only because one was assigned from the other.
-/// Rewording either, or prefixing one, would have silently turned a damaged acquisition back into
-/// something the Overwrite button would send, and no test would have failed.
-/// </remarks>
-public enum ConflictKind
-{
-    /// <summary>Not held, or held before this was recorded.</summary>
-    Unknown = 0,
-
-    /// <summary>Something different occupies the destination.</summary>
-    DestinationOccupied = 1,
-
-    /// <summary>
-    /// The local file is damaged. Reading it established that it ends before its data does.
-    /// </summary>
-    /// <remarks>
-    /// Replacing a good remote copy with this one is the outcome the truncation check exists to
-    /// prevent, so the only decision offered is to keep what is on the server.
-    /// </remarks>
-    LocalFileDamaged = 2,
-}
-
-/// <summary>What a person decided to do about a conflict.</summary>
-/// <remarks>
-/// Stored on the row rather than held in memory, so a decision survives a restart: an
-/// instrument PC can be rebooted between somebody deciding and the transfer running.
-/// </remarks>
-public enum ConflictResolution
-{
-    /// <summary>Nothing decided. The row stands where it is.</summary>
-    None = 0,
-
-    /// <summary>Replace the remote copy with this one.</summary>
-    Overwrite = 1,
-
-    /// <summary>Keep the remote copy and stop offering this file.</summary>
-    Keep = 2,
-
-    /// <summary>Send it alongside under the name in <see cref="UploadRecord.RenameTo"/>.</summary>
-    Rename = 3,
 }
 
 /// <summary>
@@ -176,7 +116,6 @@ public readonly record struct LocalFileStamp(string Path, long Length, long Last
 /// <param name="VerifiedUtc">When verification last succeeded.</param>
 /// <param name="Attempts">Upload attempts so far.</param>
 /// <param name="LastError">Why the last attempt failed.</param>
-/// <param name="IsDataset">True when this row represents a folder acquisition rather than a file.</param>
 public sealed record UploadRecord(
     string LocalPath,
     string RemotePath,
@@ -189,15 +128,8 @@ public sealed record UploadRecord(
     DateTimeOffset? VerifiedUtc,
     int Attempts,
     string? LastError,
-    bool IsDataset,
-    string? RawCheck = null,
-    ConflictResolution Resolution = ConflictResolution.None,
-    string? RenameTo = null,
-    ConflictKind ConflictKind = ConflictKind.Unknown)
+    string? RawCheck = null)
 {
-    /// <summary>True when a person has decided what to do and the engine has not yet acted.</summary>
-    public bool HasPendingResolution => Resolution != ConflictResolution.None;
-
     /// <summary>
     /// True when this file is known to be safely on the server, unchanged since.
     /// </summary>
@@ -244,8 +176,7 @@ public sealed record UploadRecord(
             VerifyMethod: VerifyMethod.None,
             VerifiedUtc: null,
             Attempts: 0,
-            LastError: null,
-            IsDataset: false);
+            LastError: null);
 
     /// <summary>Returns this row with hashes attached.</summary>
     public UploadRecord WithHashes(ContentHashes hashes) =>

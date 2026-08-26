@@ -3,6 +3,7 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PanoramaBridge.Core.Storage;
+using PanoramaBridge.Core.Transfer;
 using PanoramaBridge.Core.WebDav;
 
 namespace PanoramaBridge.Core.Monitoring;
@@ -21,6 +22,9 @@ public sealed record MonitorOptions
 
     /// <summary>Whether to watch the tree below the root.</summary>
     public bool IncludeSubdirectories { get; init; } = true;
+
+    /// <summary>What to do when the destination is occupied.</summary>
+    public ConflictPolicy ConflictPolicy { get; init; } = ConflictPolicy.Ask;
 
     /// <summary>How long a file must be unchanged before it is considered finished.</summary>
     public TimeSpan StabilityPeriod { get; init; } = TimeSpan.FromSeconds(10);
@@ -45,6 +49,7 @@ public sealed record MonitorOptions
             DestinationRoot = RemotePath.Parse(settings.RemotePath),
             Filter = new CandidateFilter(settings.Extensions),
             IncludeSubdirectories = settings.IncludeSubdirectories,
+            ConflictPolicy = settings.ConflictPolicy,
             StabilityPeriod = TimeSpan.FromSeconds(Math.Max(0, settings.StabilitySeconds)),
 
             // A zero or negative interval would turn the safety net into a busy loop. One minute
@@ -147,6 +152,7 @@ public sealed class ContinuousMonitor : IAsyncDisposable, IDisposable
                 DestinationRoot = options.DestinationRoot,
                 Filter = options.Filter,
                 IncludeSubdirectories = options.IncludeSubdirectories,
+                ConflictPolicy = options.ConflictPolicy,
                 MaxUploadAttempts = options.MaxUploadAttempts,
             },
             loggers.CreateLogger<ReconciliationScanner>());

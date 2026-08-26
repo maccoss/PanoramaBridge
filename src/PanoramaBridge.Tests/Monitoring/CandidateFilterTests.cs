@@ -90,6 +90,7 @@ public sealed class CandidateFilterTests
     [Theory]
     [InlineData(@"C:\data\.hidden.raw")]
     [InlineData(@"C:\data\~partial.raw")]
+    [InlineData(@"C:\data\~partial.d.zip")]
     public void Working_files_are_never_data(string path)
     {
         // Instrument software and Windows both leave these behind, and a copy in progress is

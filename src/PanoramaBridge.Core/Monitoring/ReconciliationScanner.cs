@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PanoramaBridge.Core.Storage;
+using PanoramaBridge.Core.Transfer;
 using PanoramaBridge.Core.WebDav;
 
 namespace PanoramaBridge.Core.Monitoring;
@@ -36,6 +37,19 @@ public sealed record ReconciliationOptions
 
     /// <summary>Whether to walk subdirectories.</summary>
     public bool IncludeSubdirectories { get; init; } = true;
+
+    /// <summary>
+    /// What to do when the destination is occupied, which decides whether a held file is offered
+    /// again.
+    /// </summary>
+    /// <remarks>
+    /// The sweep needs this because holding is now the only thing that happens to a conflict: the
+    /// per-file buttons were withdrawn. A row held under <c>Ask</c> stays held, which is the point
+    /// of asking. Under any other policy it has to be offered again, or changing the setting —
+    /// the one remedy the release notes give — does nothing at all: the policy is consulted by
+    /// the decision ladder, and the ladder is only reached for files the sweep offers.
+    /// </remarks>
+    public ConflictPolicy ConflictPolicy { get; init; } = ConflictPolicy.Ask;
 
     /// <summary>
     /// How many times an upload that failed is retried before the sweep stops offering it.
@@ -205,17 +219,13 @@ public sealed class ReconciliationScanner
     /// </summary>
     /// <remarks>
     /// <para>
-    /// A hand-rolled walk rather than <c>EnumerateFiles</c> with recursion, because it has to be
-    /// able to <em>stop</em>. A Bruker <c>.d</c> is a directory that is one acquisition, and
-    /// descending into it would offer the files inside individually -- which is precisely how a
-    /// folder still being written transfers in pieces.
+    /// A hand-rolled walk rather than <c>EnumerateFiles</c> with recursion, because it needs to
+    /// decide whether each directory should be descended into before listing its contents.
     /// </para>
     /// <para>
     /// Files are stamped from the entry the walk already read, so size and modification time are
     /// free; going through <c>LocalFileStamp.FromFile</c> instead would stat every file a second
-    /// time, and over SMB that is a second round trip each. A dataset folder has to be measured,
-    /// which costs a walk of it -- but that walk replaces the one that would have descended into
-    /// it anyway, so the sweep visits each file exactly once either way.
+    /// time, and over SMB that is a second round trip each.
     /// </para>
     /// </remarks>
     private IEnumerable<LocalFileStamp> Enumerate()
@@ -272,20 +282,6 @@ public sealed class ReconciliationScanner
             {
                 if (entry is DirectoryInfo child)
                 {
-                    if (DatasetFolder.Is(child.FullName, _options.Filter))
-                    {
-                        // One acquisition, not a folder of candidates. Measured, and not
-                        // descended into.
-                        if (DatasetFolder.Measure(child.FullName) is { } measured
-                            && !measured.IsEmpty)
-                        {
-                            yield return new LocalFileStamp(
-                                child.FullName, measured.TotalBytes, measured.NewestWriteUnixMs);
-                        }
-
-                        continue;
-                    }
-
                     if (_options.IncludeSubdirectories)
                     {
                         pending.Push(child.FullName);
@@ -363,7 +359,11 @@ public sealed class ReconciliationScanner
 
         try
         {
-            destination = _destinations.For(record).ToEncodedString();
+            // The ledger uses a case-insensitive key, while Panorama does not. The path yielded
+            // by this sweep is therefore the only spelling that can answer where this candidate
+            // would go now; resolving from the ledger spelling would offer a case-only rename
+            // on every pass after it had already been uploaded under the new name.
+            destination = _destinations.For(stamp.Path).ToEncodedString();
         }
         catch (ArgumentException)
         {
@@ -386,13 +386,19 @@ public sealed class ReconciliationScanner
 
         return record.State switch
         {
-            TransferState.Conflict => true,
+            // Held, and staying held only while the answer is still "ask me". Any other policy
+            // is an answer, and the file has to reach the ladder for it to be applied.
+            TransferState.Conflict => _options.ConflictPolicy is ConflictPolicy.Ask
+                or ConflictPolicy.Rename,
 
-            // Somebody chose to keep the remote copy. Offering it again would re-raise the
-            // conflict they just settled, every sweep, for as long as the file sits there. The
-            // stamp check above is what lets them back in: change the local file and it is a new
-            // question, which is exactly when it should be asked again.
-            TransferState.Declined => true,
+            // A conflict the ladder resolved as Skip is saved Skipped but never server-verified,
+            // so IsSettledAt above never matches it. Without this arm the file re-runs the whole
+            // ladder -- another listing, maybe another hash -- on every sweep for as long as the
+            // policy stays Skip.
+            TransferState.Skipped when record.VerifyMethod != VerifyMethod.ServerMd5 =>
+                _options.ConflictPolicy == ConflictPolicy.Skip
+                && string.Equals(record.RemotePath, destination, StringComparison.Ordinal),
+
             TransferState.Failed => record.Attempts >= _options.MaxUploadAttempts,
             _ => false,
         };

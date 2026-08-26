@@ -38,66 +38,6 @@
             </DockPanel>
 
             <TextBlock Margin="0,8,0,0" Text="{Binding Summary}" />
-
-            <!--
-                Shown only when there is something to decide. A row of buttons that is nearly
-                always disabled teaches people to ignore it, and this one matters on the days it
-                appears.
-
-                Nothing here interrupts a transfer: conflicts wait in the ledger until somebody
-                is at the machine. A modal on an instrument PC at three in the morning would turn
-                one held file into a stalled night.
-            -->
-            <Border Margin="0,10,0,0" Padding="10" CornerRadius="3"
-                    Background="#FFF7E6" BorderBrush="#E0C48C" BorderThickness="1"
-                    Visibility="{Binding HasConflicts, Converter={StaticResource BooleanToVisibility}}">
-                <StackPanel>
-                    <TextBlock TextWrapping="Wrap"
-                               Text="Some files were held because something different already occupies their destination. Tick the ones you want to decide about, or leave everything unticked to decide about all of them." />
-
-                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                        <!-- Says what it will do next, so the second press is not a surprise. -->
-                        <Button Command="{Binding ResolveOverwriteCommand}">
-                            <Button.Style>
-                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-                                    <Setter Property="Content" Value="Replace what is on the server" />
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding OverwriteArmed}" Value="True">
-                                            <Setter Property="Content" Value="Replace them - press to confirm" />
-                                            <Setter Property="Foreground" Value="#A32100" />
-                                            <Setter Property="FontWeight" Value="SemiBold" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Button.Style>
-                        </Button>
-                        <Button Content="Send alongside, under a new name" Margin="8,0,0,0"
-                                Command="{Binding ResolveRenameCommand}" />
-                        <Button Content="Keep what is on the server" Margin="8,0,0,0"
-                                Command="{Binding ResolveKeepCommand}" />
-                    </StackPanel>
-
-                    <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,0" TextWrapping="Wrap"
-                               Text="A file whose own contents are damaged is held here too, and only Keep applies to it: replacing a good remote copy with a short one is the thing this check exists to prevent." />
-
-                </StackPanel>
-            </Border>
-
-            <!--
-                Outside the banner above, deliberately.
-
-                It lived inside it, and the banner is shown only while conflicts remain, so the
-                one case this message exists for, a decision that settled or found nothing, is
-                exactly the case where the banner had just collapsed and took the explanation with
-                it. The button looked as though it had done nothing, which is the symptom the
-                message was added to remove.
-            -->
-            <Border Margin="0,10,0,0" Padding="10" CornerRadius="3"
-                    Background="#FDECEA" BorderBrush="#E0A9A0" BorderThickness="1"
-                    Visibility="{Binding HasResolveProblem, Converter={StaticResource BooleanToVisibility}}">
-                <TextBlock TextWrapping="Wrap" Foreground="#A32100"
-                           Text="{Binding ResolveProblem}" />
-            </Border>
         </StackPanel>
 
         <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}"
@@ -128,30 +68,6 @@
             </DataGrid.RowStyle>
 
             <DataGrid.Columns>
-<!--
-                    A template column with a real CheckBox, not DataGridCheckBoxColumn.
-
-                    This grid is IsReadOnly, and DataGrid.IsReadOnly short-circuits BeginEdit for
-                    every cell in it: a column can only be more restrictive than the grid, never
-                    less, so IsReadOnly="False" on the column achieves nothing. The check box a
-                    DataGridCheckBoxColumn renders outside edit mode is not hit-testable either,
-                    so the tick silently never registered. And because "nothing ticked" means
-                    "all of them", pressing Replace would then have overwritten every conflicted
-                    file on the server rather than the one that was aimed at.
-
-                    A CheckBox in a template is an ordinary control and needs no edit mode.
-                -->
-                <DataGridTemplateColumn Header="" Width="34">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate>
-                            <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
-                                      IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                      IsEnabled="{Binding CanResolve}"
-                                      ToolTip="Pick this file to decide about" />
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-
                 <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="2*" />
                 <DataGridTextColumn Header="State" Binding="{Binding State}" Width="130" />
 

@@ -22,11 +22,12 @@ decided, and what cost real time to learn.
 | Resource behaviour on an instrument PC | **Done, measured.** |
 | SMB share monitoring | **Verified** against a live file server. |
 | 4 — Continuous monitoring | **Done, measured.** See §7 for what it is and §8 for what was left. |
-| 5 — Datasets | **Done, shipped in v26.3.0.** Directory acquisitions and Sciex companions. See §7a. |
+| 5 — Companion files | **Done.** Sciex `.wiff` companions travel with their primary file. See §7a. |
 | 5 — Conflict dialog, polish | Not started. See §9. |
 | 6 — Code signing, ship | **Shipped, through v26.3.0.** Code signing still outstanding; see §9. |
 
-534 tests in the main suite, 9 of them skipped unless the opt-in SMB suite is enabled, plus 32 in
+500 tests run in the main suite, with 10 opt-in tests skipped unless their environment variables
+are set, plus 32 in
 `ThermoRaw.Tests`. CI green, warnings as errors.
 
 > Coverage was **Core 87%, App 49%, pbctl 17%** when it was last measured, at v26.1.0. Three
@@ -37,9 +38,8 @@ decided, and what cost real time to learn.
 is watched, and each acquisition is transferred and verified once it has finished being written.
 **Upload now** still does a single pass for anyone who would rather drive it by hand.
 
-That now covers three shapes of acquisition: a single file (Thermo `.raw`), a directory packed
-into one archive (Bruker and Agilent `.d`, Waters `.raw` directories), and a file that travels
-with companions (Sciex `.wiff` with its `.wiff.scan`). See §7a.
+That covers a single file (Thermo `.raw`) and a file that travels with companions (Sciex `.wiff`
+with its `.wiff.scan`). Directory acquisitions are not supported. See §7a.
 
 ---
 
@@ -47,7 +47,7 @@ with companions (Sciex `.wiff` with its `.wiff.scan`). See §7a.
 
 ```bash
 dotnet build PanoramaBridge.sln -c Release
-dotnet test  PanoramaBridge.sln -c Release          # 566 tests, no network needed
+dotnet test  PanoramaBridge.sln -c Release          # 542 tests, no network needed
 src/PanoramaBridge.App/bin/Release/net8.0-windows/PanoramaBridge.exe
 ```
 
@@ -87,6 +87,7 @@ pbctl watch <dir> /_webdav/unused/ --ext .no-such-extension --every 1
 | Suite | Gate | Notes |
 |---|---|---|
 | SMB monitoring | `PANORAMABRIDGE_SMB_PATH` | A writable folder on a share. Creates and removes its own scratch subfolder. |
+| Live WebDAV contracts | `PANORAMABRIDGE_IT_URL`, `PANORAMABRIDGE_IT_APIKEY`, `PANORAMABRIDGE_IT_PATH` | Creates and removes a unique nested remote folder. Checks recursive MKCOL, server MD5 and stored time. |
 
 > **Running `pbctl` from Git Bash:** set `MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'` first, or
 > MSYS rewrites `/_webdav/...` into `C:/Program Files/Git/_webdav/...` and every request 404s.
@@ -142,9 +143,6 @@ implicit usings, so the test project puts them back explicitly. See §6.
 | `Monitoring/DirectoryMonitor` | `FileSystemWatcher`, wrapped so it is allowed to fail. An accelerator, never the mechanism. |
 | `Monitoring/ContinuousMonitor` | Puts those two together and feeds the gate. |
 | `Monitoring/CandidateFilter` | Which files count as data. One filter, so the sweep and the watcher cannot disagree. Also walks trailing extensions, so `.wiff` brings `.wiff.scan`. |
-| `Monitoring/DatasetFolder` | Recognises a directory acquisition, measures it, and names its archive. |
-| `Monitoring/DatasetStabilityTracker` | The folder counterpart of the stability tracker. Three signals must settle together, and an empty folder is never ready. |
-| `Transfer/DatasetArchive` | Packs a directory acquisition into one stored-not-compressed archive, beside the acquisition, checking free space first. |
 | `Transfer/UploadDecisionService` | The three-tier "does this need uploading?" ladder. |
 | `Transfer/ChecksumSidecar` | The `.md5` written beside every upload. The only record of a file's hash, and of the date it was acquired, that travels with the data rather than living in a database on one instrument PC. `md5sum -c` reads it unmodified. |
 | `Transfer/TransferCoordinator` | Owns all mutable transfer state, a bounded `Channel`, and N workers. |
@@ -170,8 +168,8 @@ implicit usings, so the test project puts them back explicitly. See §6.
 - **Velopack** for install and update, from GitHub Releases.
 - **CalVer `YY.feature.patch`**, matching `skyline-prism`. Version lives only in
   `Directory.Build.props`; `release.yml` refuses to publish if the tag disagrees.
-- **Folder acquisitions** (`.d`, Waters `.raw` directories) are atomic transfer items: one
-  directory becomes one archive, uploaded as one object. Done in v26.3.0 — see §7a.
+- **Directory acquisitions are not supported.** Bruker and Agilent `.d` directories and Waters
+  `.raw` directories are walked as ordinary folders; only matching files inside are candidates.
 - **Verification means the server's own MD5.** Nothing weaker may be reported as verified.
 
 ### The Python package is retired, and how
@@ -538,30 +536,11 @@ from the ledger, and asks the server nothing at all.
 
 ---
 
-## 7a. Directory acquisitions and companions, as built
+## 7a. Companion files
 
-Shipped in v26.3.0. Two problems, one release.
-
-**A directory acquisition is one object.** A `.d` is a directory locally and a single `.d.zip`
-remotely, which is an observation rather than a preference: Panorama Public stores every Bruker,
-Waters and Agilent acquisition as `<folder name>.zip`. One object is what makes the transfer
-atomic without any machinery for atomicity — it either arrives and verifies against the server's
-own MD5, or it does not — so verification, the sidecar, conflict handling and the ledger all
-apply unchanged.
-
-- `DatasetFolder` recognises one by the same extension list that governs files, and being a
-  directory is what separates a Waters `.raw` folder from a Thermo `.raw` file.
-- `DatasetStabilityTracker` decides it has finished: nothing inside open for writing, **and**
-  size, file count and newest timestamp all unchanged. Three numbers rather than one, because
-  Bruker closes the files in a `.d` at different moments, so a total can hold still while a file
-  is added. An empty `.d` is never ready.
-- `DatasetArchive` packs it, stored not compressed, beside the acquisition under a `~` name that
-  `CandidateFilter` already rejects — otherwise every pack would hand the sweep a six-gigabyte
-  candidate. Free space is checked with headroom first, and a failed or cancelled pack removes
-  its partial file.
-- **The sweep no longer descends** into an acquisition. That was the actual mechanism behind
-  "a folder still being written can transfer partially": a recursive walk offered the files
-  inside individually.
+Directory acquisitions are deliberately unsupported. The previous archive path was removed
+because it could not be exercised against an instrument writing one, and a feature that can send
+an acquisition early must not remain merely opt-in.
 
 **Companions travel with the acquisition.** `Path.GetExtension("run.wiff.scan")` is `.scan`, so a
 filter of `.wiff` matched 38 MB of metadata and left 8.2 GB of spectra behind — and recorded it
@@ -569,11 +548,7 @@ verified, correctly as far as it went. `CandidateFilter` now strips trailing ext
 time, so `.wiff` reaches `.wiff.scan`. Excluded from that walk: SQLite's `-journal`, `-wal` and
 `-shm`, and our own `.md5` sidecar, which would otherwise reach `run.raw` from `run.raw.md5`.
 
-What is **not** established: the completion decision, for any vendor. Real acquisitions were
-downloaded from Panorama Public and run through, which settles recognising, packing, naming and
-verifying — but a downloaded folder arrives finished, so nothing about it exercises the decision
-to wait. See [`VENDOR_FORMATS.md`](VENDOR_FORMATS.md), which draws that line per vendor and names
-sending-early as the one quiet failure mode.
+See [`VENDOR_FORMATS.md`](VENDOR_FORMATS.md) for the supported formats and the companion rule.
 
 ---
 
@@ -582,55 +557,34 @@ sending-early as the one quiet failure mode.
 1. **The conflict dialog.** The ledger already records `Conflict`, and the sweep deliberately
    leaves such a file alone until a person or a local change resolves it. Nothing yet asks.
 2. **Code signing**, still outstanding since v26.1.0. See §9.
-3. **Nothing outstanding in the dataset path.** The eight defects a review turned up after
-   v26.3.0 are all fixed: the two that mattered -- a walk failure taking monitoring down with it,
-   and a leaked tracker sample that could call a folder ready on one look -- and six smaller ones.
-   They are in the git history rather than here, now that none of them is pending.
 
 ---
 
-## 9a. Known defects in conflict handling and directory acquisitions
+## 9a. Scope reduction
 
-Found by nine review passes over v26.4.0—v26.4.6 and verified against the code, but **not
-fixed**. A branch that attempted them was abandoned: each round of fixes introduced roughly as many
-defects as it removed, several worse than the originals, so the work was stopped rather than
-continued. Read this before changing anything in `ProcessDatasetAsync`, `ApplyResolutionAsync` or
-`UploadsViewModel`.
+Nine review passes over v26.4.0—v26.4.6 found about seventy-five faults in these two areas. From
+the second pass on, each round of fixes introduced roughly as many defects as it removed, several
+worse than the originals. The response was to stop fixing and reduce scope.
 
-None of these loses data silently — the paths that did were closed in v26.4.5 and v26.4.6. What
-remains is invisibility, needless work, and decisions that go missing.
+**Withdrawn.** Deciding about a held file one at a time — the Replace / Send alongside / Keep
+buttons, `ConflictResolution`, `ConflictKind`, `TransferState.Declined`, `ApplyResolutionAsync`,
+`RenamePlanner`, `ConflictNames`, and the `ConflictPolicy.Rename` setting that needed a per-file
+record of where each renamed file went. About 2,800 lines. A conflict is held and shown under
+**Needs attention**, as before v26.4.0, and answered by the policy setting or by renaming the local
+file.
 
-| Defect | Mechanism |
-|---|---|
-| A first-time acquisition has no ledger row while it transfers | `ProcessDatasetAsync` packs and uploads without ever calling `SaveAsync`, and `SetStateAsync` is `UPDATE`-only so its `Uploading` write matches nothing. A new `.d` is absent from the Uploads tab for the whole of a multi-hour transfer, `Attempts` never increments, and `RecoverInterruptedAsync` cannot recover it because `GetInterruptedAsync` finds no row. The file path saves a `Queued` row first; this one does not. |
-| An interrupted acquisition folder is written off | `RecoverInterruptedAsync` asks `File.Exists`, false for a directory, and marks the row failed with a message about a local file. Only reachable once a row exists, so it compounds the entry above. |
-| Startup can block when verification is off | `GetInterruptedAsync` returns `Uploading`, `Uploaded` and `Queued` unbounded. With `VerifyUploads` off a row stays `Uploaded` for ever, and recovery enqueues into a bounded channel (5000, wait-when-full) before any worker runs. Past that many rows `StartMonitoringAsync` never returns; below it, every file ever uploaded is re-offered on each launch. |
-| `ConflictPolicy.Rename` does nothing for acquisition folders | The dataset conflict switch has no `Rename` arm, so folders are held instead. The same defect was fixed for files in v26.4.0 and never fixed here. |
-| An acquisition skipped by policy is not recorded | The skip reports progress but writes no row, so the folder is invisible in the audit view and re-examined every sweep — another listing and another collection hash, which Panorama computes by reading every byte in the destination. |
-| A rename decision on a folder is applied without re-checking the name | The occupied check is skipped entirely while a decision is pending, so a name that was free when offered can be taken by the time the bytes move. The file path re-checks; this one does not. |
-| The sweep and the engine disagree after a case-only rename | The ledger is `NOCASE`, so a row keeps its original spelling. The sweep resolves from the row's stored path and the engine from the path on disk, so after a case change the two never match and the file is offered on every pass for ever. |
-| `IsDataset` is never cleared | Nothing writes it back to false, so a `.d` folder later replaced by a plain `.d` file still resolves to the archive name. |
-| A decision made while the ladder is running is discarded | The row is read before `DecideAsync`, which can spend a listing and a collection hash, and every save writes the whole row including the resolution column — so a decision made in that window is overwritten with `None` and the person is re-prompted. |
-| A failed attempt spends the decision | The resolution is cleared before the attempt, so a full disk while packing or a timeout while uploading loses it. **Restoring it naively makes things worse**: pack failures never increment `Attempts` (that happens only on the `Uploading` transition, which this path never writes), so a restored decision turns a loop that self-terminated at `Conflict` into an unbounded repack of the whole acquisition on every sweep. A correct fix needs an attempt bound *and* a re-check before the restored decision is acted on. Tried, reverted. |
-| Open containing folder does nothing for an acquisition | `TransferStatusViewModel.OpenContainingFolder` asks `File.Exists`, false for a directory, and returns silently. `Path.Exists` is the one-call form both this and recovery want. |
+**Directory acquisitions are withdrawn.** Bruker and Agilent `.d` directories and Waters `.raw`
+directories are now ordinary folders. The scanner recurses into them and transfers only matching
+files; it does not pack or upload a directory as an atomic acquisition.
 
-### Why this is written down rather than fixed
+The remaining file path has explicit tests for state transitions, crash recovery through a bounded
+queue, and case-only local renames. A future feature must meet that same standard before it is
+supported.
 
-Nine review rounds produced about seventy-five findings. From the second round on, each round found
-that the previous round's fixes had introduced new defects — four times the new one was worse than
-the original, including a UI that reported a refused acquisition as "Already on the server", and a
-decision-restore that replaced a terminating loop with an unbounded one.
-
-Several fixes shipped with comments asserting the opposite of what the code did, and at least eight
-tests were written that could not fail, one of them validating a release note that was therefore
-untrue. The defence that worked was reverting each fix and watching its test go red; anything less
-passed things that did not work.
-
-The useful advice is not about any single row above. Two roots account for most of the list, and
-both are worth checking for before editing here: **a decision duplicated rather than reused** (the
-destination was derived at six call sites, then the ladder was re-implemented for folders), and
-**"I cannot look" treated as "there is nothing there"** (fixed on the server side in v26.4.6, still
-present on the local side).
+On method: several fixes shipped with comments asserting the opposite of what the code did, and at
+least eight tests were written that could not fail — one validating a release note that was
+untrue as a result. The only defence that worked was reverting each fix and watching its test go
+red. Treat that as required here rather than thorough.
 
 ---
 
@@ -647,7 +601,7 @@ present on the local side).
 | A sweep of a very large share | 35,000 files takes tens of seconds (§7). Nothing adapts the interval to how long the last sweep took, and perhaps it should. |
 | The first transfer into a big destination folder stalls | **Fixed and released in v26.2.1.** The collection hash was fetched alongside the listing, for every folder, before anything knew whether it would be read -- and it is read only when a destination name matches, which for new work is never. So a new acquisition into a populated folder made Panorama hash every byte in it, at roughly 600 MB/s, to answer a question the listing had already answered: 300 GB was minutes of "Checking server" before the first file moved. It is now fetched on demand, still once per folder so a batch that genuinely needs hashes pays one request. |
 | Monitoring while a manual scan runs | Refused rather than queued. **Upload now** turns into **Check now** while monitoring, which covers the case that actually comes up. |
-| A live-server test suite | `CLAUDE.md` documented one gated on `PANORAMABRIDGE_IT_*` and it never existed; those variables are read only by `pbctl`. It matters because every fact in §5 was established by a throwaway program and nothing re-checks any of them. If LabKey changes `?method=md5sum`, the semicolon behaviour, or `X-LABKEY-Last-Modified`, this document quietly becomes wrong. |
+| Live-server contract breadth | The opt-in suite checks recursive MKCOL, upload MD5 and timestamp preservation. It does not yet recheck every §5 fact, including semicolon rejection and collection hashes. |
 | `pbctl` command bodies | 3.7% covered. The parsing is now extracted and fully tested; everything below it needs a server, which is the suite above. |
 | Watching more than one folder | One monitored directory, as before. The engine and the monitor are both per-folder objects, so a second one is not structurally hard — but the settings screen, the ledger's meaning of "the base directory", and the transfer list all assume one. |
 

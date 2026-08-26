@@ -29,6 +29,8 @@ public interface IStateStore
     /// <remarks>
     /// Called before the side effect it describes, so a crash leaves the ledger describing an
     /// attempt that may or may not have happened rather than one that definitely did not.
+    /// Throws when <paramref name="localPath"/> has no row; callers must save the initial row
+    /// before recording a transition.
     /// </remarks>
     Task SetStateAsync(
         string localPath,
@@ -36,39 +38,7 @@ public interface IStateStore
         string? lastError = null,
         CancellationToken cancellationToken = default);
 
-    /// <summary>
-    /// Records what a person decided about a conflict.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Writes the decision to the ledger rather than acting on it here. The engine applies it on
-    /// the next pass, which keeps the decision durable across a restart and keeps this interface
-    /// free of transfer logic.
-    /// </para>
-    /// <para>
-    /// <see cref="ConflictResolution.Keep"/> is terminal and leaves nothing pending: the row goes
-    /// to <see cref="TransferState.Declined"/> and the sweep stops offering it. The other two put
-    /// the row back to <see cref="TransferState.Discovered"/> so the sweep picks it up, carrying
-    /// the decision that will be honoured when it does.
-    /// </para>
-    /// </remarks>
-    /// <param name="renameTo">
-    /// The new leaf name, required for <see cref="ConflictResolution.Rename"/> and ignored
-    /// otherwise.
-    /// </param>
-    /// <returns>
-    /// 1 when the decision was recorded, 0 when it was not because the row is no longer held --
-    /// a sweep having picked the file up while the list was on screen. Returned rather than
-    /// silently discarded so the caller can say so, instead of leaving somebody believing every
-    /// conflict is settled when some are not.
-    /// </returns>
-    Task<int> ResolveConflictAsync(
-        string localPath,
-        ConflictResolution resolution,
-        string? renameTo = null,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>Marks a row verified, recording how it was checked.</summary>
+    /// <summary>Marks an existing row verified, recording how it was checked.</summary>
     Task MarkVerifiedAsync(
         string localPath,
         VerifyMethod method,
