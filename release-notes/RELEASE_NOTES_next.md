@@ -7,6 +7,34 @@ time and update the heading; see `README.md` in this directory for the process.
 
 ## Bug Fixes
 
+- **A decision made in an older version can no longer be undone by the conflict setting.** Files
+  you chose to keep the server's copy of, or sent under a new name, in v26.3.0—v26.4.6 are held
+  under **Needs attention**. Setting **Replace the copy on the server** used to release them on
+  the next folder check and send each file to its *original* name — replacing the very
+  copy your earlier choice existed to preserve, without asking. They now stay held under that
+  setting. **Leave the copy on the server alone** still clears them, safely, because it sends
+  nothing; and changing the file itself reopens the question.
+
+  This also holds if such a record is written after moving back to an older version and updating
+  again — previously it was converted only once, on the first update.
+
+- **A damaged file is no longer re-examined on every folder check.** A file held because reading
+  it shows it ends before its data does was released by the *Leave alone* and *Replace* settings,
+  re-checked against the server, and held again — on every check, indefinitely. Neither setting
+  is an answer to a broken file, so it now stays held, whatever the setting, until the file
+  changes. It was never at risk of being sent.
+
+- **Nothing is written off while the monitored folder is unreachable.** Interrupted transfers are
+  checked at startup, which on a network share is often before the share is available — and an
+  unreachable file answers exactly as a deleted one. They are now left as they are until the
+  folder can be seen, instead of being marked failed with a message saying the data no longer
+  exists.
+
+- **An interrupted folder upload from an older version now fails with a reason.** Sending folders
+  as a single archive has been removed, so such an upload cannot be resumed — but it was being
+  quietly re-queued and dropped on every start, staying "uploading" forever. It is now marked
+  failed with an explanation, and the folder itself is untouched.
+
 ## Performance
 
 ## Breaking Changes

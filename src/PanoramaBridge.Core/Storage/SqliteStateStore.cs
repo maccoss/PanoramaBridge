@@ -83,23 +83,25 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     {
         ArgumentNullException.ThrowIfNull(record);
 
-        // resolution/rename_to/conflict_kind are cleared on every save so a row this build
-        // fully rewrites cannot still carry a stale value a rolled-back build would act on.
+        // resolution/rename_to are cleared on every save so a row this build fully rewrites
+        // cannot still carry a stale value a rolled-back build would act on. conflict_kind is
+        // live again: it records why a row is held, which the sweep needs to know before
+        // releasing it under a policy.
         await ExecuteWriteAsync(
             """
             INSERT INTO uploads
               (local_path, remote_path, size, mtime_utc, md5, sha256,
                state, verify_method, verified_utc, attempts, last_error, is_dataset,
-               raw_check)
+               raw_check, conflict_kind)
             VALUES
               ($path, $remote, $size, $mtime, $md5, $sha256,
-               $state, $verify, $verified, $attempts, $error, 0, $rawcheck)
+               $state, $verify, $verified, $attempts, $error, 0, $rawcheck, $kind)
             ON CONFLICT(local_path) DO UPDATE SET
               local_path = $path, remote_path = $remote, size = $size, mtime_utc = $mtime,
               md5 = $md5, sha256 = $sha256, state = $state, verify_method = $verify,
               verified_utc = $verified, attempts = $attempts, last_error = $error,
-              is_dataset = 0, raw_check = $rawcheck,
-              resolution = 0, rename_to = NULL, conflict_kind = 0;
+              is_dataset = 0, raw_check = $rawcheck, conflict_kind = $kind,
+              resolution = 0, rename_to = NULL;
             """,
             command =>
             {
@@ -111,6 +113,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                 command.Parameters.AddWithValue("$sha256", record.Sha256 ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue(
                     "$rawcheck", record.RawCheck ?? (object)DBNull.Value);
+                command.Parameters.AddWithValue("$kind", (int)record.ConflictKind);
                 command.Parameters.AddWithValue("$state", (int)record.State);
                 command.Parameters.AddWithValue("$verify", (int)record.VerifyMethod);
                 command.Parameters.AddWithValue(
@@ -392,7 +395,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     private const string SelectColumns =
         """
          SELECT local_path, remote_path, size, mtime_utc, md5, sha256,
-             state, verify_method, verified_utc, attempts, last_error, raw_check
+             state, verify_method, verified_utc, attempts, last_error, raw_check,
+             conflict_kind
         """;
 
     private static UploadRecord Read(SqliteDataReader reader) => new(
@@ -409,7 +413,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             : DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(8)),
         Attempts: reader.GetInt32(9),
         LastError: reader.IsDBNull(10) ? null : reader.GetString(10),
-        RawCheck: reader.IsDBNull(11) ? null : reader.GetString(11));
+        RawCheck: reader.IsDBNull(11) ? null : reader.GetString(11),
+        ConflictKind: (ConflictKind)reader.GetInt32(12));
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {
@@ -521,6 +526,45 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             command.Parameters.AddWithValue("$v", CurrentSchemaVersion);
             command.ExecuteNonQuery();
         }
+
+        // Every open, not a one-shot migration.
+        //
+        // This started life inside Migrate, guarded by the schema stamp — and the stamp cannot
+        // be trusted to mean the data is clean, because rollback is supported: roll back to
+        // v26.4.x, press Keep on a conflict (writing state 10) or send a file alongside (writing
+        // rename_to), and come forward again. The stamp already says 5, the guard skips, and the
+        // row is misread for ever — invisible to every filter, re-offered by every sweep.
+        //
+        // So it is idempotent instead of guarded. Converting sets the state and clears rename_to,
+        // so a converted row can never match again, and on the databases that need nothing it is
+        // one indexed scan finding zero rows.
+        //
+        // conflict_kind is stamped so the sweep knows these rows carry a person's decision from a
+        // withdrawn feature: Overwrite must not release them, because it would replace a file at
+        // the original name — the very copy the old decision existed to preserve — on
+        // nobody's current say-so.
+        command.Parameters.Clear();
+        command.CommandText =
+            """
+            UPDATE uploads
+               SET state = $conflict,
+                   conflict_kind = $withdrawn,
+                   rename_to = NULL,
+                   last_error = CASE
+                       WHEN rename_to IS NOT NULL
+                           THEN 'This file was sent under a different name by an earlier '
+                                || 'version. Sending files under a new name has been removed, '
+                                || 'so it is held for a decision.'
+                       ELSE 'An earlier version recorded that you chose to keep the copy on '
+                            || 'the server. That choice is no longer stored, so it is held '
+                            || 'for a decision.'
+                   END
+             WHERE state = 10 OR rename_to IS NOT NULL;
+            """;
+
+        command.Parameters.AddWithValue("$conflict", (int)TransferState.Conflict);
+        command.Parameters.AddWithValue("$withdrawn", (int)ConflictKind.WithdrawnDecision);
+        command.ExecuteNonQuery();
     }
 
     /// <summary>Brings an existing database up to the current shape.</summary>
@@ -562,44 +606,6 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             command.ExecuteNonQuery();
         }
 
-        if (from < 5)
-        {
-            // Two kinds of row were written by v26.3.0—v26.4.6 and cannot be read correctly any
-            // more, so they are brought somewhere honest rather than left to be misread.
-            //
-            // A row at state 10 meant "a person chose to keep the copy on the server". That state
-            // no longer exists, so nothing would list it — not even the All filter, which builds
-            // its WHERE from the enum's values — while the sweep, seeing a state it does not
-            // recognise, would offer the file again and undo the choice.
-            //
-            // A row with rename_to recorded a file sent under a different name. Nothing resolves
-            // destinations through that column now, so the sweep would work out the file's
-            // original name, find the row pointing elsewhere, and offer it again. Under Overwrite
-            // that overwrites the copy the rename existed to preserve.
-            //
-            // Both become held conflicts: visible, not sent, and answerable with the conflict
-            // setting. Held is the safe end of "this row means something this build cannot act
-            // on".
-            command.CommandText =
-                """
-                UPDATE uploads
-                   SET state = $conflict,
-                       last_error = CASE
-                           WHEN rename_to IS NOT NULL
-                               THEN 'This file was sent under a different name by an earlier '
-                                    || 'version. Sending files under a new name has been removed, '
-                                    || 'so it is held for a decision.'
-                           ELSE 'An earlier version recorded that you chose to keep the copy on '
-                                || 'the server. That choice is no longer stored, so it is held '
-                                || 'for a decision.'
-                       END
-                 WHERE state = 10 OR rename_to IS NOT NULL;
-                """;
-
-            command.Parameters.AddWithValue("$conflict", (int)TransferState.Conflict);
-            command.ExecuteNonQuery();
-            command.Parameters.Clear();
-        }
     }
 
     private static bool ColumnExists(SqliteCommand command, string table, string column)

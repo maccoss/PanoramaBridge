@@ -811,6 +811,74 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Nothing_is_written_off_while_the_monitored_folder_is_unreachable()
+    {
+        // Recovery runs at startup, which on a monitored network share is routinely before the
+        // share is mounted -- and an unreachable path answers exactly as a deleted one does.
+        // Writing rows off then claims data no longer exists while it sits untouched on the
+        // share. Not being able to look is not evidence that nothing is there.
+        var missing = Path.Combine(_local, "not-mounted", "run.raw");
+
+        await _store.SaveAsync(
+            new UploadRecord(missing, Destination.Append("run.raw").ToEncodedString(),
+                10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null));
+
+        // A coordinator whose monitored folder does not exist, as an unmounted share would not.
+        await using var coordinator = new TransferCoordinator(
+            _server,
+            _store,
+            new TransferEngineOptions
+            {
+                LocalBaseDirectory = Path.Combine(_local, "not-mounted"),
+                DestinationRoot = Destination,
+            });
+
+        (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
+
+        var row = await _store.GetAsync(missing);
+        row!.State.ShouldBe(TransferState.Uploading, "waiting for the share, not gone");
+        row.LastError.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task An_interrupted_folder_upload_is_failed_with_an_honest_reason()
+    {
+        // A row from a version that sent folders as one archive. That has been withdrawn, so the
+        // upload cannot be resumed -- and requeueing it would be silently dropped by the worker,
+        // leaving the row interrupted for ever and returned by recovery on every start.
+        var folder = Path.Combine(_local, "250314_HeLa.d");
+        Directory.CreateDirectory(folder);
+
+        await _store.SaveAsync(
+            new UploadRecord(folder, Destination.Append("250314_HeLa.d.zip").ToEncodedString(),
+                10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null));
+
+        var coordinator = NewCoordinator();
+
+        (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
+
+        var row = await _store.GetAsync(folder);
+        row!.State.ShouldBe(TransferState.Failed);
+        row.LastError!.ShouldContain("folder as a single archive has been removed");
+        Directory.Exists(folder).ShouldBeTrue("the folder itself is untouched");
+    }
+
+    [Fact]
+    public async Task A_truncated_file_is_held_with_its_reason_recorded()
+    {
+        // The sweep can only hold a damaged row under every policy if the row says it is
+        // damaged. That was inferred from message text once, and broke when a message was
+        // reworded -- so it is stored, and this pins the store half of the contract.
+        var file = await WriteRawHeaderAsync("cut-short.raw", formatVersion: 66, padding: 0);
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        var row = await _store.GetAsync(file);
+        row!.State.ShouldBe(TransferState.Conflict);
+        row.ConflictKind.ShouldBe(ConflictKind.LocalFileDamaged);
+    }
+
+    [Fact]
     public async Task An_interrupted_upload_that_actually_completed_is_recognised_and_skipped()
     {
         // The bytes may well have arrived before the process died. The decision ladder finds

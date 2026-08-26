@@ -81,6 +81,92 @@ public sealed class UpgradeFromWithdrawnFeaturesTests : IDisposable
         row.LastError!.ShouldContain(expected);
     }
 
+    [Theory]
+    [InlineData("state = 10", "keep the copy on the server")]
+    [InlineData("rename_to = 'run (2).raw'", "under a different name")]
+    public async Task A_legacy_row_written_after_a_rollback_is_still_converted(
+        string legacy, string expected)
+    {
+        // The version stamp cannot be trusted to mean the data is clean, because rollback is
+        // supported: this database says 5 already -- the conversion nominally ran -- and then a
+        // rolled-back v26.4.x wrote a fresh Keep or rename row. Guarded by the stamp, the
+        // conversion never runs again and the row is misread for ever: invisible to every filter,
+        // re-offered by every sweep. So it runs on every open, made idempotent instead of
+        // guarded.
+        var path = Path.Combine(_dir, $"rollback-{legacy.GetHashCode():x}.db");
+
+        // A normal open stamps the current version. No winding back afterwards: that is the
+        // difference between this test and the one above.
+        await using (var current = new SqliteStateStore(path))
+        {
+            await current.SaveAsync(Row(@"C:\data\run.raw"));
+        }
+
+        await using (var connection = new SqliteConnection($"Data Source={path}"))
+        {
+            await connection.OpenAsync();
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"UPDATE uploads SET {legacy};";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        SqliteConnection.ClearAllPools();
+
+        await using var store = new SqliteStateStore(path);
+
+        var row = await store.GetAsync(@"C:\data\run.raw");
+        row!.State.ShouldBe(TransferState.Conflict);
+        row.LastError!.ShouldContain(expected);
+
+        // Stamped, so the sweep knows Overwrite must not release what a person once decided.
+        row.ConflictKind.ShouldBe(ConflictKind.WithdrawnDecision);
+    }
+
+    [Fact]
+    public async Task The_conversion_does_not_touch_a_row_twice()
+    {
+        // Idempotency is what replaces the version guard, so it is worth proving rather than
+        // assuming: a converted row's rename_to is cleared and its state is no longer 10, so a
+        // second open must find nothing to do -- including not overwriting a LastError that has
+        // moved on since.
+        var path = Path.Combine(_dir, "idempotent.db");
+
+        await using (var current = new SqliteStateStore(path))
+        {
+            await current.SaveAsync(Row(@"C:\data\run.raw"));
+        }
+
+        await using (var connection = new SqliteConnection($"Data Source={path}"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE uploads SET rename_to = 'run (2).raw';";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        SqliteConnection.ClearAllPools();
+
+        // First open converts; the row is then answered by policy and moves on.
+        await using (var store = new SqliteStateStore(path))
+        {
+            (await store.GetAsync(@"C:\data\run.raw"))!.State.ShouldBe(TransferState.Conflict);
+
+            await store.SetStateAsync(
+                @"C:\data\run.raw", TransferState.Skipped, "Left alone by policy.");
+        }
+
+        SqliteConnection.ClearAllPools();
+
+        // Second open must leave the answered row alone.
+        await using (var reopened = new SqliteStateStore(path))
+        {
+            var row = await reopened.GetAsync(@"C:\data\run.raw");
+            row!.State.ShouldBe(TransferState.Skipped);
+            row.LastError.ShouldBe("Left alone by policy.");
+        }
+    }
+
     [Fact]
     public async Task Saving_a_row_clears_whatever_a_withdrawn_build_left_in_its_retired_columns()
     {

@@ -168,13 +168,54 @@ public sealed class TransferCoordinator : IAsyncDisposable
         EnsureWorkersStarted(cancellationToken);
 
         var interrupted = await _store.GetInterruptedAsync(cancellationToken).ConfigureAwait(false);
+
+        if (interrupted.Count == 0)
+        {
+            return 0;
+        }
+
+        // Asked once, not per row. This runs at startup, which on a monitored network share is
+        // routinely before the share is mounted — and an unreachable path answers exactly as a
+        // deleted one does. Writing every interrupted row off then would claim data no longer
+        // exists while it sits untouched on the share, and probing a dead host once per row would
+        // stack SMB timeouts before the window is usable. Not being able to look is not evidence
+        // that nothing is there, which is the same rule the remote side follows.
+        if (!Path.Exists(_options.LocalBaseDirectory))
+        {
+            _log.LogInformation(
+                "The monitored folder {Root} cannot be seen, so {Count} interrupted "
+                + "transfer(s) are left as they are until it is reachable again.",
+                _options.LocalBaseDirectory,
+                interrupted.Count);
+
+            return 0;
+        }
+
         var requeued = 0;
 
         foreach (var record in interrupted)
         {
+            if (Directory.Exists(record.LocalPath))
+            {
+                // A folder acquisition from a version that sent folders as one archive. That has
+                // been withdrawn, so the upload cannot be resumed — and requeueing it would be
+                // silently dropped by the worker, leaving the row interrupted for ever.
+                await _store
+                    .SetStateAsync(
+                        record.LocalPath,
+                        TransferState.Failed,
+                        "Sending a folder as a single archive has been removed, so this "
+                        + "interrupted folder upload cannot be resumed. The folder itself is "
+                        + "untouched.",
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                continue;
+            }
+
             if (!File.Exists(record.LocalPath))
             {
-                // The source is gone, so there is nothing left to do about it either way.
+                // The monitored folder is reachable and the file is not in it: genuinely gone,
+                // so there is nothing left to do about it either way.
                 await _store
                     .SetStateAsync(
                         record.LocalPath,
@@ -350,6 +391,11 @@ public sealed class TransferCoordinator : IAsyncDisposable
                     {
                         State = TransferState.Conflict,
                         LastError = rawCheck.Summary,
+
+                        // Recorded so the sweep knows the conflict policy is not an answer to
+                        // this row. Skip would bury a broken acquisition and Overwrite would push
+                        // it over a good remote copy, so it stays held until the file changes.
+                        ConflictKind = ConflictKind.LocalFileDamaged,
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -384,6 +430,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                         {
                             State = TransferState.Conflict,
                             LastError = decision.Reason,
+                            ConflictKind = ConflictKind.DestinationOccupied,
                             Md5 = decision.Hashes?.Md5 ?? record.Md5,
                             Sha256 = decision.Hashes?.Sha256 ?? record.Sha256,
                         },

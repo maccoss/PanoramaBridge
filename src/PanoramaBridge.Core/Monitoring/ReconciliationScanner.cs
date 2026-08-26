@@ -386,6 +386,23 @@ public sealed class ReconciliationScanner
 
         return record.State switch
         {
+            // A damaged local file is held whatever the policy. The policy answers "the
+            // destination is occupied"; it is not an answer to "the file is broken" — Skip
+            // would bury a damaged acquisition and Overwrite would push it over a good remote
+            // copy. The stamp check above is the way out: fix or re-copy the file and it is
+            // offered again.
+            TransferState.Conflict when record.ConflictKind == ConflictKind.LocalFileDamaged =>
+                true,
+
+            // A decision recorded by a withdrawn feature — a file kept by choice, or sent under
+            // a different name, by v26.3.0—v26.4.6. Its row no longer describes where its copy
+            // actually is, so Overwrite must not release it: the ladder would send the file to
+            // its original name, replacing the very copy the old decision existed to preserve, on
+            // nobody's current say-so. Skip retires it safely, and a changed file reopens the
+            // question through the stamp check above.
+            TransferState.Conflict when record.ConflictKind == ConflictKind.WithdrawnDecision =>
+                _options.ConflictPolicy != ConflictPolicy.Skip,
+
             // Held, and staying held only while the answer is still "ask me". Any other policy
             // is an answer, and the file has to reach the ladder for it to be applied.
             TransferState.Conflict => _options.ConflictPolicy is ConflictPolicy.Ask

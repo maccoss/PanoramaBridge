@@ -55,7 +55,8 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         TransferState state = TransferState.Verified,
         VerifyMethod verified = VerifyMethod.ServerMd5,
         int attempts = 1,
-        RemotePath? destination = null)
+        RemotePath? destination = null,
+        ConflictKind kind = ConflictKind.Unknown)
     {
         var stamp = LocalFileStamp.FromFile(path);
         var remote = PathSafety
@@ -73,7 +74,8 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
             VerifyMethod: verified,
             VerifiedUtc: DateTimeOffset.UtcNow,
             Attempts: attempts,
-            LastError: state == TransferState.Failed ? "The server refused it." : null));
+            LastError: state == TransferState.Failed ? "The server refused it." : null,
+            ConflictKind: kind));
     }
 
     private static async Task<(SweepResult Result, List<string> Offered)> SweepAsync(
@@ -226,6 +228,75 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         var (_, offered) = await SweepAsync(NewScanner(conflictPolicy: ConflictPolicy.Skip));
 
         offered.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(ConflictPolicy.Skip)]
+    [InlineData(ConflictPolicy.Overwrite)]
+    public async Task A_damaged_file_is_held_whatever_the_policy(ConflictPolicy policy)
+    {
+        // The policy answers "the destination is occupied"; it is not an answer to "the file is
+        // broken". Releasing a damaged row under Skip buried a broken acquisition, and under
+        // Overwrite sent it through the whole ladder every sweep only for the truncation check to
+        // hold it again -- a listing and a header read, per file, per sweep, for ever.
+        var path = Write("short.raw");
+        await RecordAsync(path, TransferState.Conflict, VerifyMethod.None,
+            kind: ConflictKind.LocalFileDamaged);
+
+        var (_, offered) = await SweepAsync(NewScanner(conflictPolicy: policy));
+
+        offered.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_damaged_file_is_offered_again_once_it_changes()
+    {
+        // The way out is fixing the file, not the policy. Re-copying the acquisition changes the
+        // stamp, and the stamp check releases the row before the state is even considered.
+        var path = Write("short.raw");
+        await RecordAsync(path, TransferState.Conflict, VerifyMethod.None,
+            kind: ConflictKind.LocalFileDamaged);
+
+        await File.AppendAllTextAsync(path, "the rest of the acquisition");
+
+        var (_, offered) = await SweepAsync(
+            NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
+
+        offered.ShouldBe([path]);
+    }
+
+    [Fact]
+    public async Task A_withdrawn_decision_is_not_released_by_overwrite()
+    {
+        // The row records a person's choice from a withdrawn feature -- a file kept, or sent
+        // under a different name. Its destination no longer describes where its copy actually
+        // is, so releasing it under Overwrite would send the file to its original name and
+        // replace the very copy the old decision existed to preserve, on nobody's current
+        // say-so.
+        var path = Write("run1.raw");
+        await RecordAsync(path, TransferState.Conflict, VerifyMethod.None,
+            kind: ConflictKind.WithdrawnDecision);
+
+        var (_, offered) = await SweepAsync(
+            NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
+
+        offered.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_withdrawn_decision_is_retired_safely_by_skip()
+    {
+        // Skip sends nothing, so it is the one policy that can clear these rows without any risk
+        // of undoing what the person chose. The ladder resolves the offered file to Skipped and
+        // the backlog empties.
+        var path = Write("run1.raw");
+        await RecordAsync(path, TransferState.Conflict, VerifyMethod.None,
+            kind: ConflictKind.WithdrawnDecision);
+
+        var (_, offered) = await SweepAsync(
+            NewScanner(conflictPolicy: ConflictPolicy.Skip));
+
+        offered.ShouldBe([path]);
     }
 
     [Fact]
