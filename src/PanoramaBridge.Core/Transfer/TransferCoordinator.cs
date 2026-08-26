@@ -785,9 +785,32 @@ public sealed class TransferCoordinator : IAsyncDisposable
             localPath, remotePath, state, phase, transferred, total, rate, verification, message));
 
     /// <inheritdoc />
-    public ValueTask DisposeAsync()
+    /// <remarks>
+    /// Awaits any workers <see cref="RecoverInterruptedAsync"/> already started, so a caller
+    /// that never reaches <see cref="RunAsync"/> -- because recovery itself threw -- does not
+    /// leave them running unobserved against a channel nobody will read from again.
+    /// </remarks>
+    public async ValueTask DisposeAsync()
     {
         CompleteAdding();
-        return ValueTask.CompletedTask;
+
+        Task[]? workers;
+        lock (_workersLock)
+        {
+            workers = _workers;
+        }
+
+        if (workers is not null)
+        {
+            try
+            {
+                await Task.WhenAll(workers).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Each worker already recorded and reported its own failure; Dispose must not
+                // raise a second one on the way out.
+            }
+        }
     }
 }

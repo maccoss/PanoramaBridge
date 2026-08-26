@@ -391,6 +391,14 @@ public sealed class ReconciliationScanner
             TransferState.Conflict => _options.ConflictPolicy is ConflictPolicy.Ask
                 or ConflictPolicy.Rename,
 
+            // A conflict the ladder resolved as Skip is saved Skipped but never server-verified,
+            // so IsSettledAt above never matches it. Without this arm the file re-runs the whole
+            // ladder -- another listing, maybe another hash -- on every sweep for as long as the
+            // policy stays Skip.
+            TransferState.Skipped when record.VerifyMethod != VerifyMethod.ServerMd5 =>
+                _options.ConflictPolicy == ConflictPolicy.Skip
+                && string.Equals(record.RemotePath, destination, StringComparison.Ordinal),
+
             TransferState.Failed => record.Attempts >= _options.MaxUploadAttempts,
             _ => false,
         };

@@ -15,16 +15,6 @@ a report has somewhere to land at the bottom of this page.
 
 ## Where each vendor stands
 
-| Vendor | Shape | Status |
-|---|---|---|
-| **Thermo** `.raw` | One file | **Verified against 47 real acquisitions, 313 GB**, 2020–2026, up to 9.9 GB, all format revision 66. Includes the truncation check. |
-| **Bruker** `.d` | Directory → one `.d.zip` | **Packing and naming verified** against real acquisitions from Panorama Public. Completion detection untested against a live instrument. |
-| **Waters** `.raw` | Directory → one `.raw.zip` | **Packing and naming verified** (`new_LG_6679.raw.zip`). Completion detection untested against a live instrument. |
-| **Agilent** `.d` | Directory → one `.d.zip` | **Packing and naming verified** (`LPK15_11260-S10-R1.d.zip`, 547 of them). Completion detection untested against a live instrument. |
-| **Sciex** `.wiff` | Files, with companions | **Verified against a real ZenoTOF 8600 dataset**, companions included. Not archived: the files stay separate, as Skyline expects. |
-
-# Vendor formats: supported inputs
-
 The MacCoss Lab runs **Thermo instruments only**, and support is limited to input shapes that can
 be exercised with evidence. PanoramaBridge never writes an acquisition; it first proves that a
 candidate file is no longer held open and its length has remained stable for the configured quiet
@@ -41,7 +31,7 @@ Bruker and Agilent `.d` directories and Waters `.raw` directories are **not supp
 previous archive implementation was withdrawn because no local instrument could exercise the
 decision that a directory acquisition had finished writing. Packing downloaded data established
 neither that decision nor the crash and recovery paths, and a feature that can send an acquisition
-documentation.
+early has no business staying merely opt-in.
 
 Those directories are walked as ordinary folders. PanoramaBridge transfers only files inside that
 match the configured extensions; it does not create or upload a `.zip` archive for the folder.

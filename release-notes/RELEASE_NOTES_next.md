@@ -28,6 +28,10 @@ time and update the heading; see `README.md` in this directory for the process.
   previously stall startup indefinitely while recovery tried to queue them all before any upload
   worker began draining the queue.
 
+- **A file left alone by "Leave the copy on the server alone" is no longer re-checked against the
+  server on every folder check.** It stays left alone for as long as that setting is chosen, and
+  is picked up again the moment the setting changes.
+
 ## Performance
 
 ## Breaking Changes

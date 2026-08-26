@@ -573,7 +573,6 @@ record of where each renamed file went. About 2,800 lines. A conflict is held an
 **Needs attention**, as before v26.4.0, and answered by the policy setting or by renaming the local
 file.
 
-during the ladder, and a decision spent by a failed attempt. What is left:
 **Directory acquisitions are withdrawn.** Bruker and Agilent `.d` directories and Waters `.raw`
 directories are now ordinary folders. The scanner recurses into them and transfers only matching
 files; it does not pack or upload a directory as an atomic acquisition.

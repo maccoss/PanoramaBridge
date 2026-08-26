@@ -81,6 +81,49 @@ public sealed class UpgradeFromWithdrawnFeaturesTests : IDisposable
         row.LastError!.ShouldContain(expected);
     }
 
+    [Fact]
+    public async Task Saving_a_row_clears_whatever_a_withdrawn_build_left_in_its_retired_columns()
+    {
+        // A row can carry rename_to/resolution/conflict_kind from a build between v26.3.0 and
+        // v26.4.6 without ever reaching the v5 migration's rewrite -- this build simply saves
+        // over it later, once the conflict is resolved some other way. If that save left the
+        // retired columns untouched, a later rollback to an old build would read the stale
+        // rename_to and resolve the row to a destination this build already moved past.
+        var path = Path.Combine(_dir, "retired-columns.db");
+
+        await using var store = new SqliteStateStore(path);
+        await store.SaveAsync(Row(@"C:\data\run.raw"));
+
+        await using (var connection = new SqliteConnection($"Data Source={path}"))
+        {
+            await connection.OpenAsync();
+
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                "UPDATE uploads SET rename_to = 'run (2).raw', resolution = 2, conflict_kind = 3;";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await store.SaveAsync(Row(@"C:\data\run.raw") with { State = TransferState.Verified });
+
+        await using (var connection = new SqliteConnection($"Data Source={path}"))
+        {
+            await connection.OpenAsync();
+
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT rename_to, resolution, conflict_kind FROM uploads WHERE local_path = @p;";
+            command.Parameters.AddWithValue("@p", @"C:\data\run.raw");
+
+            await using var reader = await command.ExecuteReaderAsync();
+            (await reader.ReadAsync()).ShouldBeTrue();
+
+            reader.IsDBNull(0).ShouldBeTrue("rename_to");
+            reader.GetInt32(1).ShouldBe(0, "resolution");
+            reader.GetInt32(2).ShouldBe(0, "conflict_kind");
+        }
+    }
+
     private static UploadRecord Row(string local) =>
         new(
             LocalPath: local,

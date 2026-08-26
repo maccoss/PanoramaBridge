@@ -83,6 +83,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     {
         ArgumentNullException.ThrowIfNull(record);
 
+        // resolution/rename_to/conflict_kind are cleared on every save so a row this build
+        // fully rewrites cannot still carry a stale value a rolled-back build would act on.
         await ExecuteWriteAsync(
             """
             INSERT INTO uploads
@@ -96,7 +98,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
               local_path = $path, remote_path = $remote, size = $size, mtime_utc = $mtime,
               md5 = $md5, sha256 = $sha256, state = $state, verify_method = $verify,
               verified_utc = $verified, attempts = $attempts, last_error = $error,
-              is_dataset = 0, raw_check = $rawcheck;
+              is_dataset = 0, raw_check = $rawcheck,
+              resolution = 0, rename_to = NULL, conflict_kind = 0;
             """,
             command =>
             {

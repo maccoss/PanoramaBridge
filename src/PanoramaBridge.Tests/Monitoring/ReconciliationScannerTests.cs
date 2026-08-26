@@ -1,5 +1,6 @@
 using PanoramaBridge.Core.Monitoring;
 using PanoramaBridge.Core.Storage;
+using PanoramaBridge.Core.Transfer;
 using PanoramaBridge.Core.WebDav;
 using PanoramaBridge.Tests.TestDoubles;
 
@@ -26,7 +27,8 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         RemotePath? destination = null,
         bool includeSubdirectories = true,
         int maxUploadAttempts = 5,
-        string[]? extensions = null) =>
+        string[]? extensions = null,
+        ConflictPolicy conflictPolicy = ConflictPolicy.Ask) =>
         new(
             _store,
             new ReconciliationOptions
@@ -36,6 +38,7 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
                 Filter = new CandidateFilter(extensions ?? [".raw"]),
                 IncludeSubdirectories = includeSubdirectories,
                 MaxUploadAttempts = maxUploadAttempts,
+                ConflictPolicy = conflictPolicy,
             });
 
     private string Write(string relative, string content = "acquisition")
@@ -208,6 +211,34 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
 
         var (_, afterChange) = await SweepAsync(NewScanner());
         afterChange.ShouldBe([path]);
+    }
+
+    [Fact]
+    public async Task A_conflict_the_ladder_skipped_by_policy_is_not_asked_about_again()
+    {
+        // The ladder resolves a Skip conflict to State.Skipped with no server hash, so it never
+        // matches the settled check above. Without an arm for it here, the file went through the
+        // whole ladder again on every sweep for as long as the policy stayed Skip -- another
+        // listing, and sometimes another collection hash, to reach the same answer as last time.
+        var path = Write("run1.raw");
+        await RecordAsync(path, TransferState.Skipped, VerifyMethod.None);
+
+        var (_, offered) = await SweepAsync(NewScanner(conflictPolicy: ConflictPolicy.Skip));
+
+        offered.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_skipped_conflict_is_asked_about_again_once_the_policy_changes()
+    {
+        // Skip is not a permanent answer. Changing the setting has to be able to clear the
+        // backlog, so a row it produced must not be held the way an Ask conflict is.
+        var path = Write("run1.raw");
+        await RecordAsync(path, TransferState.Skipped, VerifyMethod.None);
+
+        var (_, offered) = await SweepAsync(NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
+
+        offered.ShouldBe([path]);
     }
 
     [Fact]

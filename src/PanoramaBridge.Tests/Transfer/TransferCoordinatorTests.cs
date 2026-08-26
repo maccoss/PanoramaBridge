@@ -870,6 +870,25 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Disposing_after_recovery_joins_the_workers_it_started_without_running()
+    {
+        // A caller that never reaches RunAsync -- because something after recovery failed --
+        // must not leave recovery's own workers running unobserved against a queue nobody will
+        // ever complete or read from again.
+        var file = await WriteAsync("interrupted.raw", "half sent");
+        await _store.SaveAsync(
+            UploadRecord.ForNewFile(LocalFileStamp.FromFile(file), Destination.Append("interrupted.raw").ToEncodedString())
+                with { State = TransferState.Uploading });
+
+        var coordinator = NewCoordinator();
+        await coordinator.RecoverInterruptedAsync();
+
+        await coordinator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        (await _store.GetAsync(file))!.State.ShouldBe(TransferState.Verified);
+    }
+
+    [Fact]
     public async Task A_case_only_rename_settles_after_being_sent_to_its_new_remote_name()
     {
         // Windows identifies the two local paths as the same ledger key, but Panorama is
