@@ -29,6 +29,8 @@ public interface IStateStore
     /// <remarks>
     /// Called before the side effect it describes, so a crash leaves the ledger describing an
     /// attempt that may or may not have happened rather than one that definitely did not.
+    /// Throws when <paramref name="localPath"/> has no row; callers must save the initial row
+    /// before recording a transition.
     /// </remarks>
     Task SetStateAsync(
         string localPath,
@@ -36,7 +38,7 @@ public interface IStateStore
         string? lastError = null,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Marks a row verified, recording how it was checked.</summary>
+    /// <summary>Marks an existing row verified, recording how it was checked.</summary>
     Task MarkVerifiedAsync(
         string localPath,
         VerifyMethod method,

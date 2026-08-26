@@ -81,6 +81,8 @@ public sealed class TransferCoordinator : IAsyncDisposable
     private readonly ILogger<TransferCoordinator> _log;
 
     private readonly Channel<string> _queue;
+    private readonly object _workersLock = new();
+    private Task[]? _workers;
 
     /// <summary>
     /// Paths accepted into this run. Gate against enqueueing the same file twice, whether from
@@ -160,6 +162,11 @@ public sealed class TransferCoordinator : IAsyncDisposable
     /// </remarks>
     public async Task<int> RecoverInterruptedAsync(CancellationToken cancellationToken = default)
     {
+        // Recovery writes into the same bounded queue as ordinary discovery. Starting workers
+        // here makes the operation safe on its own: callers cannot deadlock startup by recovering
+        // more rows than the channel holds before they remember to call RunAsync.
+        EnsureWorkersStarted(cancellationToken);
+
         var interrupted = await _store.GetInterruptedAsync(cancellationToken).ConfigureAwait(false);
         var requeued = 0;
 
@@ -199,10 +206,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
     {
         var stopwatch = Stopwatch.StartNew();
 
-        var workers = Enumerable
-            .Range(0, Math.Max(1, _options.MaxConcurrentTransfers))
-            .Select(_ => Task.Run(() => WorkerLoopAsync(cancellationToken), CancellationToken.None))
-            .ToArray();
+        var workers = EnsureWorkersStarted(cancellationToken);
 
         await Task.WhenAll(workers).ConfigureAwait(false);
 
@@ -215,6 +219,18 @@ public sealed class TransferCoordinator : IAsyncDisposable
             _failed,
             Interlocked.Read(ref _bytesUploaded),
             stopwatch.Elapsed);
+    }
+
+    /// <summary>Starts the queue readers exactly once for this coordinator.</summary>
+    private Task[] EnsureWorkersStarted(CancellationToken cancellationToken)
+    {
+        lock (_workersLock)
+        {
+            return _workers ??= Enumerable
+                .Range(0, Math.Max(1, _options.MaxConcurrentTransfers))
+                .Select(_ => Task.Run(() => WorkerLoopAsync(cancellationToken), CancellationToken.None))
+                .ToArray();
+        }
     }
 
     private async Task WorkerLoopAsync(CancellationToken cancellationToken)
@@ -267,12 +283,9 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
     private async Task ProcessAsync(string localPath, CancellationToken cancellationToken)
     {
-        // A directory here is a Bruker .d, offered whole by the sweep. It is packed into the
-        // single .d.zip Panorama stores, and from the moment it is packed the rest of this class
-        // treats it as the ordinary file it has become.
         if (Directory.Exists(localPath))
         {
-            await ProcessDatasetAsync(localPath, cancellationToken).ConfigureAwait(false);
+            _log.LogDebug("{Path} is a directory and is not a transferable file.", localPath);
             return;
         }
 
@@ -284,8 +297,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         var stamp = LocalFileStamp.FromFile(localPath);
 
-        // The path in hand, and not a dataset: Directory.Exists said so a moment ago.
-        var destination = _destinations.For(localPath, isDataset: false);
+        var destination = _destinations.For(localPath);
 
         var encoded = destination.ToEncodedString();
 
@@ -319,6 +331,9 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         record = record with
         {
+            // SQLite keys the ledger NOCASE, so its stored spelling can predate a case-only
+            // rename. The worker must read the path it was offered, not that older spelling.
+            LocalPath = localPath,
             RemotePath = encoded,
             Length = stamp.Length,
             LastWriteUnixMs = stamp.LastWriteUnixMs,
@@ -329,10 +344,6 @@ public sealed class TransferCoordinator : IAsyncDisposable
         {
             Interlocked.Increment(ref _conflicts);
 
-            // Held rather than failed, and saved rather than updated, for the same reason a
-            // conflict is: a file refused with no row is a file nobody can see was refused.
-            // Uploading it is the one thing that must not happen -- a short copy on the server
-            // looks complete and verifies against its own truncated content.
             await _store
                 .SaveAsync(
                     record with
@@ -365,12 +376,8 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 return;
 
             case UploadAction.Conflict:
-
                 Interlocked.Increment(ref _conflicts);
 
-                // Saved rather than updated: a file seen for the first time has no row yet, and
-                // an UPDATE would silently do nothing -- leaving a refused file invisible in the
-                // audit view, which is exactly the tracking gap this design exists to close.
                 await _store
                     .SaveAsync(
                         record with
@@ -402,17 +409,8 @@ public sealed class TransferCoordinator : IAsyncDisposable
     /// <summary>
     /// Says why a check is taking a moment, in terms of what is actually happening.
     /// </summary>
-    /// <remarks>
-    /// Both of these were reported as the application "sitting there doing nothing". Neither is
-    /// idle; both are waiting on work whose cost is proportional to something the user can see,
-    /// so saying which one it is turns a stall into a wait.
-    /// </remarks>
     private static string Explain(string step) => step switch
     {
-        // Two steps, not one, because they now cost wildly different amounts. Listing a folder
-        // is a single cheap request; hashing one makes Panorama read every byte in it. While
-        // both were reported as "Checking server", the message had to describe the expensive
-        // case, so it explained a delay that most files never incur.
         "Checking server" =>
             "Asking the server what is already in the destination folder.",
 
@@ -459,286 +457,20 @@ public sealed class TransferCoordinator : IAsyncDisposable
             message: decision.Reason);
     }
 
-    /// <summary>
-    /// Packs a directory acquisition and transfers it as one object.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The archive is the transfer item. That is what makes this safe without any atomicity
-    /// machinery: one object either arrives and verifies against the server's own checksum or it
-    /// does not, so there is no state in which half an acquisition sits on the server looking
-    /// complete. Verification, the checksum sidecar, conflict handling and the ledger all work on
-    /// it unchanged, because by then it is simply a file.
-    /// </para>
-    /// <para>
-    /// The ledger row is keyed on the folder, not the archive, so what is recorded is the thing
-    /// the user has and can point at. Its length and modification time are the folder's, which is
-    /// what decides whether it needs sending again.
-    /// </para>
-    /// </remarks>
-    private async Task ProcessDatasetAsync(string folder, CancellationToken cancellationToken)
-    {
-        var measured = DatasetFolder.Measure(folder);
-
-        if (measured is not { } stampedFolder || stampedFolder.IsEmpty)
-        {
-            _log.LogDebug("{Path} is gone or empty; nothing to transfer.", folder);
-            return;
-        }
-
-        var stamp = new LocalFileStamp(
-            folder, stampedFolder.TotalBytes, stampedFolder.NewestWriteUnixMs);
-
-        var destination = _destinations.For(folder, isDataset: true);
-
-        var encoded = destination.ToEncodedString();
-
-        var record = await _store.GetAsync(folder, cancellationToken).ConfigureAwait(false)
-            ?? UploadRecord.ForNewFile(stamp, encoded);
-
-        // Asked of the row as it was stored, before it is brought up to date. Updating it first
-        // and then comparing compares the new measurement with itself, which is always equal --
-        // so every acquisition would look unchanged and nothing would ever be sent twice.
-        //
-        // Checked before packing rather than after, because packing six gigabytes to discover it
-        // was already there is the most expensive way possible to answer the question.
-        var settled = record.IsSettledAt(stamp, encoded);
-
-        record = record with
-        {
-            RemotePath = encoded,
-            Length = stampedFolder.TotalBytes,
-            LastWriteUnixMs = stampedFolder.NewestWriteUnixMs,
-            IsDataset = true,
-
-        };
-
-        if (settled)
-        {
-            Interlocked.Increment(ref _skipped);
-
-            Report(folder, encoded, TransferState.Skipped, "Already on the server",
-                stampedFolder.TotalBytes, stampedFolder.TotalBytes,
-                verification: record.VerifyMethod,
-                message: "Unchanged since it was uploaded.");
-
-            return;
-        }
-
-        // Is something already there that this application did not put there?
-        //
-        // Every other route to the server asks the decision ladder before sending. This one never
-        // did: it measured, checked the ledger, packed and PUT. So a second instrument computer
-        // pointed at a folder another machine had already sent -- empty ledger, so nothing looks
-        // accounted for -- repacked every acquisition and wrote it over the archive on the
-        // server, silently, with no conflict raised and the conflict setting never consulted.
-        //
-        // Asked before packing, for the same reason the settled check is: packing six gigabytes
-        // to discover the answer is the most expensive way to reach it. And asked without the
-        // archive's hash, which does not exist yet -- the question here is whether the thing on
-        // the server is ours, which the ledger's own recorded hash answers.
-        {
-            var occupied = await OccupiedByAnotherAsync(destination, record, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (occupied is { } reason)
-            {
-                var action = _options.ConflictPolicy switch
-                {
-                    ConflictPolicy.Overwrite => UploadAction.Upload,
-                    ConflictPolicy.Skip => UploadAction.Skip,
-                    _ => UploadAction.Conflict,
-                };
-
-                if (action == UploadAction.Skip)
-                {
-                    Interlocked.Increment(ref _skipped);
-
-                    Report(folder, encoded, TransferState.Skipped, "Left alone",
-                        0, stampedFolder.TotalBytes,
-                        message: reason + " Skipped by policy.");
-
-                    return;
-                }
-
-                if (action == UploadAction.Conflict)
-                {
-                    Interlocked.Increment(ref _conflicts);
-
-                    await _store
-                        .SaveAsync(
-                            record with
-                            {
-                                State = TransferState.Conflict,
-                                LastError = reason,
-                                },
-                            cancellationToken)
-                        .ConfigureAwait(false);
-
-                    Report(folder, encoded, TransferState.Conflict, "Needs a decision",
-                        0, stampedFolder.TotalBytes, message: reason);
-
-                    return;
-                }
-            }
-        }
-
-        var archivePath = DatasetArchive.StagingPathFor(folder);
-
-        // Logged at Information rather than Debug, and with the numbers rather than a summary.
-        // No instrument in this lab writes a directory acquisition, so every real one runs
-        // somewhere nobody here can reproduce -- and a report that says "it did not work" is
-        // worth very little next to one carrying what the folder actually measured.
-        _log.LogInformation(
-            "Packing {Path}: {Files} file(s), {Bytes:N0} bytes, newest write {Newest:u}.",
-            folder,
-            stampedFolder.FileCount,
-            stampedFolder.TotalBytes,
-            stampedFolder.NewestWriteUtc);
-
-        Report(folder, encoded, TransferState.Uploading, "Packing",
-            0, stampedFolder.TotalBytes,
-            message: $"Packing {stampedFolder} into one archive before sending it.");
-
-        var packed = await DatasetArchive
-            .CreateAsync(
-                folder,
-                archivePath,
-                stampedFolder.TotalBytes,
-                new InlineProgress<long>(read => Report(
-                    folder, encoded, TransferState.Uploading, "Packing",
-                    read, stampedFolder.TotalBytes)),
-                cancellationToken)
-            .ConfigureAwait(false);
-
-        if (!packed.Succeeded)
-        {
-            Interlocked.Increment(ref _failed);
-            _log.LogError(
-                "Could not pack {Path} ({Files} file(s), {Bytes:N0} bytes): {Reason} - {Detail}",
-                folder,
-                stampedFolder.FileCount,
-                stampedFolder.TotalBytes,
-                packed.Failure,
-                packed.Detail);
-
-            await _store
-                .SaveAsync(
-                    record with { State = TransferState.Failed, LastError = packed.Detail },
-                    cancellationToken)
-                .ConfigureAwait(false);
-
-            Report(folder, encoded, TransferState.Failed, "Could not be packed",
-                0, stampedFolder.TotalBytes, message: packed.Detail);
-
-            return;
-        }
-
-        try
-        {
-            // From here it is a file, and everything that already exists for files applies. The
-            // ledger row keeps the folder's identity; only the bytes come from the archive.
-            await UploadAsync(
-                    record with { State = TransferState.Uploading },
-                    stamp,
-                    destination,
-                    cancellationToken,
-                    source: packed.Path)
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            // Always. A six-gigabyte temporary left beside an acquisition is its own failure,
-            // and it is left inside the folder the sweep walks.
-            DatasetArchive.Discard(packed.Path);
-        }
-    }
-
-    /// <summary>
-    /// Whether an acquisition's destination holds something this application did not put there.
-    /// </summary>
-    /// <remarks>
-    /// Returns the sentence to show, or null when the destination is free or holds our own older
-    /// copy. Deliberately cheap: the folder listing is one request the ladder pays for anyway, and
-    /// the hash is asked for only when a name actually matches. It compares the server's hash
-    /// against the one the ledger recorded for this row, which is the same question tier one of
-    /// the ladder asks -- and unlike the ladder it needs no local hash, because the archive does
-    /// not exist yet and packing one to ask would be the expensive answer.
-    /// </remarks>
-    private async Task<string?> OccupiedByAnotherAsync(
-        RemotePath destination,
-        UploadRecord record,
-        CancellationToken cancellationToken)
-    {
-        // Not being able to look is not evidence that nothing is there.
-        //
-        // This caught WebDavException and answered "not occupied", so any transient error --
-        // a 500, a 503, a timeout on a busy server -- re-enabled the silent overwrite this check
-        // exists to prevent. The justification written here was that verification would catch it,
-        // which is wrong: verification proves the bytes we sent arrived, and cannot notice that
-        // they landed on top of somebody else's acquisition.
-        //
-        // So it is not caught. The exception reaches the worker loop, the folder is recorded
-        // failed with a reason, and the sweep offers it again -- which is exactly what the file
-        // path does, because DecideAsync does not catch this either.
-        var snapshot = await _snapshots
-            .GetAsync(destination.Parent, cancellationToken)
-            .ConfigureAwait(false);
-
-        var existing = snapshot.Find(destination.Name);
-
-        if (existing is null)
-        {
-            return null;
-        }
-
-        if (existing.IsCollection)
-        {
-            return $"A folder named '{destination.Name}' already occupies the destination.";
-        }
-
-        var remoteHash = await _snapshots
-            .HashOfAsync(snapshot, destination.Name, cancellationToken)
-            .ConfigureAwait(false);
-
-        // Ours, and the folder has changed since: a new version to send rather than a clash.
-        if (remoteHash is not null
-            && record.Md5 is not null
-            && string.Equals(remoteHash, record.Md5, StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        return $"'{destination.Name}' on the server was not put there by this computer, "
-            + "and would be replaced.";
-    }
-
-    /// <param name="source">
-    /// The bytes to send, when they are not at <c>record.LocalPath</c>. A directory acquisition
-    /// is packed into an archive beside it, and the row goes on identifying the folder -- which
-    /// is the thing the user has -- while the upload reads the archive.
-    /// </param>
     private async Task UploadAsync(
         UploadRecord record,
         LocalFileStamp stamp,
         RemotePath destination,
-        CancellationToken cancellationToken,
-        string? source = null)
+        CancellationToken cancellationToken)
     {
         var localPath = record.LocalPath;
-        var readFrom = source ?? localPath;
         var encoded = record.RemotePath;
 
         await _store
             .SetStateAsync(localPath, TransferState.Uploading, null, cancellationToken)
             .ConfigureAwait(false);
 
-        // The archive's size, not the folder's: progress has to be against what is going over
-        // the wire, or a packed acquisition would appear to overshoot or stall short. It is
-        // the total for every report this method makes, not only the ones during the upload:
-        // the bytes counted against it are always the archive's, so the folder's size would
-        // show a stored acquisition finishing at slightly over a hundred percent.
-        var sending = source is null ? stamp.Length : new FileInfo(source).Length;
+        var sending = stamp.Length;
 
         var stopwatch = Stopwatch.StartNew();
         var lastReport = TimeSpan.Zero;
@@ -769,7 +501,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
         var acquired = ChecksumSidecar.AcquiredFrom(stamp);
 
         var result = await _client
-            .UploadAsync(readFrom, destination, progress, cancellationToken, acquired)
+            .UploadAsync(localPath, destination, progress, cancellationToken, acquired)
             .ConfigureAwait(false);
 
         stopwatch.Stop();
@@ -786,15 +518,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         // Something that grew while it was being sent means the remote copy is already stale.
         // Nothing in the Python version noticed this.
-        //
-        // For an acquisition the question is asked of the folder, not of the archive: the
-        // archive is a snapshot taken before the upload and cannot change, while the folder can,
-        // and it is the folder that decides whether what is now on the server is still current.
-        var after = source is null
-            ? LocalFileStamp.FromFile(localPath)
-            : DatasetFolder.Measure(localPath) is { } now
-                ? new LocalFileStamp(localPath, now.TotalBytes, now.NewestWriteUnixMs)
-                : default;
+        var after = LocalFileStamp.FromFile(localPath);
 
         if (!after.Matches(stamp.Length, stamp.LastWriteUnixMs))
         {
@@ -1031,7 +755,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                     .SaveAsync(
                         new UploadRecord(
                             localPath, string.Empty, length, mtime, null, null,
-                            state, VerifyMethod.None, null, 0, error, false),
+                            state, VerifyMethod.None, null, 0, error),
                         CancellationToken.None)
                     .ConfigureAwait(false);
                 return;

@@ -18,6 +18,16 @@ time and update the heading; see `README.md` in this directory for the process.
   which PanoramaBridge responds to by starting from defaults, losing the server, the monitored
   folder and everything else. It is read and treated as *Ask me*.
 
+- **A file renamed only by letter case is no longer sent again on every folder check, forever.**
+  Windows treats `run.raw` and `RUN.raw` as the same file; Panorama does not. PanoramaBridge now
+  works out where a file belongs from the name it currently has on disk, and the ledger's record
+  of that name is corrected too, so the file settles instead of being re-offered every time.
+
+- **Recovering many interrupted uploads with verification turned off no longer blocks
+  PanoramaBridge from starting.** A crash that left a large number of files mid-transfer could
+  previously stall startup indefinitely while recovery tried to queue them all before any upload
+  worker began draining the queue.
+
 ## Performance
 
 ## Breaking Changes
@@ -41,16 +51,8 @@ time and update the heading; see `README.md` in this directory for the process.
   a per-file record of where each renamed file went, which went with the change above. The three
   remaining choices behave as before.
 
-- **Sending acquisition folders as one archive is now off by default.** If you monitor a folder
-  that your instrument writes Bruker or Agilent `.d` directories into, or Waters `.raw`
-  directories, turn on **Send acquisition folders as a single archive** on the Local Monitoring
-  tab.
-
-  It is opt-in because it cannot be checked here: the MacCoss Lab runs Thermo instruments only, so
-  no real directory acquisition has ever been written by an instrument this application was
-  watching.
-
-  With it off, the folder is walked into like any other and only files matching your file types
-  are sent — which for a Bruker or Waters acquisition is usually none of them, because the files
-  inside do not carry the folder's extension. That is what happened before v26.3.0. If you rely on
-  these formats, turn the setting on.
+- **Directory acquisition archives have been removed.** Bruker and Agilent `.d` directories and
+  Waters `.raw` directories are no longer packed into one archive. PanoramaBridge walks those
+  directories like any other and transfers only matching files inside them. The setting has been
+  removed because the completion decision could not be validated against an instrument writing
+  one, and sending a partial acquisition is worse than not sending it.

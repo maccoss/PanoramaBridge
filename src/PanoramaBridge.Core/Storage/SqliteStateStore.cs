@@ -91,12 +91,12 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                raw_check)
             VALUES
               ($path, $remote, $size, $mtime, $md5, $sha256,
-               $state, $verify, $verified, $attempts, $error, $dataset, $rawcheck)
+               $state, $verify, $verified, $attempts, $error, 0, $rawcheck)
             ON CONFLICT(local_path) DO UPDATE SET
-              remote_path = $remote, size = $size, mtime_utc = $mtime,
+              local_path = $path, remote_path = $remote, size = $size, mtime_utc = $mtime,
               md5 = $md5, sha256 = $sha256, state = $state, verify_method = $verify,
               verified_utc = $verified, attempts = $attempts, last_error = $error,
-              is_dataset = $dataset, raw_check = $rawcheck;
+              is_dataset = 0, raw_check = $rawcheck;
             """,
             command =>
             {
@@ -115,14 +115,13 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                     record.VerifiedUtc?.ToUnixTimeMilliseconds() ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue("$attempts", record.Attempts);
                 command.Parameters.AddWithValue("$error", record.LastError ?? (object)DBNull.Value);
-                command.Parameters.AddWithValue("$dataset", record.IsDataset ? 1 : 0);
             },
             cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     /// <inheritdoc />
-    public Task SetStateAsync(
+    public async Task SetStateAsync(
         string localPath,
         TransferState state,
         string? lastError = null,
@@ -132,7 +131,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
 
         // Attempts increments only when an upload actually starts, so the count reflects
         // transfers tried rather than state changes made.
-        return ExecuteWriteAsync(
+        var changed = await ExecuteWriteAsync(
             """
             UPDATE uploads
                SET state = $state,
@@ -147,11 +146,13 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                 command.Parameters.AddWithValue("$uploading", (int)TransferState.Uploading);
                 command.Parameters.AddWithValue("$error", lastError ?? (object)DBNull.Value);
             },
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+
+        EnsureExistingRow(changed, localPath);
     }
 
     /// <inheritdoc />
-    public Task MarkVerifiedAsync(
+    public async Task MarkVerifiedAsync(
         string localPath,
         VerifyMethod method,
         DateTimeOffset verifiedUtc,
@@ -159,7 +160,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
 
-        return ExecuteWriteAsync(
+        var changed = await ExecuteWriteAsync(
             """
             UPDATE uploads
                SET state = $state, verify_method = $verify, verified_utc = $verified,
@@ -173,7 +174,9 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                 command.Parameters.AddWithValue("$verify", (int)method);
                 command.Parameters.AddWithValue("$verified", verifiedUtc.ToUnixTimeMilliseconds());
             },
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+
+        EnsureExistingRow(changed, localPath);
     }
 
     /// <summary>
@@ -385,9 +388,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
 
     private const string SelectColumns =
         """
-        SELECT local_path, remote_path, size, mtime_utc, md5, sha256,
-               state, verify_method, verified_utc, attempts, last_error, is_dataset,
-               raw_check
+         SELECT local_path, remote_path, size, mtime_utc, md5, sha256,
+             state, verify_method, verified_utc, attempts, last_error, raw_check
         """;
 
     private static UploadRecord Read(SqliteDataReader reader) => new(
@@ -404,8 +406,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             : DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(8)),
         Attempts: reader.GetInt32(9),
         LastError: reader.IsDBNull(10) ? null : reader.GetString(10),
-        IsDataset: reader.GetInt32(11) != 0,
-        RawCheck: reader.IsDBNull(12) ? null : reader.GetString(12));
+        RawCheck: reader.IsDBNull(11) ? null : reader.GetString(11));
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {
@@ -440,11 +441,20 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     /// bind and execute sequence would have to be kept in step, and a busy retry or a transaction
     /// added to one of them would silently apply to only half the store's writes.
     /// </remarks>
-    private Task ExecuteWriteAsync(
+    private Task<int> ExecuteWriteAsync(
         string sql,
         Action<SqliteCommand> bind,
         CancellationToken cancellationToken) =>
         ExecuteWriteCountingAsync(sql, bind, cancellationToken);
+
+    private static void EnsureExistingRow(int changed, string localPath)
+    {
+        if (changed == 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot transition an unknown upload record: {localPath}. Save the row first.");
+        }
+    }
 
     private void Initialize()
     {

@@ -40,17 +40,6 @@ public sealed class FileStabilityTracker
     private readonly ConcurrentDictionary<string, Sample> _samples =
         new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// The folder counterpart, for the directory acquisitions the sweep also offers.
-    /// </summary>
-    /// <remarks>
-    /// Held here rather than beside it so that everything downstream -- the gate, the monitor,
-    /// their tests -- keeps handing paths to one tracker and does not have to know which kind of
-    /// thing it just received. The two answer the same question with the same vocabulary; only
-    /// the way they measure differs.
-    /// </remarks>
-    private readonly DatasetStabilityTracker _datasets;
-
     public FileStabilityTracker(TimeSpan quietPeriod, Func<DateTimeOffset>? clock = null)
     {
         if (quietPeriod < TimeSpan.Zero)
@@ -60,19 +49,10 @@ public sealed class FileStabilityTracker
 
         _quietPeriod = quietPeriod;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
-        _datasets = new DatasetStabilityTracker(_quietPeriod, _clock);
     }
 
-    /// <summary>
-    /// How many things are being watched for stability, files and acquisition folders together.
-    /// </summary>
-    /// <remarks>
-    /// Both dictionaries. Check, Forget and Clear have always routed to the dataset tracker while
-    /// this read only the wrapper's own, so it reported nothing while three acquisitions were
-    /// being watched and walked every pass. The classic wrapper gap: the mutating members
-    /// delegate and the query member does not.
-    /// </remarks>
-    public int Count => _samples.Count + _datasets.Count;
+    /// <summary>How many files are being watched for stability.</summary>
+    public int Count => _samples.Count;
 
     /// <summary>
     /// Examines a file and reports whether it is ready.
@@ -86,14 +66,6 @@ public sealed class FileStabilityTracker
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
-        // A directory here is an acquisition the sweep chose to offer whole -- a Bruker .d --
-        // and none of what follows applies to one: there is no handle to open and no single
-        // length to read.
-        if (Directory.Exists(path))
-        {
-            return _datasets.Check(path);
-        }
-
         var now = _clock();
 
         // Reading the length from an open handle rather than from the directory entry, which
@@ -103,16 +75,7 @@ public sealed class FileStabilityTracker
         if (probe.Reason is ReadinessReason.Missing or ReadinessReason.Unreadable)
         {
             // Stop tracking: neither state improves by asking again.
-            //
-            // Both dictionaries, not just this one. A path that was a directory on an earlier
-            // pass has a sample in the dataset tracker, and instrument software renaming a .d
-            // into place is exactly how that happens: the next call finds Directory.Exists
-            // false, arrives here down the file branch, and would clear only the file sample.
-            // The gate's give-up path does not call Forget either -- it only does so for a file
-            // held open past the locked-file policy -- so the dataset entry survived for the
-            // life of the process, one per renamed or deleted acquisition.
             _samples.TryRemove(path, out _);
-            _datasets.Forget(path);
             return probe;
         }
 
@@ -151,14 +114,12 @@ public sealed class FileStabilityTracker
     public void Forget(string path)
     {
         _samples.TryRemove(path, out _);
-        _datasets.Forget(path);
     }
 
     /// <summary>Forgets everything.</summary>
     public void Clear()
     {
         _samples.Clear();
-        _datasets.Clear();
     }
 
     /// <summary>

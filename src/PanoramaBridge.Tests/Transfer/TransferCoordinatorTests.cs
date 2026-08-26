@@ -19,7 +19,8 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
     private TransferCoordinator NewCoordinator(
         int concurrency = 3,
         ConflictPolicy policy = ConflictPolicy.Ask,
-        bool verify = true)
+        bool verify = true,
+        int queueCapacity = 5000)
     {
         var coordinator = new TransferCoordinator(
             _server,
@@ -29,6 +30,7 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
                 LocalBaseDirectory = _local,
                 DestinationRoot = Destination,
                 MaxConcurrentTransfers = concurrency,
+                QueueCapacity = queueCapacity,
                 ConflictPolicy = policy,
                 VerifyUploads = verify,
             });
@@ -132,77 +134,20 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         after.State.ShouldBe(TransferState.Conflict);
     }
 
-    // -- Acting on a decision somebody made about a conflict ----------------------------------
-
     [Fact]
-    public async Task An_acquisition_folder_does_not_overwrite_an_archive_it_did_not_put_there()
+    public async Task A_directory_passed_directly_to_the_coordinator_is_not_transferred()
     {
-        // Every other route to the server asks the decision ladder first. This one never did, so
-        // a directory acquisition was packed and PUT over whatever occupied its destination with
-        // no conflict raised and no regard for the conflict setting.
-        //
-        // The way in is ordinary: install PanoramaBridge on a second instrument computer, point
-        // it at a folder another machine already sent, and the empty ledger means every .d is
-        // repacked -- gigabytes of disk work on the acquisition machine -- and written over the
-        // archive already on the server. If the folders differ at all, that copy is gone, with
-        // nothing recorded and nothing for anybody to see.
-        var folder = Path.Combine(_local, "250314_HeLa.d");
-        Directory.CreateDirectory(folder);
-        await File.WriteAllTextAsync(Path.Combine(folder, "analysis.tdf"), "our index");
+        // Product discovery only queues files. Retaining this guard keeps an accidental direct
+        // caller from turning a directory into an unsupported transfer shape.
+        var directory = Path.Combine(_local, "unsupported.d");
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(Path.Combine(directory, "analysis.tdf"), "data");
 
-        var occupied = Destination.Append("250314_HeLa.d.zip");
-        _server.Seed(occupied, "somebody else's archive"u8.ToArray());
+        var summary = await RunWithAsync(NewCoordinator(), directory);
 
-        await RunWithAsync(NewCoordinator(), folder);
-
-        _server.Content(occupied).ShouldBe("somebody else's archive"u8.ToArray());
-
-        var after = await _store.GetAsync(folder);
-        after!.State.ShouldBe(TransferState.Conflict, "and it must be visible, not silently lost");
-    }
-
-    [Fact]
-    public async Task An_acquisition_folder_is_held_when_the_destination_cannot_be_checked()
-    {
-        // The check that stops a folder replacing somebody else's archive swallowed any server
-        // error and answered "not occupied", so a transient 500 or a timeout re-enabled the exact
-        // silent overwrite it was added to prevent. It has to fail closed: not being able to look
-        // is not evidence that nothing is there.
-        //
-        // Verification does not cover this. It proves the bytes we sent arrived; it cannot notice
-        // that they landed on top of somebody else's acquisition.
-        var folder = Path.Combine(_local, "250314_HeLa.d");
-        Directory.CreateDirectory(folder);
-        await File.WriteAllTextAsync(Path.Combine(folder, "analysis.tdf"), "ours");
-
-        var occupied = Destination.Append("250314_HeLa.d.zip");
-        _server.Seed(occupied, "somebody else's archive"u8.ToArray());
-
-        _server.FailListingsOnce = true;
-
-        await RunWithAsync(NewCoordinator(), folder);
-
-        _server.Content(occupied).ShouldBe("somebody else's archive"u8.ToArray());
-    }
-
-    [Fact]
-    public async Task An_acquisition_folder_still_updates_the_archive_it_did_put_there()
-    {
-        // The other half: a folder this application already sent, changed since, must go up again
-        // without asking. Treating our own older archive as a stranger's would make every second
-        // upload of an acquisition need a decision.
-        var folder = Path.Combine(_local, "250314_HeLa.d");
-        Directory.CreateDirectory(folder);
-        await File.WriteAllTextAsync(Path.Combine(folder, "analysis.tdf"), "first");
-
-        await RunWithAsync(NewCoordinator(), folder);
-        (await _store.GetAsync(folder))!.State.ShouldBe(TransferState.Verified);
-
-        await File.WriteAllTextAsync(Path.Combine(folder, "analysis.tdf"), "second, longer");
-
-        await RunWithAsync(NewCoordinator(), folder);
-
-        (await _store.GetAsync(folder))!.State.ShouldBe(TransferState.Verified);
+        summary.Total.ShouldBe(0);
+        _server.UploadCalls.ShouldBe(0);
+        (await _store.GetAsync(directory)).ShouldBeNull();
     }
 
     [Fact]
@@ -250,123 +195,6 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         latest.ShouldNotContain(
             r => r.State == TransferState.Uploading,
             "a stranded Uploading row blocks the updater and Exit for the whole session");
-    }
-
-    // -- directory acquisitions ------------------------------------------------------------
-
-    /// <summary>Writes a Bruker-shaped acquisition folder under the watched directory.</summary>
-    private string Acquisition(string name, params (string Name, string Content)[] files)
-    {
-        var folder = Path.Combine(_local, name);
-        Directory.CreateDirectory(folder);
-
-        foreach (var (file, content) in files)
-        {
-            var path = Path.Combine(folder, file);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, content);
-        }
-
-        return folder;
-    }
-
-    [Fact]
-    public async Task A_bruker_acquisition_arrives_as_one_verified_archive()
-    {
-        // The whole feature, end to end. A .d is a directory locally and one .d.zip remotely,
-        // which is how this lab already stores them -- and it is what makes the transfer atomic
-        // without any machinery: the archive either arrives and verifies or it does not.
-        var folder = Acquisition(
-            "250314_HeLa_DIA_01.d",
-            ("analysis.tdf", "the sqlite index"),
-            ("analysis.tdf_bin", "the binary data"));
-
-        var summary = await RunWithAsync(NewCoordinator(), folder);
-
-        summary.Uploaded.ShouldBe(1);
-
-        var remote = Destination.Append("250314_HeLa_DIA_01.d.zip");
-        _server.Content(remote).ShouldNotBeNull("the acquisition should be there as one archive");
-
-        // And it is a real archive holding the acquisition, not merely bytes of the right length.
-        using var zip = new System.IO.Compression.ZipArchive(
-            new MemoryStream(_server.Content(remote)!));
-
-        zip.Entries.Select(e => e.FullName).OrderBy(n => n, StringComparer.Ordinal)
-            .ShouldBe(["analysis.tdf", "analysis.tdf_bin"]);
-    }
-
-    [Fact]
-    public async Task The_ledger_records_the_folder_and_marks_it_a_dataset()
-    {
-        // Keyed on the folder, because that is the thing the user has and can point at. The
-        // archive is a means of carrying it and does not outlive the transfer.
-        var folder = Acquisition("run_002.d", ("analysis.tdf", "index"));
-
-        await RunWithAsync(NewCoordinator(), folder);
-
-        var record = await _store.GetAsync(folder);
-
-        record.ShouldNotBeNull();
-        record!.IsDataset.ShouldBeTrue();
-        record.State.ShouldBe(TransferState.Verified);
-        record.RemotePath.ShouldEndWith("run_002.d.zip");
-    }
-
-    [Fact]
-    public async Task The_working_archive_is_removed_afterwards()
-    {
-        // It is built inside the folder being monitored and is six gigabytes in real life.
-        var folder = Acquisition("run_003.d", ("analysis.tdf", "index"));
-
-        await RunWithAsync(NewCoordinator(), folder);
-
-        File.Exists(DatasetArchive.StagingPathFor(folder)).ShouldBeFalse();
-    }
-
-    [Fact]
-    public async Task An_unchanged_acquisition_is_not_packed_again()
-    {
-        // Packing six gigabytes to discover it was already there would be the most expensive way
-        // possible to answer that question, so the ledger is consulted first.
-        var folder = Acquisition("run_004.d", ("analysis.tdf", "index"));
-
-        await RunWithAsync(NewCoordinator(), folder);
-        _server.Reset();
-
-        var summary = await RunWithAsync(NewCoordinator(), folder);
-
-        summary.Skipped.ShouldBe(1);
-        _server.UploadCalls.ShouldBe(0, "nothing changed, so nothing should have been sent");
-    }
-
-    [Fact]
-    public async Task A_changed_acquisition_is_packed_and_sent_again()
-    {
-        var folder = Acquisition("run_005.d", ("analysis.tdf", "index"));
-        await RunWithAsync(NewCoordinator(), folder);
-
-        await File.WriteAllTextAsync(
-            Path.Combine(folder, "analysis.tdf_bin"), "a file that was not there before");
-
-        var summary = await RunWithAsync(NewCoordinator(), folder);
-
-        summary.Uploaded.ShouldBe(1, "the acquisition grew, so it is a new version");
-    }
-
-    [Fact]
-    public async Task The_acquisition_itself_is_never_modified()
-    {
-        var folder = Acquisition("run_006.d", ("analysis.tdf", "the sqlite index"));
-        var file = Path.Combine(folder, "analysis.tdf");
-
-        var before = await File.ReadAllBytesAsync(file);
-        var written = File.GetLastWriteTimeUtc(file);
-
-        await RunWithAsync(NewCoordinator(), folder);
-
-        File.ReadAllBytes(file).ShouldBe(before);
-        File.GetLastWriteTimeUtc(file).ShouldBe(written);
     }
 
     [Fact]
@@ -974,7 +802,7 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
 
         await _store.SaveAsync(
             new UploadRecord(missing, Destination.Append("vanished.raw").ToEncodedString(),
-                10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null, false));
+                10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null));
 
         var coordinator = NewCoordinator();
 
@@ -1003,6 +831,88 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
 
         summary.Skipped.ShouldBe(1);
         _server.UploadCalls.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Recovery_starts_workers_before_a_bounded_queue_can_fill()
+    {
+        // With verification off, Uploaded is terminal for a normal run but still returned by
+        // recovery after a crash. The previous call order queued every such row before starting
+        // a worker, so the 5,001st recovery entry blocked application startup forever.
+        var files = new[]
+        {
+            await WriteAsync("first.raw", "first"),
+            await WriteAsync("second.raw", "second"),
+            await WriteAsync("third.raw", "third"),
+        };
+
+        foreach (var file in files)
+        {
+            await _store.SaveAsync(
+                UploadRecord.ForNewFile(
+                    LocalFileStamp.FromFile(file),
+                    Destination.Append(Path.GetFileName(file)).ToEncodedString())
+                with { State = TransferState.Uploaded });
+        }
+
+        await using var coordinator = NewCoordinator(verify: false, queueCapacity: 1);
+
+        var recovered = await coordinator
+            .RecoverInterruptedAsync()
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        recovered.ShouldBe(files.Length);
+
+        coordinator.CompleteAdding();
+        var summary = await coordinator.RunAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        summary.Uploaded.ShouldBe(files.Length);
+    }
+
+    [Fact]
+    public async Task A_case_only_rename_settles_after_being_sent_to_its_new_remote_name()
+    {
+        // Windows identifies the two local paths as the same ledger key, but Panorama is
+        // case-sensitive. Resolve from the current path and read from it too, or every sweep
+        // re-offers the file and the worker then tries to open the old spelling.
+        var original = await WriteAsync("run.raw", "acquisition");
+        await RunWithAsync(NewCoordinator(), original);
+
+        var temporary = Path.Combine(_local, "rename-in-progress.raw");
+        var renamed = Path.Combine(_local, "RUN.raw");
+        File.Move(original, temporary);
+        File.Move(temporary, renamed);
+
+        var scanner = new ReconciliationScanner(
+            _store,
+            new ReconciliationOptions
+            {
+                Root = _local,
+                DestinationRoot = Destination,
+                Filter = new CandidateFilter([".raw"]),
+            });
+
+        var offered = new List<string>();
+        await scanner.SweepAsync((path, _) =>
+        {
+            offered.Add(path);
+            return Task.CompletedTask;
+        });
+
+        offered.ShouldBe([renamed]);
+
+        var summary = await RunWithAsync(NewCoordinator(), [.. offered]);
+        summary.Uploaded.ShouldBe(1);
+        _server.Content(Destination.Append("RUN.raw")).ShouldNotBeNull();
+
+        var after = new List<string>();
+        await scanner.SweepAsync((path, _) =>
+        {
+            after.Add(path);
+            return Task.CompletedTask;
+        });
+
+        after.ShouldBeEmpty("the renamed file is now settled at its case-correct destination");
     }
 
     // -- Cancellation -------------------------------------------------------------------------

@@ -93,8 +93,7 @@ public sealed class UpgradeFromWithdrawnFeaturesTests : IDisposable
             VerifyMethod: VerifyMethod.ServerMd5,
             VerifiedUtc: DateTimeOffset.UtcNow,
             Attempts: 1,
-            LastError: null,
-            IsDataset: false);
+            LastError: null);
 
     public void Dispose()
     {

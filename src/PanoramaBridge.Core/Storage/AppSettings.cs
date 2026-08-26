@@ -94,17 +94,6 @@ public sealed record AppSettings
     /// <summary>What to do when a file we did not upload already occupies a destination.</summary>
     public ConflictPolicy ConflictPolicy { get; init; } = ConflictPolicy.Ask;
 
-    /// <summary>
-    /// Whether folders such as a Bruker <c>.d</c> are sent as one archive. Off by default.
-    /// </summary>
-    /// <remarks>
-    /// Opt-in because it cannot be verified here. This lab runs Thermo instruments only, so every
-    /// real directory acquisition runs somewhere nobody here can reproduce — and the paths
-    /// around it have proved the least reliable part of the application. Someone who has this
-    /// kind of instrument can turn it on knowingly; nobody gets it by default.
-    /// </remarks>
-    public bool FolderAcquisitions { get; init; }
-
     /// <summary>Whether to confirm every upload against the server's own hash.</summary>
     public bool VerifyUploads { get; init; } = true;
 
@@ -212,7 +201,6 @@ public sealed record AppSettings
             && LockedFileMaxRetries == other.LockedFileMaxRetries
             && MaxConcurrentTransfers == other.MaxConcurrentTransfers
             && ConflictPolicy == other.ConflictPolicy
-            && FolderAcquisitions == other.FolderAcquisitions
             && VerifyUploads == other.VerifyUploads
             && WriteChecksumSidecars == other.WriteChecksumSidecars
             && YieldToInstrumentSoftware == other.YieldToInstrumentSoftware
@@ -241,7 +229,6 @@ public sealed record AppSettings
         hash.Add(ReconcileMinutes);
         hash.Add(MaxConcurrentTransfers);
         hash.Add(ConflictPolicy);
-        hash.Add(FolderAcquisitions);
         hash.Add(VerifyUploads);
         hash.Add(WriteChecksumSidecars);
         hash.Add(YieldToInstrumentSoftware);
@@ -264,6 +251,18 @@ public sealed record AppSettings
 
         return hash.ToHashCode();
     }
+
+    /// <summary>
+    /// Replaces persisted values for withdrawn settings with their safe current meaning.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ConflictPolicy.Rename"/> remains in the enum solely so an older JSON settings
+    /// file can be read. The current UI has no radio button for it and every transfer path already
+    /// treats it as <see cref="ConflictPolicy.Ask"/>, so carrying it forward would make the file
+    /// say something the application cannot do.
+    /// </remarks>
+    public AppSettings NormalizeWithdrawnValues() =>
+        ConflictPolicy == ConflictPolicy.Rename ? this with { ConflictPolicy = ConflictPolicy.Ask } : this;
 
     /// <summary>
     /// Parses <see cref="Extensions"/> from the comma-separated form the UI shows, normalising

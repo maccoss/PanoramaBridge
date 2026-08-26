@@ -39,24 +39,6 @@ public sealed record ReconciliationOptions
     public bool IncludeSubdirectories { get; init; } = true;
 
     /// <summary>
-    /// Whether a directory whose extension was asked for is treated as one acquisition.
-    /// </summary>
-    /// <remarks>
-    /// Off unless somebody asks for it. A Bruker or Agilent <c>.d</c>, or a Waters <c>.raw</c>
-    /// directory, is packed into one archive and sent as a single object — which is right, and
-    /// which no instrument in this lab can exercise. The packing and naming were checked against
-    /// real acquisitions downloaded from Panorama Public, but everything about deciding when a
-    /// folder has finished being written, and everything the conflict and recovery paths do with
-    /// one, runs somewhere nobody here can reproduce.
-    /// <para>
-    /// With this off, a directory is walked into as an ordinary folder, exactly as it was before
-    /// directory acquisitions existed. Nothing is packed and nothing new can go wrong for the
-    /// Thermo instruments this lab actually runs.
-    /// </para>
-    /// </remarks>
-    public bool FolderAcquisitions { get; init; }
-
-    /// <summary>
     /// What to do when the destination is occupied, which decides whether a held file is offered
     /// again.
     /// </summary>
@@ -237,17 +219,13 @@ public sealed class ReconciliationScanner
     /// </summary>
     /// <remarks>
     /// <para>
-    /// A hand-rolled walk rather than <c>EnumerateFiles</c> with recursion, because it has to be
-    /// able to <em>stop</em>. A Bruker <c>.d</c> is a directory that is one acquisition, and
-    /// descending into it would offer the files inside individually -- which is precisely how a
-    /// folder still being written transfers in pieces.
+    /// A hand-rolled walk rather than <c>EnumerateFiles</c> with recursion, because it needs to
+    /// decide whether each directory should be descended into before listing its contents.
     /// </para>
     /// <para>
     /// Files are stamped from the entry the walk already read, so size and modification time are
     /// free; going through <c>LocalFileStamp.FromFile</c> instead would stat every file a second
-    /// time, and over SMB that is a second round trip each. A dataset folder has to be measured,
-    /// which costs a walk of it -- but that walk replaces the one that would have descended into
-    /// it anyway, so the sweep visits each file exactly once either way.
+    /// time, and over SMB that is a second round trip each.
     /// </para>
     /// </remarks>
     private IEnumerable<LocalFileStamp> Enumerate()
@@ -304,21 +282,6 @@ public sealed class ReconciliationScanner
             {
                 if (entry is DirectoryInfo child)
                 {
-                    if (_options.FolderAcquisitions
-                        && DatasetFolder.Is(child.FullName, _options.Filter))
-                    {
-                        // One acquisition, not a folder of candidates. Measured, and not
-                        // descended into.
-                        if (DatasetFolder.Measure(child.FullName) is { } measured
-                            && !measured.IsEmpty)
-                        {
-                            yield return new LocalFileStamp(
-                                child.FullName, measured.TotalBytes, measured.NewestWriteUnixMs);
-                        }
-
-                        continue;
-                    }
-
                     if (_options.IncludeSubdirectories)
                     {
                         pending.Push(child.FullName);
@@ -396,7 +359,11 @@ public sealed class ReconciliationScanner
 
         try
         {
-            destination = _destinations.For(record).ToEncodedString();
+            // The ledger uses a case-insensitive key, while Panorama does not. The path yielded
+            // by this sweep is therefore the only spelling that can answer where this candidate
+            // would go now; resolving from the ledger spelling would offer a case-only rename
+            // on every pass after it had already been uploaded under the new name.
+            destination = _destinations.For(stamp.Path).ToEncodedString();
         }
         catch (ArgumentException)
         {

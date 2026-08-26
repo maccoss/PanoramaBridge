@@ -23,9 +23,6 @@ public sealed record MonitorOptions
     /// <summary>Whether to watch the tree below the root.</summary>
     public bool IncludeSubdirectories { get; init; } = true;
 
-    /// <summary>Whether a folder such as a Bruker .d is sent as one archive. Off by default.</summary>
-    public bool FolderAcquisitions { get; init; }
-
     /// <summary>What to do when the destination is occupied.</summary>
     public ConflictPolicy ConflictPolicy { get; init; } = ConflictPolicy.Ask;
 
@@ -52,7 +49,6 @@ public sealed record MonitorOptions
             DestinationRoot = RemotePath.Parse(settings.RemotePath),
             Filter = new CandidateFilter(settings.Extensions),
             IncludeSubdirectories = settings.IncludeSubdirectories,
-            FolderAcquisitions = settings.FolderAcquisitions,
             ConflictPolicy = settings.ConflictPolicy,
             StabilityPeriod = TimeSpan.FromSeconds(Math.Max(0, settings.StabilitySeconds)),
 
@@ -156,7 +152,6 @@ public sealed class ContinuousMonitor : IAsyncDisposable, IDisposable
                 DestinationRoot = options.DestinationRoot,
                 Filter = options.Filter,
                 IncludeSubdirectories = options.IncludeSubdirectories,
-                FolderAcquisitions = options.FolderAcquisitions,
                 ConflictPolicy = options.ConflictPolicy,
                 MaxUploadAttempts = options.MaxUploadAttempts,
             },

@@ -33,9 +33,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     public SettingsViewModel(ISettingsStore store, AppSettings initial)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
-        _saved = initial ?? throw new ArgumentNullException(nameof(initial));
+        _saved = (initial ?? throw new ArgumentNullException(nameof(initial)))
+            .NormalizeWithdrawnValues();
 
-        LoadFrom(initial);
+        LoadFrom(_saved);
     }
 
     // -- Local monitoring ---------------------------------------------------------------------
@@ -47,12 +48,6 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
     private bool _includeSubdirectories = true;
-
-    /// <summary>
-    /// Whether a folder such as a Bruker .d is sent as one archive. Off unless asked for.
-    /// </summary>
-    [ObservableProperty]
-    private bool _folderAcquisitions;
 
     /// <summary>Extensions as the comma-separated text the user edits.</summary>
     [ObservableProperty]
@@ -167,7 +162,6 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         LocalDirectory = LocalDirectory,
         IncludeSubdirectories = IncludeSubdirectories,
-        FolderAcquisitions = FolderAcquisitions,
         Extensions = AppSettings.ParseExtensions(ExtensionsText),
         StabilitySeconds = StabilitySeconds,
         ReconcileMinutes = ReconcileMinutes,
@@ -267,7 +261,6 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         LocalDirectory = settings.LocalDirectory;
         IncludeSubdirectories = settings.IncludeSubdirectories;
-        FolderAcquisitions = settings.FolderAcquisitions;
         ExtensionsText = settings.FormatExtensions();
         StabilitySeconds = settings.StabilitySeconds;
         ReconcileMinutes = settings.ReconcileMinutes;

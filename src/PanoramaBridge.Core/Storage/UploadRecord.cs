@@ -116,7 +116,6 @@ public readonly record struct LocalFileStamp(string Path, long Length, long Last
 /// <param name="VerifiedUtc">When verification last succeeded.</param>
 /// <param name="Attempts">Upload attempts so far.</param>
 /// <param name="LastError">Why the last attempt failed.</param>
-/// <param name="IsDataset">True when this row represents a folder acquisition rather than a file.</param>
 public sealed record UploadRecord(
     string LocalPath,
     string RemotePath,
@@ -129,7 +128,6 @@ public sealed record UploadRecord(
     DateTimeOffset? VerifiedUtc,
     int Attempts,
     string? LastError,
-    bool IsDataset,
     string? RawCheck = null)
 {
     /// <summary>
@@ -178,8 +176,7 @@ public sealed record UploadRecord(
             VerifyMethod: VerifyMethod.None,
             VerifiedUtc: null,
             Attempts: 0,
-            LastError: null,
-            IsDataset: false);
+            LastError: null);
 
     /// <summary>Returns this row with hashes attached.</summary>
     public UploadRecord WithHashes(ContentHashes hashes) =>
