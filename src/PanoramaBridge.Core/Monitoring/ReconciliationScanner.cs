@@ -365,12 +365,19 @@ public sealed class ReconciliationScanner
             // on every pass after it had already been uploaded under the new name.
             destination = _destinations.For(stamp.Path).ToEncodedString();
         }
-        catch (ArgumentException)
+        catch (PathNotPlaceableException)
         {
-            // A name the server would mangle, or a path outside the monitored tree. Offer it, so
-            // the failure is recorded against the file and shown, rather than being swallowed by
-            // the component whose job is to find things.
-            return false;
+            // A name the server would mangle, or a path outside the monitored tree. Offered once,
+            // so the failure is recorded against the file and shown, rather than being swallowed
+            // by the component whose job is to find things.
+            //
+            // Once, though. These fail before an upload begins, and attempts is only counted when
+            // one starts, so the Failed arm below never retires them: the file was offered on
+            // every sweep for ever, failing identically each time and adding to the failure count
+            // each time. A row already recorded as failing for this, on a file that has not
+            // changed since, has nothing new to learn.
+            return record is { State: TransferState.Failed }
+                && stamp.Matches(record.Length, record.LastWriteUnixMs);
         }
 
         if (record.IsSettledAt(stamp, destination))
@@ -384,12 +391,16 @@ public sealed class ReconciliationScanner
             return false;
         }
 
-        // A damaged row is deliberately NOT accounted for here. Holding it in the sweep meant it
-        // was never offered, so nothing reported it, and the Transfers tab and the attention count
-        // — both built from reports — lost it on the next restart, while the settings hint and
-        // the banner promised it would be shown. The coordinator turns it back before the ladder,
-        // so offering it costs a queue trip and not one request, and the report is what keeps it
-        // visible. The decision itself lives there, where every route arrives.
+        // There is deliberately no arm here for a damaged row. Holding one in the sweep as well
+        // meant it was never queued, so nothing reported it, and the Transfers tab and the
+        // attention count — both built from reports alone — lost it. The coordinator turns it
+        // back before the decision ladder, so offering it costs a queue trip and not one request,
+        // and the report is what keeps it visible.
+        //
+        // Under Ask, which is the default, the Conflict arm below still accounts for it and it is
+        // not offered. That is the same for every held file and is not special to damage: while
+        // the answer is "ask me" there is nothing for the ladder to do, and the durable record of
+        // it is the Uploads tab, which reads from the ledger rather than from reports.
         return record.State switch
         {
             // Held, and staying held only while the answer is still "ask me". Any other policy

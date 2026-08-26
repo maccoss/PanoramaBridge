@@ -224,7 +224,19 @@ public static class PathSafety
         RemotePath destinationRoot,
         string? remoteName = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(localBaseDirectory);
+        // Typed, because this one is reachable from a setting rather than from a caller's
+        // mistake: clearing the monitored folder while rows are queued gets here. Left as a plain
+        // ArgumentException it went past the coordinator's typed catch into the general handler,
+        // which writes the exception's own text onto the row — "(Parameter 'localBaseDirectory')"
+        // and all.
+        if (string.IsNullOrWhiteSpace(localBaseDirectory))
+        {
+            throw new PathNotPlaceableException(
+                PathRejectionReason.OutsideMonitoredFolder,
+                "No folder to monitor has been chosen, so there is nowhere on the server this "
+                + "file belongs. Nothing has been sent and the file has not been touched.",
+                nameof(localBaseDirectory));
+        }
         ArgumentException.ThrowIfNullOrWhiteSpace(localFilePath);
         ArgumentNullException.ThrowIfNull(destinationRoot);
 

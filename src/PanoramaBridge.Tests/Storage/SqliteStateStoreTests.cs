@@ -55,4 +55,23 @@ public sealed class SqliteStateStoreTests : IAsyncDisposable
     }
 
     public ValueTask DisposeAsync() => _store.DisposeAsync();
+    [Fact]
+    public void The_withdrawn_state_value_is_still_free()
+    {
+        // The conversion that rewrites rows left by the withdrawn per-file conflict choices runs
+        // on every open and cannot be guarded by the schema version, because a rolled-back build
+        // can write one of those rows after the version is already current. It matches state 10,
+        // as a literal, in SQL -- so the day somebody gives a new TransferState that value, every
+        // row in it is silently rewritten on every launch, for ever, and nothing else would say
+        // so.
+        //
+        // Here rather than in a static constructor, which was the first attempt: that turns the
+        // mistake into an application that will not start, with the reason inside a
+        // TypeInitializationException, on an instrument. This fails in CI instead, where whoever
+        // added the value can still change it.
+        Enum.IsDefined(typeof(TransferState), 10).ShouldBeFalse(
+            "TransferState 10 is reserved: SqliteStateStore rewrites every row in it on open. "
+            + "Give the new state a different value, or retire that conversion.");
+    }
+
 }

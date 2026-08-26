@@ -33,34 +33,16 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     /// rows runs on every open and is not guarded by the schema version — it cannot be, since a
     /// rolled-back build can write one of these rows after the version is already current. A bare
     /// 10 in a SQL string is invisible to the compiler, so the next state anybody adds takes the
-    /// value and every row in it is silently rewritten, on every launch, for ever. There is no
-    /// test that would fail, because the rule lives in a string.
+    /// value and every row in it is silently rewritten, on every launch, for ever.
+    /// <c>The_withdrawn_state_value_is_still_free</c> fails the moment somebody takes it — in CI,
+    /// where it can be fixed. A static constructor was tried first and is exactly the wrong place:
+    /// it turns the mistake into an application that will not launch, with the reason buried in a
+    /// TypeInitializationException, on an instrument.
     /// </remarks>
     private const int WithdrawnKeptOnServerState = 10;
 
-    static SqliteStateStore()
-    {
-        if (Enum.IsDefined(typeof(TransferState), WithdrawnKeptOnServerState))
-        {
-            throw new InvalidOperationException(
-                $"TransferState now defines {WithdrawnKeptOnServerState}, which the conversion "
-                + "in Initialize treats as a withdrawn state and rewrites on every open. Give the "
-                + "new state a different value, or retire that conversion.");
-        }
-    }
-
     private readonly string _connectionString;
-
-    /// <summary>
-    /// Serializes writes. SQLite handles concurrent access itself, but funnelling writes avoids
-    /// spending the workers' time in lock retries under WAL.
-    /// </summary>
     private readonly SemaphoreSlim _writeLock = new(1, 1);
-
-    /// <summary>
-    /// Held open for the lifetime of the store so an in-memory database is not discarded
-    /// between operations, and so the file is opened once rather than per call.
-    /// </summary>
     private readonly SqliteConnection _keepAlive;
 
     public SqliteStateStore(string databasePath)
@@ -292,6 +274,18 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         return await reader.ReadAsync(cancellationToken).ConfigureAwait(false) ? Read(reader) : null;
     }
+
+    /// <inheritdoc />
+    public Task SetErrorAsync(
+        string localPath, string? error, CancellationToken cancellationToken = default) =>
+        ExecuteWriteAsync(
+            "UPDATE uploads SET last_error = $error WHERE local_path = $path;",
+            command =>
+            {
+                command.Parameters.AddWithValue("$path", localPath);
+                command.Parameters.AddWithValue("$error", (object?)error ?? DBNull.Value);
+            },
+            cancellationToken);
 
     /// <inheritdoc />
     public Task<IReadOnlyList<UploadRecord>> GetInterruptedAsync(
@@ -579,12 +573,14 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         // So it is idempotent instead of guarded. Converting sets the state and clears rename_to,
         // so a converted row can never match again.
         //
-        // Both halves of the OR are indexed, which they have to be: this runs synchronously in the
-        // constructor on every start, and an instrument ledger holds hundreds of thousands of
-        // rows. ix_uploads_state covers the state; the partial index below covers rename_to, and
-        // being partial it holds only the rows that have one — on the ledgers this was measured
-        // against, none. Without it SQLite cannot use the OR-by-union plan and falls back to
-        // reading the whole table, every launch, to find nothing.
+        // Two statements, not one with an OR, because EXPLAIN QUERY PLAN over a real ledger says
+        // so: `state = ? OR rename_to IS NOT NULL` is "SCAN uploads" whether the indexes exist or
+        // not, while each half on its own uses one. This runs synchronously in the constructor at
+        // every start and an instrument ledger holds hundreds of thousands of rows, so the
+        // difference is a full read of the table per launch, to find nothing.
+        //
+        // The first version was one statement with an OR and a comment claiming it was answered
+        // from an index. It was not, and nothing had measured it.
         //
         // Deliberately stamps no conflict_kind. A value meaning "carried over from the withdrawn
         // feature" was written here and then removed: v26.4.x reads this column and switches on
@@ -604,16 +600,27 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                    -- resolves to the file's original name and replaces the copy the rename
                    -- existed to preserve. SaveAsync clears both together for this reason.
                    resolution = 0,
-                   last_error = CASE
-                       WHEN rename_to IS NOT NULL
-                           THEN 'This file was sent under a different name by an earlier '
+                   last_error = 'This file was sent under a different name by an earlier '
                                 || 'version. Sending files under a new name has been removed, '
                                 || 'so it is held for a decision.'
-                       ELSE 'An earlier version recorded that you chose to keep the copy on '
-                            || 'the server. That choice is no longer stored, so it is held '
-                            || 'for a decision.'
-                   END
-             WHERE state = $withdrawn OR rename_to IS NOT NULL;
+             WHERE rename_to IS NOT NULL;
+            """;
+
+        command.Parameters.AddWithValue("$conflict", (int)TransferState.Conflict);
+        command.ExecuteNonQuery();
+        command.Parameters.Clear();
+
+        // The other half, which reads from a different index. Its message differs because the row
+        // means a different thing: a person pressed Keep, rather than a rename having been made.
+        command.CommandText =
+            """
+            UPDATE uploads
+               SET state = $conflict,
+                   resolution = 0,
+                   last_error = 'An earlier version recorded that you chose to keep the copy on '
+                                || 'the server. That choice is no longer stored, so it is held '
+                                || 'for a decision.'
+             WHERE state = $withdrawn;
             """;
 
         command.Parameters.AddWithValue("$conflict", (int)TransferState.Conflict);

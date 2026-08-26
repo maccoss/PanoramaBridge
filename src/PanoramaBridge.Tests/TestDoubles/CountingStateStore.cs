@@ -77,6 +77,13 @@ public sealed class CountingStateStore : IStateStore, IAsyncDisposable
         _inner.SetStateAsync(localPath, state, lastError, cancellationToken);
 
     /// <inheritdoc />
+    public Task SetErrorAsync(
+        string localPath,
+        string? error,
+        CancellationToken cancellationToken = default) =>
+        _inner.SetErrorAsync(localPath, error, cancellationToken);
+
+    /// <inheritdoc />
     public Task MarkVerifiedAsync(
         string localPath,
         VerifyMethod method,

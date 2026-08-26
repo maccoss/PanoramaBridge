@@ -951,8 +951,11 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         try
         {
+            // One column, not the whole record. Saving the record would re-stamp state and
+            // attempts from a snapshot taken before the workers started, so a worker's write
+            // could be undone by this one.
             await _store
-                .SaveAsync(record with { LastError = error }, CancellationToken.None)
+                .SetErrorAsync(record.LocalPath, error, CancellationToken.None)
                 .ConfigureAwait(false);
         }
         catch (Exception ex)

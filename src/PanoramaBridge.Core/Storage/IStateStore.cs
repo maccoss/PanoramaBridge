@@ -32,6 +32,15 @@ public interface IStateStore
     /// Throws when <paramref name="localPath"/> has no row; callers must save the initial row
     /// before recording a transition.
     /// </remarks>
+    /// <summary>Records why a row is waiting, touching nothing else about it.</summary>
+    /// <remarks>
+    /// One column, deliberately. Saving the whole record instead re-stamps state and attempts
+    /// from whatever snapshot the caller is holding, which on the recovery path is read before
+    /// the workers start — so a worker's write could be undone by it.
+    /// </remarks>
+    Task SetErrorAsync(
+        string localPath, string? error, CancellationToken cancellationToken = default);
+
     Task SetStateAsync(
         string localPath,
         TransferState state,

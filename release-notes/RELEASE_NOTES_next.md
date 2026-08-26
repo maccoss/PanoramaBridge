@@ -11,10 +11,12 @@ time and update the heading; see `README.md` in this directory for the process.
   an action it no longer offered anywhere, and never named the setting that actually resolves
   these files.
 
-  The state now reads **Held**, and the banner says what to do: choose an option under **When a
-  different file is already on the server** on the Local Monitoring tab, save, and press **Check
-  now**. It also says the two things that were easy to get wrong — that the choice applies to
-  every held file at once, and that renaming or moving one file is how you handle it on its own.
+  The state now reads **Held**, and the banner says what each kind of row is waiting for. For a
+  held file: choose an option under **When a different file is already on the server** on the
+  Local Monitoring tab, save, and then stop and start monitoring — that setting is read when
+  monitoring starts, so saving on its own does not reach files that are already held. It also
+  says the two things that were easy to get wrong: that the choice applies to every held file at
+  once, and that renaming or moving one file is how you handle it on its own.
 
 - **"Ask me" is now "Hold it and show it under Needs attention".** Nothing asked: there is no
   prompt and no per-file button, so the old label promised an interaction that never arrives.
@@ -74,7 +76,8 @@ time and update the heading; see `README.md` in this directory for the process.
   long as they stayed held. Holding one now costs nothing.
 
 - **Starting up no longer reads the whole upload record.** A check for records left by the
-  withdrawn per-file conflict choices runs at every start, and was reading every row to find them.
-  It is answered from an index now.
+  withdrawn per-file conflict choices runs at every start and was reading every row to find them.
+  It is two indexed lookups now, which on a ledger of a few hundred thousand acquisitions is the
+  difference between reading the table at every launch and touching almost nothing.
 
 ## Breaking Changes

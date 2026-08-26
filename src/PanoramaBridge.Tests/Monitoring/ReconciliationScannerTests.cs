@@ -231,25 +231,66 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
     }
 
     [Theory]
-    [InlineData(ConflictPolicy.Skip)]
-    [InlineData(ConflictPolicy.Overwrite)]
-    public async Task A_damaged_file_is_still_offered_so_that_something_reports_it(
-        ConflictPolicy policy)
+    [InlineData(ConflictPolicy.Skip, true)]
+    [InlineData(ConflictPolicy.Overwrite, true)]
+    [InlineData(ConflictPolicy.Ask, false)]
+    public async Task Whether_a_damaged_file_is_offered_follows_the_policy_like_any_held_file(
+        ConflictPolicy policy, bool expectOffered)
     {
-        // Deliberately offered, not held here. Holding it in the sweep kept it off the queue, so
-        // nothing reported it -- and the Transfers tab and the attention count are built from
-        // reports, so after a restart the row vanished from both while the settings hint and the
-        // banner promised it would be shown under Needs attention.
+        // There is no arm here for damage. Holding one in the sweep as well kept it off the queue,
+        // so nothing reported it, and the Transfers tab and the attention count are built from
+        // reports alone -- the coordinator turns it back before the ladder, so offering it costs a
+        // queue trip and not one request, and that report is what keeps it visible.
         //
-        // The coordinator turns it back before the decision ladder, so this costs a queue trip
-        // and not one request to the server, and the report it emits is what keeps it visible.
+        // Ask is included because it is the default and it behaves differently: a held file is not
+        // offered while the answer is still "ask me", which is true of every held file and not
+        // special to damage. The first version of this test pinned only Skip and Overwrite, so it
+        // passed while claiming something about the case it never ran.
         var path = Write("short.raw");
         await RecordAsync(path, TransferState.Conflict, VerifyMethod.None,
             kind: ConflictKind.LocalFileDamaged);
 
         var (_, offered) = await SweepAsync(NewScanner(conflictPolicy: policy));
 
-        offered.ShouldBe([path]);
+        if (expectOffered)
+        {
+            offered.ShouldBe([path]);
+        }
+        else
+        {
+            offered.ShouldBeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task A_name_the_server_would_mangle_is_offered_once_and_not_for_ever()
+    {
+        // These fail before an upload begins, and attempts is only counted when one starts, so
+        // the Failed arm never retires them: the file was offered on every sweep for ever, failing
+        // identically each time and adding to the failure count each time.
+        var path = Write("run;rep1.raw");
+
+        var first = await SweepAsync(NewScanner());
+        first.Offered.ShouldBe([path], "offered once, so the failure is recorded against it");
+
+        // Written directly: RecordAsync resolves a destination, which is the very thing this
+        // name cannot have.
+        var stamp = LocalFileStamp.FromFile(path);
+        await _store.SaveAsync(new UploadRecord(
+            LocalPath: stamp.Path,
+            RemotePath: string.Empty,
+            Length: stamp.Length,
+            LastWriteUnixMs: stamp.LastWriteUnixMs,
+            Md5: null,
+            Sha256: null,
+            State: TransferState.Failed,
+            VerifyMethod: VerifyMethod.None,
+            VerifiedUtc: null,
+            Attempts: 0,
+            LastError: "contains a semicolon"));
+
+        var second = await SweepAsync(NewScanner());
+        second.Offered.ShouldBeEmpty("and not again while the file and the setting are unchanged");
     }
 
     [Fact]

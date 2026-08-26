@@ -34,7 +34,12 @@ public sealed class UploadRowViewModel
         TransferState.Skipped => "Already there",
         TransferState.Uploaded => "Uploaded",
         TransferState.Failed => "Failed",
-        TransferState.Conflict => "Held",
+        // Told apart here too, not only in the live progress. This tab reads the ledger, so it
+        // is the view that still has the row after a restart -- and sending somebody from here to
+        // the conflict setting for a damaged file points them at a control that cannot move it.
+        TransferState.Conflict => Record.ConflictKind == ConflictKind.LocalFileDamaged
+            ? "Held - damaged"
+            : "Held",
         TransferState.Superseded => "Changed",
         TransferState.LockedRetrying => "File in use",
         _ => Record.State.ToString(),

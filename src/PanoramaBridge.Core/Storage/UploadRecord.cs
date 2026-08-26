@@ -204,17 +204,16 @@ public sealed record UploadRecord(
     /// </summary>
     /// <remarks>
     /// <para>
-    /// One predicate, two callers — the sweep, which uses it to avoid queueing the file at all,
-    /// and the coordinator, which uses it as the actual gate. It lives here because putting it
-    /// only in the sweep is what made it bypassable: a file reaches the coordinator from the
-    /// folder watcher and from <c>pbctl sync</c> as well, and neither goes past the sweep.
+    /// One caller: <c>TransferCoordinator.ProcessAsync</c>, which is where every route arrives —
+    /// a file reaches it from the sweep, from the folder watcher and from <c>pbctl sync</c>, and
+    /// the last two never consult the sweep. The sweep deliberately does <em>not</em> ask this,
+    /// because a row it accounts for is never queued, and a row that is never queued is never
+    /// reported, and the Transfers tab and the attention count are built from reports alone.
     /// </para>
     /// <para>
-    /// Deliberately independent of <see cref="State"/>. Tying it to
-    /// <see cref="TransferState.Conflict"/> left a two-step way round: retire the row under Skip,
-    /// which saves it <see cref="TransferState.Skipped"/> with the kind intact, then change to
-    /// Overwrite — and a check that only looked at Conflict rows no longer applied. The reason a
-    /// row is held outlives the state it was recorded in.
+    /// Deliberately independent of <see cref="State"/>: the reason a row is held outlives the
+    /// state it was recorded in, and a check written as an arm of a state switch stops applying
+    /// the moment something moves the row.
     /// </para>
     /// <para>
     /// Callers must test the stamp first. A file that changed is a new question, and this hold is
