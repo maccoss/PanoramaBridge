@@ -26,12 +26,14 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         RemotePath? destination = null,
         bool includeSubdirectories = true,
         int maxUploadAttempts = 5,
-        string[]? extensions = null) =>
+        string[]? extensions = null,
+        bool folderAcquisitions = true) =>
         new(
             _store,
             new ReconciliationOptions
             {
                 Root = _root,
+                FolderAcquisitions = folderAcquisitions,
                 DestinationRoot = destination ?? Destination,
                 Filter = new CandidateFilter(extensions ?? [".raw"]),
                 IncludeSubdirectories = includeSubdirectories,
@@ -89,42 +91,6 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task A_file_sent_under_a_new_name_is_not_offered_again()
-    {
-        // A renamed acquisition is verified at "run (2).raw", while the sweep works out where the
-        // file *would* go, which is always "run.raw". Comparing the two says the row does not
-        // describe this destination, so the file is offered again -- and the ladder finds run.raw
-        // still occupied, renames it to run (3).raw, and does the whole thing again on the next
-        // sweep. A seven-gigabyte acquisition re-sent every quarter of an hour, for ever, filling
-        // the destination with copies. Nothing bounds it: the attempt limit only applies to rows
-        // that failed.
-        var path = Write("run.raw");
-
-        var stamp = LocalFileStamp.FromFile(path);
-
-        await _store.SaveAsync(new UploadRecord(
-            LocalPath: stamp.Path,
-            RemotePath: Destination.Append("run (2).raw").ToEncodedString(),
-            Length: stamp.Length,
-            LastWriteUnixMs: stamp.LastWriteUnixMs,
-            Md5: "d41d8cd98f00b204e9800998ecf8427e",
-            Sha256: null,
-            State: TransferState.Verified,
-            VerifyMethod: VerifyMethod.ServerMd5,
-            VerifiedUtc: DateTimeOffset.UtcNow,
-            Attempts: 1,
-            LastError: null,
-            IsDataset: false,
-            RawCheck: null,
-            Resolution: ConflictResolution.None,
-            RenameTo: "run (2).raw"));
-
-        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
-
-        offered.ShouldBeEmpty();
-    }
-
-    [Fact]
     public async Task A_verified_acquisition_folder_is_not_offered_again()
     {
         // A .d reaches the server as run.d.zip, so a verified row's destination ends in .zip --
@@ -156,6 +122,23 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
 
         offered.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task An_acquisition_folder_is_an_ordinary_folder_unless_it_was_asked_for()
+    {
+        // Off by default, because it cannot be verified here: this lab runs Thermo instruments
+        // only, so every real directory acquisition runs somewhere nobody can reproduce -- and the
+        // paths around it have been the least reliable part of the application. Somebody with a
+        // Bruker turns it on knowingly; nobody gets it by accident.
+        Write(Path.Combine("250314_HeLa.d", "analysis.tdf"), "the index");
+        Write(Path.Combine("250314_HeLa.d", "analysis.tdf_bin"), "the data");
+
+        var (_, offered) = await SweepAsync(
+            NewScanner(extensions: [".raw", ".d"], folderAcquisitions: false));
+
+        // Walked into, as it was before directory acquisitions existed. Nothing is packed.
+        offered.ShouldNotContain(Path.Combine(_root, "250314_HeLa.d"));
     }
 
     // -- directory acquisitions ----------------------------------------------------------------

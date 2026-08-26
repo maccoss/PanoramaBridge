@@ -38,6 +38,24 @@ public sealed record ReconciliationOptions
     public bool IncludeSubdirectories { get; init; } = true;
 
     /// <summary>
+    /// Whether a directory whose extension was asked for is treated as one acquisition.
+    /// </summary>
+    /// <remarks>
+    /// Off unless somebody asks for it. A Bruker or Agilent <c>.d</c>, or a Waters <c>.raw</c>
+    /// directory, is packed into one archive and sent as a single object — which is right, and
+    /// which no instrument in this lab can exercise. The packing and naming were checked against
+    /// real acquisitions downloaded from Panorama Public, but everything about deciding when a
+    /// folder has finished being written, and everything the conflict and recovery paths do with
+    /// one, runs somewhere nobody here can reproduce.
+    /// <para>
+    /// With this off, a directory is walked into as an ordinary folder, exactly as it was before
+    /// directory acquisitions existed. Nothing is packed and nothing new can go wrong for the
+    /// Thermo instruments this lab actually runs.
+    /// </para>
+    /// </remarks>
+    public bool FolderAcquisitions { get; init; }
+
+    /// <summary>
     /// How many times an upload that failed is retried before the sweep stops offering it.
     /// </summary>
     /// <remarks>
@@ -272,7 +290,8 @@ public sealed class ReconciliationScanner
             {
                 if (entry is DirectoryInfo child)
                 {
-                    if (DatasetFolder.Is(child.FullName, _options.Filter))
+                    if (_options.FolderAcquisitions
+                        && DatasetFolder.Is(child.FullName, _options.Filter))
                     {
                         // One acquisition, not a folder of candidates. Measured, and not
                         // descended into.
@@ -388,11 +407,6 @@ public sealed class ReconciliationScanner
         {
             TransferState.Conflict => true,
 
-            // Somebody chose to keep the remote copy. Offering it again would re-raise the
-            // conflict they just settled, every sweep, for as long as the file sits there. The
-            // stamp check above is what lets them back in: change the local file and it is a new
-            // question, which is exactly when it should be asked again.
-            TransferState.Declined => true,
             TransferState.Failed => record.Attempts >= _options.MaxUploadAttempts,
             _ => false,
         };

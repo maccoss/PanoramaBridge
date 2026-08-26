@@ -20,6 +20,12 @@
                     </DockPanel>
                     <CheckBox Content="Include subdirectories"
                               IsChecked="{Binding IncludeSubdirectories}" />
+                    <CheckBox Margin="0,6,0,0"
+                              Content="Send acquisition folders as a single archive (Bruker and Agilent .d, Waters .raw)"
+                              IsChecked="{Binding FolderAcquisitions}" />
+                    <TextBlock Style="{StaticResource Hint}"
+                               TextWrapping="Wrap"
+                               Text="Leave this off unless you have one of those instruments. The MacCoss Lab runs Thermo only, so this has never been exercised against a real instrument writing an acquisition: packing and naming were checked against real data downloaded from Panorama, but deciding when a folder has finished being written was not. With it off, such a folder is treated as an ordinary folder and the files inside are sent individually." />
                     <TextBlock Style="{StaticResource Hint}"
                                Text="A folder on a file server works too. Pick a mapped drive and PanoramaBridge records the full network path instead, because a drive letter belongs to a single Windows sign-in and would not resolve if PanoramaBridge were ever started as a service or scheduled task." />
                     <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0"
@@ -111,12 +117,9 @@
                     <RadioButton Margin="{StaticResource RowMargin}" GroupName="Conflict"
                                  Content="Leave the copy on the server alone"
                                  IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Skip}" />
-                    <RadioButton Margin="{StaticResource RowMargin}" GroupName="Conflict"
+                    <RadioButton GroupName="Conflict"
                                  Content="Replace the copy on the server"
                                  IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Overwrite}" />
-                    <RadioButton GroupName="Conflict"
-                                 Content="Send mine alongside it, under a new name"
-                                 IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Rename}" />
                     <TextBlock Style="{StaticResource Hint}"
                                Text="This only applies to a file nobody can account for. Editing a file that PanoramaBridge uploaded itself is treated as a new version and re-sent without asking." />
                 </StackPanel>

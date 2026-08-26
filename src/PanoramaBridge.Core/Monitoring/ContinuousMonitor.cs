@@ -22,6 +22,9 @@ public sealed record MonitorOptions
     /// <summary>Whether to watch the tree below the root.</summary>
     public bool IncludeSubdirectories { get; init; } = true;
 
+    /// <summary>Whether a folder such as a Bruker .d is sent as one archive. Off by default.</summary>
+    public bool FolderAcquisitions { get; init; }
+
     /// <summary>How long a file must be unchanged before it is considered finished.</summary>
     public TimeSpan StabilityPeriod { get; init; } = TimeSpan.FromSeconds(10);
 
@@ -45,6 +48,7 @@ public sealed record MonitorOptions
             DestinationRoot = RemotePath.Parse(settings.RemotePath),
             Filter = new CandidateFilter(settings.Extensions),
             IncludeSubdirectories = settings.IncludeSubdirectories,
+            FolderAcquisitions = settings.FolderAcquisitions,
             StabilityPeriod = TimeSpan.FromSeconds(Math.Max(0, settings.StabilitySeconds)),
 
             // A zero or negative interval would turn the safety net into a busy loop. One minute
@@ -147,6 +151,7 @@ public sealed class ContinuousMonitor : IAsyncDisposable, IDisposable
                 DestinationRoot = options.DestinationRoot,
                 Filter = options.Filter,
                 IncludeSubdirectories = options.IncludeSubdirectories,
+                FolderAcquisitions = options.FolderAcquisitions,
                 MaxUploadAttempts = options.MaxUploadAttempts,
             },
             loggers.CreateLogger<ReconciliationScanner>());

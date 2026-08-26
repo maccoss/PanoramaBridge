@@ -86,8 +86,8 @@ public sealed class DestinationMap
     /// <param name="localPath">The path as it is on disk.</param>
     /// <param name="isDataset">Whether that path is a directory acquisition, right now.</param>
     /// <param name="record">The row, when there is one.</param>
-    public RemotePath For(string localPath, bool isDataset, UploadRecord? record = null) =>
-        Resolve(localPath, Leaf(record?.RenameTo, localPath, isDataset));
+    public RemotePath For(string localPath, bool isDataset) =>
+        Resolve(localPath, isDataset ? DatasetFolder.ArchiveNameFor(localPath) : null);
 
     /// <summary>
     /// Where a row's copy is, according to the row alone.
@@ -100,7 +100,7 @@ public sealed class DestinationMap
     {
         ArgumentNullException.ThrowIfNull(record);
 
-        return For(record.LocalPath, record.IsDataset, record);
+        return For(record.LocalPath, record.IsDataset);
     }
 
     /// <summary>

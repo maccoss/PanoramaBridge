@@ -435,7 +435,6 @@ public sealed class UploadDecisionServiceTests : IAsyncDisposable
     [InlineData(ConflictPolicy.Ask, UploadAction.Conflict)]
     [InlineData(ConflictPolicy.Skip, UploadAction.Skip)]
     [InlineData(ConflictPolicy.Overwrite, UploadAction.Upload)]
-    [InlineData(ConflictPolicy.Rename, UploadAction.Conflict)]
     public async Task The_policy_decides_what_happens_to_a_genuine_conflict(
         ConflictPolicy policy,
         UploadAction expected)

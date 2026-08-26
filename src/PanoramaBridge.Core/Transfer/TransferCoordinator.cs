@@ -284,20 +284,8 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         var stamp = LocalFileStamp.FromFile(localPath);
 
-        // Read before deciding. A person may have resolved a conflict since this file was last
-        // offered, and their answer replaces the question rather than informing it -- asking the
-        // policy again would return the same conflict and discard the decision.
-        var decided = await _store.GetAsync(localPath, cancellationToken).ConfigureAwait(false);
-
-        if (decided is { HasPendingResolution: true })
-        {
-            await ApplyResolutionAsync(decided, stamp, cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        // The path in hand, and not-a-dataset because Directory.Exists said so a moment ago.
-        // Only the rename comes from the row.
-        var destination = _destinations.For(localPath, isDataset: false, decided);
+        // The path in hand, and not a dataset: Directory.Exists said so a moment ago.
+        var destination = _destinations.For(localPath, isDataset: false);
 
         var encoded = destination.ToEncodedString();
 
@@ -321,10 +309,8 @@ public sealed class TransferCoordinator : IAsyncDisposable
             .ConfigureAwait(false);
 
         // The row read before the decision, reused. Reading it again here cost a second SQLite
-        // round trip per file on the monitoring path, and worse: a decision made by a person
-        // during the ladder's network round trip would be picked up by the second read and then
-        // overwritten by the save below, discarding it silently.
-        var record = decided ?? UploadRecord.ForNewFile(stamp, encoded);
+        var record = await _store.GetAsync(localPath, cancellationToken).ConfigureAwait(false)
+            ?? UploadRecord.ForNewFile(stamp, encoded);
 
         // What the file says about itself, which is a different question from what the file
         // system says about it. The readiness gate has already established that nothing holds it
@@ -354,7 +340,6 @@ public sealed class TransferCoordinator : IAsyncDisposable
                     {
                         State = TransferState.Conflict,
                         LastError = rawCheck.Summary,
-                        ConflictKind = ConflictKind.LocalFileDamaged,
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -382,25 +367,6 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
             case UploadAction.Conflict:
 
-                // Rename is a standing instruction rather than a question, so it is carried out
-                // here instead of being held. The setting has existed since the first release and
-                // did nothing: the decision ladder returned a conflict saying "a new name is
-                // needed" and no caller ever picked one, so choosing Rename behaved exactly like
-                // Ask and files piled up waiting for a decision nobody knew to make.
-                if (_options.ConflictPolicy == ConflictPolicy.Rename)
-                {
-                    var renamed = await RenameAroundAsync(
-                        record, stamp, destination, cancellationToken).ConfigureAwait(false);
-
-                    if (renamed)
-                    {
-                        return;
-                    }
-
-                    // Could not find out what is in the folder, so there is no name to trust.
-                    // Falls through and is held, which is the safe end of that failure.
-                }
-
                 Interlocked.Increment(ref _conflicts);
 
                 // Saved rather than updated: a file seen for the first time has no row yet, and
@@ -412,7 +378,6 @@ public sealed class TransferCoordinator : IAsyncDisposable
                         {
                             State = TransferState.Conflict,
                             LastError = decision.Reason,
-                            ConflictKind = ConflictKind.DestinationOccupied,
                             Md5 = decision.Hashes?.Md5 ?? record.Md5,
                             Sha256 = decision.Hashes?.Sha256 ?? record.Sha256,
                         },
@@ -528,10 +493,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
         var held = await _store.GetAsync(folder, cancellationToken).ConfigureAwait(false);
 
         // Through the row, so a renamed acquisition keeps the archive it was sent under. Deriving
-        // the archive name here regardless made this the one caller still holding its own opinion
-        // about where a file belongs -- the sweep preferred the rename, this did not, and the two
-        // disagreeing is what sends a folder round for ever.
-        var destination = _destinations.For(folder, isDataset: true, held);
+        var destination = _destinations.For(folder, isDataset: true);
 
         var encoded = destination.ToEncodedString();
 
@@ -552,11 +514,6 @@ public sealed class TransferCoordinator : IAsyncDisposable
             LastWriteUnixMs = stampedFolder.NewestWriteUnixMs,
             IsDataset = true,
 
-            // Spent here, as it is on the file path. It answered the conflict that was raised,
-            // not every conflict this folder will ever have -- and leaving it set would skip the
-            // occupied check for this folder for ever, so the next stranger's archive would be
-            // overwritten silently.
-            Resolution = ConflictResolution.None,
         };
 
         if (settled)
@@ -583,10 +540,6 @@ public sealed class TransferCoordinator : IAsyncDisposable
         // to discover the answer is the most expensive way to reach it. And asked without the
         // archive's hash, which does not exist yet -- the question here is whether the thing on
         // the server is ours, which the ledger's own recorded hash answers.
-        // Asked of the row as it was loaded. The copy above has already had the decision cleared
-        // from it, so reading it there would find nothing pending and run the check the decision
-        // exists to answer.
-        if (held is not { HasPendingResolution: true })
         {
             var occupied = await OccupiedByAnotherAsync(destination, record, cancellationToken)
                 .ConfigureAwait(false);
@@ -621,8 +574,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                             {
                                 State = TransferState.Conflict,
                                 LastError = reason,
-                                ConflictKind = ConflictKind.DestinationOccupied,
-                            },
+                                },
                             cancellationToken)
                         .ConfigureAwait(false);
 
@@ -706,89 +658,6 @@ public sealed class TransferCoordinator : IAsyncDisposable
     }
 
     /// <summary>
-    /// Sends a file alongside the one occupying its name, under the first free one.
-    /// </summary>
-    /// <remarks>
-    /// The names come from the folder snapshot the decision ladder has just taken, so this costs
-    /// nothing beyond what has already been paid for. Returns false when the folder could not be
-    /// read, in which case the caller holds the file: a name chosen without knowing what is there
-    /// is a name that might overwrite something.
-    /// <para>
-    /// That failure branch is untested, and close to unreachable: the ladder has just listed this
-    /// folder successfully, so the call below is served from the cache. It is kept because the
-    /// alternative to a cache miss here is an exception escaping into the worker loop, and said
-    /// to be untested rather than left to look covered.
-    /// </para>
-    /// </remarks>
-    private async Task<bool> RenameAroundAsync(
-        UploadRecord record,
-        LocalFileStamp stamp,
-        RemotePath destination,
-        CancellationToken cancellationToken)
-    {
-        RemoteFolderSnapshot snapshot;
-
-        try
-        {
-            snapshot = await _snapshots
-                .GetAsync(destination.Parent, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (WebDavException ex)
-        {
-            _log.LogWarning(
-                ex,
-                "Could not list {Folder} to find a free name for {Path}; holding it instead.",
-                destination.Parent,
-                record.LocalPath);
-
-            return false;
-        }
-
-        var free = ConflictNames.NextFree(destination.Name, snapshot.Entries.Keys);
-
-        var renamed = _destinations.Under(record.LocalPath, free);
-
-        // Checked before sending, exactly as the path a person drives is. The names came from a
-        // snapshot that may be minutes old, and this path runs unattended and continuously with
-        // nobody watching -- so it is the one where quietly replacing somebody else's file would
-        // go unnoticed longest. The manual path got this guard first; leaving it off here was an
-        // inconsistency, not a decision.
-        var stillFree = await _decisions
-            .DecideAsync(stamp, renamed, ConflictPolicy.Ask, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (stillFree.Action != UploadAction.Upload)
-        {
-            _log.LogWarning(
-                "{Path}: '{Free}' turned out to be occupied as well; holding it instead.",
-                record.LocalPath,
-                free);
-
-            return false;
-        }
-
-        _log.LogInformation(
-            "{Path}: '{Taken}' is occupied, sending it as '{Free}' by policy.",
-            record.LocalPath,
-            destination.Name,
-            free);
-
-        var queued = record with
-        {
-            RemotePath = renamed.ToEncodedString(),
-            State = TransferState.Queued,
-            RenameTo = free,
-        };
-
-        await _store.SaveAsync(queued, cancellationToken).ConfigureAwait(false);
-
-        await UploadAsync(queued, stamp, renamed, cancellationToken).ConfigureAwait(false);
-
-        return true;
-    }
-
-    /// <summary>
     /// Whether an acquisition's destination holds something this application did not put there.
     /// </summary>
     /// <remarks>
@@ -845,161 +714,6 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         return $"'{destination.Name}' on the server was not put there by this computer, "
             + "and would be replaced.";
-    }
-
-    /// <summary>
-    /// Carries out what a person decided about a conflict.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The decision is consumed here rather than left on the row: it answers the conflict that
-    /// was raised, not every conflict this file will ever have. Leaving it set would silently
-    /// turn a one-off "overwrite this" into a standing policy for one file, which is the kind of
-    /// thing nobody remembers agreeing to.
-    /// </para>
-    /// <para>
-    /// Neither branch consults <see cref="TransferOptions.ConflictPolicy"/>. That is the whole
-    /// point: the policy is what produced the conflict, and asking it again would produce the
-    /// same one.
-    /// </para>
-    /// </remarks>
-    private async Task ApplyResolutionAsync(
-        UploadRecord record,
-        LocalFileStamp stamp,
-        CancellationToken cancellationToken)
-    {
-        var localPath = record.LocalPath;
-
-        // Asked again here, not inherited from when the conflict was raised.
-        //
-        // This path returns before the check that every other route to the server passes
-        // through, so without this it was the one way to upload a file nobody had read. Two ways
-        // in: a row migrated from a build before ConflictKind existed defaults to Unknown, so the
-        // view offers Replace for an acquisition that was held precisely because it is damaged;
-        // and a file can be truncated between the conflict being recorded and the decision being
-        // acted on, which may be a reboot later.
-        //
-        // Uploading a short acquisition over a good remote copy is the outcome this application
-        // exists to prevent, so the decision does not get to override it. A decision to overwrite
-        // is a decision about which copy is wanted, not a warrant to send one that is broken.
-        var rawCheck = InspectRawFile(localPath, stamp.Length);
-
-        if (rawCheck is { IsProvenTruncated: true })
-        {
-            Interlocked.Increment(ref _conflicts);
-
-            await _store
-                .SaveAsync(
-                    record with
-                    {
-                        // The measurement that was just taken, or the row goes on describing the
-                        // file as it was before it was truncated -- so the sweep sees a changed
-                        // file, offers it again, and pays for a whole decision-ladder pass
-                        // (listing, possibly a remote hash) before rediscovering the same
-                        // truncation. The branch this mirrors has always stored it.
-                        Length = stamp.Length,
-                        LastWriteUnixMs = stamp.LastWriteUnixMs,
-                        State = TransferState.Conflict,
-                        LastError = rawCheck.Summary,
-                        RawCheck = rawCheck.Summary,
-                        ConflictKind = ConflictKind.LocalFileDamaged,
-                        Resolution = ConflictResolution.None,
-                    },
-                    cancellationToken)
-                .ConfigureAwait(false);
-
-            _log.LogWarning(
-                "{Path}: not uploaded despite the decision to send it. {Summary}",
-                localPath,
-                rawCheck.Summary);
-
-            Report(localPath, record.RemotePath, TransferState.Conflict, "Incomplete file",
-                0, stamp.Length, message: rawCheck.Summary);
-            return;
-        }
-
-        var destination = _destinations.For(record);
-
-        var encoded = destination.ToEncodedString();
-
-        _log.LogInformation(
-            "{Path}: sending after a conflict was resolved as {Resolution}{Named}.",
-            localPath,
-            record.Resolution,
-            record.Resolution == ConflictResolution.Rename ? $" ({record.RenameTo})" : string.Empty);
-
-        // A rename is checked against its new destination before anything is sent. The name was
-        // free when it was offered to the user, which may have been minutes or a reboot ago, and
-        // "send it alongside" must never turn into "replace whatever arrived there since". An
-        // overwrite needs no such check: replacing what is there is the decision.
-        if (record.Resolution == ConflictResolution.Rename)
-        {
-            var check = await _decisions
-                .DecideAsync(stamp, destination, ConflictPolicy.Ask, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (check.Action != UploadAction.Upload)
-            {
-                Interlocked.Increment(ref _conflicts);
-
-                var reason = check.Action == UploadAction.Skip
-                    ? $"'{destination.Name}' on the server is already identical to this file."
-                    : $"'{destination.Name}' is occupied as well. {check.Reason}";
-
-                // Neither the proposed destination nor a cleared one.
-                //
-                // The rename did not happen, so the row still lives wherever it lived before --
-                // which its own recorded destination still names, because nothing has been
-                // written yet. Storing the name that turned out to be occupied would point the
-                // row at somebody else's file; clearing it would point the row at its original
-                // name, and the next Replace would then destroy the very copy the user chose to
-                // preserve when they first sent theirs alongside. That is the bug this branch was
-                // added to avoid, reintroduced one level down.
-                var lives = RemotePath.Parse(record.RemotePath).Name;
-
-                var ownName = _destinations.For(localPath, isDataset: false).Name;
-
-                await _store
-                    .SaveAsync(
-                        record with
-                        {
-                            State = TransferState.Conflict,
-                            LastError = reason,
-                            ConflictKind = ConflictKind.DestinationOccupied,
-                            Resolution = ConflictResolution.None,
-                            RenameTo = string.Equals(lives, ownName, StringComparison.OrdinalIgnoreCase)
-                                ? null
-                                : lives,
-                        },
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
-                // The row's own destination, not the name that turned out to be occupied. The
-                // ledger stopped recording the proposed name a moment ago for exactly this
-                // reason; showing it here would put somebody else's path in front of the user as
-                // though it were theirs.
-                Report(localPath, record.RemotePath, TransferState.Conflict, "Needs a decision",
-                    0, stamp.Length, message: reason);
-                return;
-            }
-        }
-
-        var queued = record with
-        {
-            RemotePath = encoded,
-            Length = stamp.Length,
-            LastWriteUnixMs = stamp.LastWriteUnixMs,
-            State = TransferState.Queued,
-            LastError = null,
-
-            // The instruction is spent. The name it chose is kept: it is where this file lives
-            // now, and dropping it is what made a renamed file be sent again on every sweep.
-            Resolution = ConflictResolution.None,
-        };
-
-        await _store.SaveAsync(queued, cancellationToken).ConfigureAwait(false);
-
-        await UploadAsync(queued, stamp, destination, cancellationToken).ConfigureAwait(false);
     }
 
     /// <param name="source">

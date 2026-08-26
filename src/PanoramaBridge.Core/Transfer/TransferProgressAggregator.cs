@@ -121,9 +121,6 @@ public sealed class TransferProgressAggregator
     /// </remarks>
     public event Action? WorkAppeared;
 
-    /// <summary>Raised when a path is dropped, so a view can take its row away.</summary>
-    public event Action<string>? Dropped;
-
     /// <summary>True when a drain would return something.</summary>
     public bool HasPendingChanges => !_dirty.IsEmpty;
 
@@ -211,11 +208,6 @@ public sealed class TransferProgressAggregator
                 case TransferState.Verified:
                 case TransferState.Skipped:
                 case TransferState.Uploaded:
-
-                // Settled by a person choosing the copy on the server. Nothing is going to
-                // happen to it, so counting it as needing attention would leave the status bar
-                // asking for a decision that has already been made.
-                case TransferState.Declined:
                     finished++;
                     break;
 
@@ -241,7 +233,6 @@ public sealed class TransferProgressAggregator
         foreach (var (path, progress) in _latest)
         {
             if (progress.State is TransferState.Verified or TransferState.Skipped
-                    or TransferState.Declined
                 && _latest.TryRemove(path, out _))
             {
                 _dirty.TryRemove(path, out _);
@@ -250,55 +241,6 @@ public sealed class TransferProgressAggregator
         }
 
         return removed;
-    }
-
-    /// <summary>Drops one path, as though it had never been reported.</summary>
-    /// <remarks>
-    /// For a row that is going to be reported again from the beginning. Restating it as queued
-    /// instead would leave the UI counting work that has not started, and nothing removes a
-    /// queued row: the totals would keep the refresh timer awake for the life of the process,
-    /// which on an instrument computer is the one thing this application must not do.
-    /// </remarks>
-    public bool Forget(string localPath)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
-
-        if (!_latest.TryGetValue(localPath, out var entry))
-        {
-            return false;
-        }
-
-        // Never a transfer that has started.
-        //
-        // The caller is resolving a conflict, and between the ledger being written and this being
-        // reached the sweep can have picked the file up and begun sending it. Dropping the entry
-        // then loses the row for a live upload -- and HasTransferInFlight is read from exactly
-        // this dictionary, so the update and tray-exit guards would both conclude nothing was
-        // moving and let the process restart mid-transfer.
-        if (entry.State is TransferState.Uploading or TransferState.Uploaded
-            or TransferState.Queued)
-        {
-            return false;
-        }
-
-        // Compare-and-remove, so a report arriving between the read above and here is kept rather
-        // than silently discarded. Removing the entry before the dirty flag matters for the same
-        // reason: the other order can leave a path queued for redraw with nothing to redraw from,
-        // and DrainChanged then drops the update entirely.
-        if (!_latest.TryRemove(new KeyValuePair<string, TransferProgress>(localPath, entry)))
-        {
-            return false;
-        }
-
-        _dirty.TryRemove(localPath, out _);
-
-        // Announced, because removing an entry is invisible otherwise. The view builds its rows
-        // from what has changed, and a row whose entry has simply vanished never comes up -- so
-        // it sat there reading "Needs a decision" while the totals no longer counted it. And with
-        // nothing moving the refresh timer is stopped, which is exactly the state somebody is in
-        // when they sit down to clear conflicts, so nothing would have redrawn it either.
-        Dropped?.Invoke(localPath);
-        return true;
     }
 
     /// <summary>Forgets everything.</summary>

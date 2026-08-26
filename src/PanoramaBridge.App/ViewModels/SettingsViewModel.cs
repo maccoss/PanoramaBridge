@@ -48,6 +48,12 @@ public sealed partial class SettingsViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
     private bool _includeSubdirectories = true;
 
+    /// <summary>
+    /// Whether a folder such as a Bruker .d is sent as one archive. Off unless asked for.
+    /// </summary>
+    [ObservableProperty]
+    private bool _folderAcquisitions;
+
     /// <summary>Extensions as the comma-separated text the user edits.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
@@ -161,6 +167,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         LocalDirectory = LocalDirectory,
         IncludeSubdirectories = IncludeSubdirectories,
+        FolderAcquisitions = FolderAcquisitions,
         Extensions = AppSettings.ParseExtensions(ExtensionsText),
         StabilitySeconds = StabilitySeconds,
         ReconcileMinutes = ReconcileMinutes,
@@ -260,6 +267,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         LocalDirectory = settings.LocalDirectory;
         IncludeSubdirectories = settings.IncludeSubdirectories;
+        FolderAcquisitions = settings.FolderAcquisitions;
         ExtensionsText = settings.FormatExtensions();
         StabilitySeconds = settings.StabilitySeconds;
         ReconcileMinutes = settings.ReconcileMinutes;

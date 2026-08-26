@@ -14,10 +14,13 @@ public enum ConflictPolicy
 
     /// <summary>Replace the remote copy.</summary>
     Overwrite = 2,
-
-    /// <summary>Upload alongside it under a new name.</summary>
-    Rename = 3,
 }
+
+// Rename was a fourth choice: send it alongside under a free name. It is gone with the per-file
+// conflict machinery, because recording where a renamed file actually went needs a column on the
+// row -- and without that record the sweep resolves the file to its original name, decides the row
+// describes somewhere else, and offers it again on every pass for ever. That loop was found and
+// fixed twice. Three choices that work beat four where one needs a subsystem to be correct.
 
 /// <summary>What should happen to a file.</summary>
 public enum UploadAction

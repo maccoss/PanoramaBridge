@@ -110,12 +110,7 @@ public sealed partial class TransferRowViewModel : ObservableObject
         TransferState.Failed or TransferState.Conflict or TransferState.Superseded =>
             TransferBand.NeedsAttention,
 
-        // Declined belongs here, not in Waiting. Nothing further is going to happen to a file
-        // whose remote copy somebody chose to keep, and leaving it to the default arm put it
-        // below the finished rows while the totals counted it as finished -- the grid and the
-        // status bar describing the same file differently.
-        TransferState.Verified or TransferState.Skipped or TransferState.Declined =>
-            TransferBand.Finished,
+        TransferState.Verified or TransferState.Skipped => TransferBand.Finished,
 
         _ => TransferBand.Waiting,
     };

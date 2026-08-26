@@ -94,6 +94,17 @@ public sealed record AppSettings
     /// <summary>What to do when a file we did not upload already occupies a destination.</summary>
     public ConflictPolicy ConflictPolicy { get; init; } = ConflictPolicy.Ask;
 
+    /// <summary>
+    /// Whether folders such as a Bruker <c>.d</c> are sent as one archive. Off by default.
+    /// </summary>
+    /// <remarks>
+    /// Opt-in because it cannot be verified here. This lab runs Thermo instruments only, so every
+    /// real directory acquisition runs somewhere nobody here can reproduce — and the paths
+    /// around it have proved the least reliable part of the application. Someone who has this
+    /// kind of instrument can turn it on knowingly; nobody gets it by default.
+    /// </remarks>
+    public bool FolderAcquisitions { get; init; }
+
     /// <summary>Whether to confirm every upload against the server's own hash.</summary>
     public bool VerifyUploads { get; init; } = true;
 
@@ -201,6 +212,7 @@ public sealed record AppSettings
             && LockedFileMaxRetries == other.LockedFileMaxRetries
             && MaxConcurrentTransfers == other.MaxConcurrentTransfers
             && ConflictPolicy == other.ConflictPolicy
+            && FolderAcquisitions == other.FolderAcquisitions
             && VerifyUploads == other.VerifyUploads
             && WriteChecksumSidecars == other.WriteChecksumSidecars
             && YieldToInstrumentSoftware == other.YieldToInstrumentSoftware
@@ -229,6 +241,7 @@ public sealed record AppSettings
         hash.Add(ReconcileMinutes);
         hash.Add(MaxConcurrentTransfers);
         hash.Add(ConflictPolicy);
+        hash.Add(FolderAcquisitions);
         hash.Add(VerifyUploads);
         hash.Add(WriteChecksumSidecars);
         hash.Add(YieldToInstrumentSoftware);

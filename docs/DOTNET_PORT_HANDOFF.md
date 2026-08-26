@@ -589,48 +589,50 @@ sending-early as the one quiet failure mode.
 
 ---
 
-## 9a. Known defects in conflict handling and directory acquisitions
+## 9a. Conflict handling and directory acquisitions: what was withdrawn, and what is left
 
-Found by nine review passes over v26.4.0—v26.4.6 and verified against the code, but **not
-fixed**. A branch that attempted them was abandoned: each round of fixes introduced roughly as many
-defects as it removed, several worse than the originals, so the work was stopped rather than
-continued. Read this before changing anything in `ProcessDatasetAsync`, `ApplyResolutionAsync` or
-`UploadsViewModel`.
+Nine review passes over v26.4.0—v26.4.6 found about seventy-five faults in these two areas. From
+the second pass on, each round of fixes introduced roughly as many defects as it removed, several
+worse than the originals. The response was to stop fixing and reduce scope.
 
-None of these loses data silently — the paths that did were closed in v26.4.5 and v26.4.6. What
-remains is invisibility, needless work, and decisions that go missing.
+**Withdrawn.** Deciding about a held file one at a time — the Replace / Send alongside / Keep
+buttons, `ConflictResolution`, `ConflictKind`, `TransferState.Declined`, `ApplyResolutionAsync`,
+`RenamePlanner`, `ConflictNames`, and the `ConflictPolicy.Rename` setting that needed a per-file
+record of where each renamed file went. About 2,800 lines. A conflict is held and shown under
+**Needs attention**, as before v26.4.0, and answered by the policy setting or by renaming the local
+file.
 
-| Defect | Mechanism |
-|---|---|
-| A first-time acquisition has no ledger row while it transfers | `ProcessDatasetAsync` packs and uploads without ever calling `SaveAsync`, and `SetStateAsync` is `UPDATE`-only so its `Uploading` write matches nothing. A new `.d` is absent from the Uploads tab for the whole of a multi-hour transfer, `Attempts` never increments, and `RecoverInterruptedAsync` cannot recover it because `GetInterruptedAsync` finds no row. The file path saves a `Queued` row first; this one does not. |
-| An interrupted acquisition folder is written off | `RecoverInterruptedAsync` asks `File.Exists`, false for a directory, and marks the row failed with a message about a local file. Only reachable once a row exists, so it compounds the entry above. |
-| Startup can block when verification is off | `GetInterruptedAsync` returns `Uploading`, `Uploaded` and `Queued` unbounded. With `VerifyUploads` off a row stays `Uploaded` for ever, and recovery enqueues into a bounded channel (5000, wait-when-full) before any worker runs. Past that many rows `StartMonitoringAsync` never returns; below it, every file ever uploaded is re-offered on each launch. |
-| `ConflictPolicy.Rename` does nothing for acquisition folders | The dataset conflict switch has no `Rename` arm, so folders are held instead. The same defect was fixed for files in v26.4.0 and never fixed here. |
-| An acquisition skipped by policy is not recorded | The skip reports progress but writes no row, so the folder is invisible in the audit view and re-examined every sweep — another listing and another collection hash, which Panorama computes by reading every byte in the destination. |
-| A rename decision on a folder is applied without re-checking the name | The occupied check is skipped entirely while a decision is pending, so a name that was free when offered can be taken by the time the bytes move. The file path re-checks; this one does not. |
-| The sweep and the engine disagree after a case-only rename | The ledger is `NOCASE`, so a row keeps its original spelling. The sweep resolves from the row's stored path and the engine from the path on disk, so after a case change the two never match and the file is offered on every pass for ever. |
-| `IsDataset` is never cleared | Nothing writes it back to false, so a `.d` folder later replaced by a plain `.d` file still resolves to the archive name. |
-| A decision made while the ladder is running is discarded | The row is read before `DecideAsync`, which can spend a listing and a collection hash, and every save writes the whole row including the resolution column — so a decision made in that window is overwritten with `None` and the person is re-prompted. |
-| A failed attempt spends the decision | The resolution is cleared before the attempt, so a full disk while packing or a timeout while uploading loses it. **Restoring it naively makes things worse**: pack failures never increment `Attempts` (that happens only on the `Uploading` transition, which this path never writes), so a restored decision turns a loop that self-terminated at `Conflict` into an unbounded repack of the whole acquisition on every sweep. A correct fix needs an attempt bound *and* a re-check before the restored decision is acted on. Tried, reverted. |
-| Open containing folder does nothing for an acquisition | `TransferStatusViewModel.OpenContainingFolder` asks `File.Exists`, false for a directory, and returns silently. `Path.Exists` is the one-call form both this and recovery want. |
+**Opt-in.** Directory acquisitions are off unless `FolderAcquisitions` is set. This lab runs Thermo
+instruments only, so no real Bruker, Waters or Agilent acquisition has ever been written by an
+instrument this application was watching; packing and naming were checked against real data
+downloaded from Panorama Public, and nothing else was. With the setting off, such a folder is
+walked into as an ordinary folder.
 
-### Why this is written down rather than fixed
+Four of the eleven defects recorded here previously went with the withdrawal: the missing Rename
+arm for folders, a rename decision applied without re-checking the name, a decision discarded
+during the ladder, and a decision spent by a failed attempt. What is left:
 
-Nine review rounds produced about seventy-five findings. From the second round on, each round found
-that the previous round's fixes had introduced new defects — four times the new one was worse than
-the original, including a UI that reported a refused acquisition as "Already on the server", and a
-decision-restore that replaced a terminating loop with an unbounded one.
+| Defect | Reachable when | Mechanism |
+|---|---|---|
+| A first-time acquisition has no ledger row while it transfers | Folder acquisitions on | `ProcessDatasetAsync` packs and uploads without calling `SaveAsync`, and `SetStateAsync` is `UPDATE`-only so its `Uploading` write matches nothing. The folder is absent from the Uploads tab for the whole transfer, `Attempts` never increments, and `RecoverInterruptedAsync` cannot recover it. The file path saves a `Queued` row first; this one does not. |
+| An interrupted acquisition folder is written off | Folder acquisitions on | `RecoverInterruptedAsync` asks `File.Exists`, false for a directory, and fails the row with a message about a local file. Compounds the entry above. |
+| An acquisition skipped by policy is not recorded | Folder acquisitions on, policy Skip | The skip reports progress but writes no row, so the folder is re-examined every sweep — another listing and another collection hash, which Panorama computes by reading every byte in the destination. |
+| `IsDataset` is never cleared | Folder acquisitions on | Nothing writes it back to false, so a `.d` folder later replaced by a plain `.d` file still resolves to the archive name. |
+| Open containing folder does nothing for an acquisition | Folder acquisitions on | `TransferStatusViewModel.OpenContainingFolder` asks `File.Exists`. `Path.Exists` is the one-call form it and recovery both want. |
+| Startup can block when verification is off | Always | `GetInterruptedAsync` returns `Uploading`, `Uploaded` and `Queued` unbounded. With `VerifyUploads` off a row stays `Uploaded` for ever, and recovery enqueues into a bounded channel (5000, wait-when-full) before any worker runs. Past that many rows `StartMonitoringAsync` never returns. |
+| The sweep and the engine disagree after a case-only rename | Always | The ledger is `NOCASE`, so a row keeps its original spelling. The sweep resolves from the row's stored path and the engine from the path on disk, so after a case change the two never match and the file is offered on every pass for ever. |
 
-Several fixes shipped with comments asserting the opposite of what the code did, and at least eight
-tests were written that could not fail, one of them validating a release note that was therefore
-untrue. The defence that worked was reverting each fix and watching its test go red; anything less
-passed things that did not work.
+### What to know before working here
 
-The useful advice is not about any single row above. Two roots account for most of the list, and
-both are worth checking for before editing here: **a decision duplicated rather than reused** (the
-destination was derived at six call sites, then the ladder was re-implemented for folders), and
-**"I cannot look" treated as "there is nothing there"** (fixed on the server side in v26.4.6, still
-present on the local side).
+Two roots account for most of what was found, and both are worth checking for before editing: **a
+decision duplicated rather than reused** (the destination was derived at six call sites, then the
+whole decision ladder was re-implemented for folders), and **"I cannot look" treated as "there is
+nothing there"** (fixed on the server side in v26.4.6, still present in recovery).
+
+On method: several fixes shipped with comments asserting the opposite of what the code did, and at
+least eight tests were written that could not fail — one validating a release note that was
+untrue as a result. The only defence that worked was reverting each fix and watching its test go
+red. Treat that as required here rather than thorough.
 
 ---
 
