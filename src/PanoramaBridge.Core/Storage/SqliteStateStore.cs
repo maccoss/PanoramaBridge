@@ -22,7 +22,7 @@ namespace PanoramaBridge.Core.Storage;
 /// </remarks>
 public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposable
 {
-    private const int CurrentSchemaVersion = 4;
+    private const int CurrentSchemaVersion = 5;
 
     private readonly string _connectionString;
 
@@ -547,6 +547,45 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             command.CommandText =
                 "ALTER TABLE uploads ADD COLUMN conflict_kind INTEGER NOT NULL DEFAULT 0;";
             command.ExecuteNonQuery();
+        }
+
+        if (from < 5)
+        {
+            // Two kinds of row were written by v26.3.0—v26.4.6 and cannot be read correctly any
+            // more, so they are brought somewhere honest rather than left to be misread.
+            //
+            // A row at state 10 meant "a person chose to keep the copy on the server". That state
+            // no longer exists, so nothing would list it — not even the All filter, which builds
+            // its WHERE from the enum's values — while the sweep, seeing a state it does not
+            // recognise, would offer the file again and undo the choice.
+            //
+            // A row with rename_to recorded a file sent under a different name. Nothing resolves
+            // destinations through that column now, so the sweep would work out the file's
+            // original name, find the row pointing elsewhere, and offer it again. Under Overwrite
+            // that overwrites the copy the rename existed to preserve.
+            //
+            // Both become held conflicts: visible, not sent, and answerable with the conflict
+            // setting. Held is the safe end of "this row means something this build cannot act
+            // on".
+            command.CommandText =
+                """
+                UPDATE uploads
+                   SET state = $conflict,
+                       last_error = CASE
+                           WHEN rename_to IS NOT NULL
+                               THEN 'This file was sent under a different name by an earlier '
+                                    || 'version. Sending files under a new name has been removed, '
+                                    || 'so it is held for a decision.'
+                           ELSE 'An earlier version recorded that you chose to keep the copy on '
+                                || 'the server. That choice is no longer stored, so it is held '
+                                || 'for a decision.'
+                       END
+                 WHERE state = 10 OR rename_to IS NOT NULL;
+                """;
+
+            command.Parameters.AddWithValue("$conflict", (int)TransferState.Conflict);
+            command.ExecuteNonQuery();
+            command.Parameters.Clear();
         }
     }
 

@@ -7,6 +7,17 @@ time and update the heading; see `README.md` in this directory for the process.
 
 ## Bug Fixes
 
+- **Files held by an earlier version are carried over rather than lost.** Two kinds of record
+  written by v26.3.0 to v26.4.6 mean something this version cannot act on: a file you chose to
+  keep the server's copy of, and a file that had been sent under a new name. Both are now shown
+  under **Needs attention** with an explanation, instead of disappearing from the list or being
+  sent again to the wrong name.
+
+- **Your settings survive the update even if you had chosen "send mine alongside it".** That
+  choice no longer exists, and a settings file naming it would otherwise have been unreadable —
+  which PanoramaBridge responds to by starting from defaults, losing the server, the monitored
+  folder and everything else. It is read and treated as *Ask me*.
+
 ## Performance
 
 ## Breaking Changes
@@ -17,9 +28,10 @@ time and update the heading; see `README.md` in this directory for the process.
   are gone.
 
   What to do instead: set **When a different file is already on the server** on the Local
-  Monitoring tab — *Ask me* holds the file, *Leave the copy on the server alone* keeps what is
-  there, *Replace the copy on the server* sends yours. Or rename or move the local file, which has
-  always worked.
+  Monitoring tab. *Ask me* holds the file and shows it. Change it to *Leave the copy on the server
+  alone* or *Replace the copy on the server* and the files already being held are acted on at the
+  next folder check — so the setting is how a backlog is cleared, not only how the next conflict
+  is handled. Renaming or moving the local file works too, as it always has.
 
   The feature was withdrawn because it was not reliable. Nine reviews of it found faults faster
   than they could be fixed, several of them worse than the problem they replaced, and a held file
@@ -36,5 +48,9 @@ time and update the heading; see `README.md` in this directory for the process.
 
   It is opt-in because it cannot be checked here: the MacCoss Lab runs Thermo instruments only, so
   no real directory acquisition has ever been written by an instrument this application was
-  watching. With it off, such a folder is treated as an ordinary folder and the files inside are
-  sent individually — which is what happened before v26.3.0.
+  watching.
+
+  With it off, the folder is walked into like any other and only files matching your file types
+  are sent — which for a Bruker or Waters acquisition is usually none of them, because the files
+  inside do not carry the folder's extension. That is what happened before v26.3.0. If you rely on
+  these formats, turn the setting on.

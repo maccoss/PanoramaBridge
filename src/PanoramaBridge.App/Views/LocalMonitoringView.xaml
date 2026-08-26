@@ -25,7 +25,7 @@
                               IsChecked="{Binding FolderAcquisitions}" />
                     <TextBlock Style="{StaticResource Hint}"
                                TextWrapping="Wrap"
-                               Text="Leave this off unless you have one of those instruments. The MacCoss Lab runs Thermo only, so this has never been exercised against a real instrument writing an acquisition: packing and naming were checked against real data downloaded from Panorama, but deciding when a folder has finished being written was not. With it off, such a folder is treated as an ordinary folder and the files inside are sent individually." />
+                               Text="Leave this off unless you have one of those instruments. The MacCoss Lab runs Thermo only, so this has never been exercised against a real instrument writing an acquisition: packing and naming were checked against real data downloaded from Panorama, but deciding when a folder has finished being written was not. With it off, such a folder is walked into like any other and only files matching your file types are sent - which for a Bruker or Waters acquisition is usually none of them, because the files inside do not carry the folder's extension." />
                     <TextBlock Style="{StaticResource Hint}"
                                Text="A folder on a file server works too. Pick a mapped drive and PanoramaBridge records the full network path instead, because a drive letter belongs to a single Windows sign-in and would not resolve if PanoramaBridge were ever started as a service or scheduled task." />
                     <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0"

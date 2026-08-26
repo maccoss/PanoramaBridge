@@ -53,8 +53,4 @@ public sealed class DestinationMapTests
         Map.For(Row("250314_HeLa.d", dataset: true)).Name.ShouldBe("250314_HeLa.d.zip");
     }
 
-    [Fact]
-    public void A_name_chosen_for_a_rename_is_used_as_given() =>
-        Map.Under(Path.Combine(Root, "run.raw"), "run (3).raw").Name.ShouldBe("run (3).raw");
-
 }

@@ -254,6 +254,7 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
                     Filter = monitorOptions.Filter,
                     IncludeSubdirectories = monitorOptions.IncludeSubdirectories,
                     FolderAcquisitions = monitorOptions.FolderAcquisitions,
+                    ConflictPolicy = monitorOptions.ConflictPolicy,
                     MaxUploadAttempts = monitorOptions.MaxUploadAttempts,
                 },
                 _loggerFactory.CreateLogger<ReconciliationScanner>());

@@ -3,6 +3,7 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PanoramaBridge.Core.Storage;
+using PanoramaBridge.Core.Transfer;
 using PanoramaBridge.Core.WebDav;
 
 namespace PanoramaBridge.Core.Monitoring;
@@ -24,6 +25,9 @@ public sealed record MonitorOptions
 
     /// <summary>Whether a folder such as a Bruker .d is sent as one archive. Off by default.</summary>
     public bool FolderAcquisitions { get; init; }
+
+    /// <summary>What to do when the destination is occupied.</summary>
+    public ConflictPolicy ConflictPolicy { get; init; } = ConflictPolicy.Ask;
 
     /// <summary>How long a file must be unchanged before it is considered finished.</summary>
     public TimeSpan StabilityPeriod { get; init; } = TimeSpan.FromSeconds(10);
@@ -49,6 +53,7 @@ public sealed record MonitorOptions
             Filter = new CandidateFilter(settings.Extensions),
             IncludeSubdirectories = settings.IncludeSubdirectories,
             FolderAcquisitions = settings.FolderAcquisitions,
+            ConflictPolicy = settings.ConflictPolicy,
             StabilityPeriod = TimeSpan.FromSeconds(Math.Max(0, settings.StabilitySeconds)),
 
             // A zero or negative interval would turn the safety net into a busy loop. One minute
@@ -152,6 +157,7 @@ public sealed class ContinuousMonitor : IAsyncDisposable, IDisposable
                 Filter = options.Filter,
                 IncludeSubdirectories = options.IncludeSubdirectories,
                 FolderAcquisitions = options.FolderAcquisitions,
+                ConflictPolicy = options.ConflictPolicy,
                 MaxUploadAttempts = options.MaxUploadAttempts,
             },
             loggers.CreateLogger<ReconciliationScanner>());

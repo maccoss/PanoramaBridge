@@ -85,7 +85,6 @@ public sealed class DestinationMap
     /// </remarks>
     /// <param name="localPath">The path as it is on disk.</param>
     /// <param name="isDataset">Whether that path is a directory acquisition, right now.</param>
-    /// <param name="record">The row, when there is one.</param>
     public RemotePath For(string localPath, bool isDataset) =>
         Resolve(localPath, isDataset ? DatasetFolder.ArchiveNameFor(localPath) : null);
 
@@ -101,36 +100,6 @@ public sealed class DestinationMap
         ArgumentNullException.ThrowIfNull(record);
 
         return For(record.LocalPath, record.IsDataset);
-    }
-
-    /// <summary>
-    /// The leaf a file occupies: its rename if it has one, its archive name if it is an
-    /// acquisition folder, otherwise its own name.
-    /// </summary>
-    /// <remarks>
-    /// Blank counts as absent, not as a name. <see cref="PathSafety.ResolveDestination"/> treats
-    /// whitespace as "no leaf given", so testing only for null here meant an empty rename
-    /// short-circuited the acquisition rule and then got ignored downstream -- a <c>.d</c>
-    /// resolving to its folder name. Two notions of "no leaf" inside the one type built so that
-    /// callers cannot hold two notions of anything.
-    /// </remarks>
-    private static string? Leaf(string? renameTo, string localPath, bool isDataset) =>
-        string.IsNullOrWhiteSpace(renameTo)
-            ? isDataset ? DatasetFolder.ArchiveNameFor(localPath) : null
-            : renameTo;
-
-    /// <summary>
-    /// Where a file would go under a name chosen for it.
-    /// </summary>
-    /// <remarks>
-    /// For the moment a rename is decided, before the row records it. Everything afterwards asks
-    /// <see cref="For(UploadRecord)"/>, because by then the row knows.
-    /// </remarks>
-    public RemotePath Under(string localPath, string leaf)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(leaf);
-
-        return Resolve(localPath, leaf);
     }
 
     private RemotePath Resolve(string localPath, string? leaf) =>

@@ -27,7 +27,7 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         bool includeSubdirectories = true,
         int maxUploadAttempts = 5,
         string[]? extensions = null,
-        bool folderAcquisitions = true) =>
+        bool folderAcquisitions = false) =>
         new(
             _store,
             new ReconciliationOptions
@@ -134,11 +134,27 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         Write(Path.Combine("250314_HeLa.d", "analysis.tdf"), "the index");
         Write(Path.Combine("250314_HeLa.d", "analysis.tdf_bin"), "the data");
 
+        // A file inside that does match, so "walked into" is provable rather than assumed:
+        // asserting only that the folder was not offered would pass if the sweep found nothing at
+        // all, or threw and was swallowed.
+        Write(Path.Combine("250314_HeLa.d", "extra.raw"), "a thermo file inside the folder");
+
         var (_, offered) = await SweepAsync(
             NewScanner(extensions: [".raw", ".d"], folderAcquisitions: false));
 
-        // Walked into, as it was before directory acquisitions existed. Nothing is packed.
         offered.ShouldNotContain(Path.Combine(_root, "250314_HeLa.d"));
+        offered.ShouldContain(Path.Combine(_root, "250314_HeLa.d", "extra.raw"));
+    }
+
+    [Fact]
+    public async Task An_acquisition_folder_is_offered_whole_once_it_is_asked_for()
+    {
+        Write(Path.Combine("250314_HeLa.d", "analysis.tdf"), "the index");
+
+        var (_, offered) = await SweepAsync(
+            NewScanner(extensions: [".raw", ".d"], folderAcquisitions: true));
+
+        offered.ShouldContain(Path.Combine(_root, "250314_HeLa.d"));
     }
 
     // -- directory acquisitions ----------------------------------------------------------------
@@ -151,7 +167,7 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         Write(Path.Combine("250314_HeLa_DIA_01.d", "analysis.tdf"), "the sqlite index");
         Write(Path.Combine("250314_HeLa_DIA_01.d", "analysis.tdf_bin"), "the binary data");
 
-        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
+        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"], folderAcquisitions: true));
 
         offered.ShouldHaveSingleItem();
         offered[0].ShouldEndWith("250314_HeLa_DIA_01.d");
@@ -166,7 +182,7 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         Write(Path.Combine("run.d", "analysis.tdf"), "index");
         Write(Path.Combine("run.d", "inner", "buried.raw"), "a file that matches the filter");
 
-        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
+        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"], folderAcquisitions: true));
 
         offered.ShouldHaveSingleItem();
         offered[0].ShouldEndWith("run.d");
@@ -180,7 +196,7 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         // subfolder, and the files inside it are still candidates.
         Write(Path.Combine("2026-03-14", "run.raw"), "an ordinary acquisition");
 
-        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"]));
+        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d"], folderAcquisitions: true));
 
         offered.ShouldHaveSingleItem();
         offered[0].ShouldEndWith("run.raw");
@@ -205,7 +221,7 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         Write(Path.Combine("run.d", "analysis.tdf"), "index");
         File.WriteAllText(Path.Combine(_root, "~run.d.zip"), "a working archive");
 
-        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d", ".zip"]));
+        var (_, offered) = await SweepAsync(NewScanner(extensions: [".raw", ".d", ".zip"], folderAcquisitions: true));
 
         offered.ShouldHaveSingleItem();
         offered[0].ShouldEndWith("run.d");

@@ -308,7 +308,6 @@ public sealed class TransferCoordinator : IAsyncDisposable
                     message: Explain(step)))
             .ConfigureAwait(false);
 
-        // The row read before the decision, reused. Reading it again here cost a second SQLite
         var record = await _store.GetAsync(localPath, cancellationToken).ConfigureAwait(false)
             ?? UploadRecord.ForNewFile(stamp, encoded);
 
@@ -490,14 +489,12 @@ public sealed class TransferCoordinator : IAsyncDisposable
         var stamp = new LocalFileStamp(
             folder, stampedFolder.TotalBytes, stampedFolder.NewestWriteUnixMs);
 
-        var held = await _store.GetAsync(folder, cancellationToken).ConfigureAwait(false);
-
-        // Through the row, so a renamed acquisition keeps the archive it was sent under. Deriving
         var destination = _destinations.For(folder, isDataset: true);
 
         var encoded = destination.ToEncodedString();
 
-        var record = held ?? UploadRecord.ForNewFile(stamp, encoded);
+        var record = await _store.GetAsync(folder, cancellationToken).ConfigureAwait(false)
+            ?? UploadRecord.ForNewFile(stamp, encoded);
 
         // Asked of the row as it was stored, before it is brought up to date. Updating it first
         // and then comparing compares the new measurement with itself, which is always equal --

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PanoramaBridge.Core.Storage;
+using PanoramaBridge.Core.Transfer;
 using PanoramaBridge.Core.WebDav;
 
 namespace PanoramaBridge.Core.Monitoring;
@@ -54,6 +55,19 @@ public sealed record ReconciliationOptions
     /// </para>
     /// </remarks>
     public bool FolderAcquisitions { get; init; }
+
+    /// <summary>
+    /// What to do when the destination is occupied, which decides whether a held file is offered
+    /// again.
+    /// </summary>
+    /// <remarks>
+    /// The sweep needs this because holding is now the only thing that happens to a conflict: the
+    /// per-file buttons were withdrawn. A row held under <c>Ask</c> stays held, which is the point
+    /// of asking. Under any other policy it has to be offered again, or changing the setting —
+    /// the one remedy the release notes give — does nothing at all: the policy is consulted by
+    /// the decision ladder, and the ladder is only reached for files the sweep offers.
+    /// </remarks>
+    public ConflictPolicy ConflictPolicy { get; init; } = ConflictPolicy.Ask;
 
     /// <summary>
     /// How many times an upload that failed is retried before the sweep stops offering it.
@@ -405,7 +419,10 @@ public sealed class ReconciliationScanner
 
         return record.State switch
         {
-            TransferState.Conflict => true,
+            // Held, and staying held only while the answer is still "ask me". Any other policy
+            // is an answer, and the file has to reach the ladder for it to be applied.
+            TransferState.Conflict => _options.ConflictPolicy is ConflictPolicy.Ask
+                or ConflictPolicy.Rename,
 
             TransferState.Failed => record.Attempts >= _options.MaxUploadAttempts,
             _ => false,
