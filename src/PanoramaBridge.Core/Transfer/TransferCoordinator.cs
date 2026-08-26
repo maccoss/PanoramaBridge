@@ -179,11 +179,16 @@ public sealed class TransferCoordinator : IAsyncDisposable
         // exactly as a deleted one does. Writing a row off then claims data no longer exists
         // while it sits untouched on the share.
         //
-        // Per folder rather than once for the monitored root, because the ledger outlives the
-        // setting: rows recorded while a different folder was watched are still returned here,
-        // and a check of today's root says nothing about whether yesterday's is reachable. Per
-        // folder rather than per row, because probing a dead host once per row stacks SMB
-        // timeouts before the window is usable.
+        // Keyed on the drive or UNC share, which is the thing that is reachable or not. Not the
+        // monitored folder, because the ledger outlives that setting and a check of today's root
+        // says nothing about whether yesterday's is reachable. Not each file's own folder either:
+        // that read as "cannot look" for a folder somebody had simply deleted, so those rows were
+        // never written off and came back as interrupted work on every start, for ever. It also
+        // meant a ledger spread over two hundred acquisition folders paid two hundred SMB connect
+        // timeouts against a dead host before the window was usable.
+        //
+        // A reachable root with a missing folder is a real deletion, and falls through to be
+        // recorded as one.
         //
         // Not being able to look is not evidence that nothing is there, which is the rule the
         // remote side already follows.
@@ -193,14 +198,14 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         foreach (var record in interrupted)
         {
-            var folder = Path.GetDirectoryName(record.LocalPath);
+            var root = Path.GetPathRoot(record.LocalPath);
 
-            if (!string.IsNullOrEmpty(folder))
+            if (!string.IsNullOrEmpty(root))
             {
-                if (!reachable.TryGetValue(folder, out var canSee))
+                if (!reachable.TryGetValue(root, out var canSee))
                 {
-                    canSee = Path.Exists(folder);
-                    reachable[folder] = canSee;
+                    canSee = Path.Exists(root);
+                    reachable[root] = canSee;
                 }
 
                 if (!canSee)
@@ -250,8 +255,8 @@ public sealed class TransferCoordinator : IAsyncDisposable
         if (unreachable > 0)
         {
             _log.LogInformation(
-                "{Count} interrupted transfer(s) are in folders that cannot be seen, so they "
-                + "are left as they are until those folders are reachable again.",
+                "{Count} interrupted transfer(s) are on drives or shares that cannot be "
+                + "seen, so they are left as they are until those are reachable again.",
                 unreachable);
         }
 
@@ -365,7 +370,34 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         var encoded = destination.ToEncodedString();
 
-        // Decide BEFORE touching the row. Writing a Queued state first would erase the
+        var record = await _store.GetAsync(localPath, cancellationToken).ConfigureAwait(false)
+            ?? UploadRecord.ForNewFile(stamp, encoded);
+
+        // The same gate the sweep applies, applied again here because this is where every route
+        // arrives. A file reaches this method from the folder watcher and from pbctl sync as
+        // well, and neither consults the sweep — so a guard that lived only there could be
+        // walked straight past, and the ladder would then re-save the row as an ordinary
+        // occupied-destination conflict, losing the very marker that was protecting it.
+        //
+        // Genuinely before the ladder. It sat after it for one commit while the comment claimed
+        // otherwise, which cost every held file a listing, and often a full read of a multi-
+        // gigabyte acquisition, on every folder check and every touch of the file — to reach a
+        // decision that was then thrown away. Reading the row here is safe where writing one is
+        // not: it is the write below that would erase the verified standing the ladder reads.
+        if (stamp.Matches(record.Length, record.LastWriteUnixMs)
+            && record.IsHeldRegardlessOf(_options.ConflictPolicy))
+        {
+            // Counted, like every other conflict. Left out, a pbctl sync over a folder of held
+            // files reported nothing found and nothing done, which reads as "there was nothing
+            // to do".
+            Interlocked.Increment(ref _conflicts);
+
+            Report(localPath, encoded, TransferState.Conflict, "Held",
+                0, stamp.Length, message: record.LastError);
+            return;
+        }
+
+        // Decide before *writing* to the row. Writing a Queued state first would erase the
         // verified standing that the ledger tier reads, so every file would fall through to
         // the network and the fast path would never fire.
         var decision = await _decisions
@@ -384,23 +416,6 @@ public sealed class TransferCoordinator : IAsyncDisposable
                     message: Explain(step)))
             .ConfigureAwait(false);
 
-        var record = await _store.GetAsync(localPath, cancellationToken).ConfigureAwait(false)
-            ?? UploadRecord.ForNewFile(stamp, encoded);
-
-        // The same gate the sweep applies, applied again here because this is where every
-        // route arrives. A file reaches this method from the folder watcher and from pbctl sync
-        // as well, and neither consults the sweep — so a guard that lived only there could be
-        // walked straight past, and the ladder would then re-save the row as an ordinary
-        // occupied-destination conflict, losing the very marker that was protecting it.
-        //
-        // Before the ladder, so a held file costs no listing and no hashing while it waits.
-        if (stamp.Matches(record.Length, record.LastWriteUnixMs)
-            && record.IsHeldRegardlessOf(_options.ConflictPolicy))
-        {
-            Report(localPath, encoded, TransferState.Conflict, "Held",
-                0, stamp.Length, message: record.LastError);
-            return;
-        }
 
         // What the file says about itself, which is a different question from what the file
         // system says about it. The readiness gate has already established that nothing holds it
@@ -417,6 +432,15 @@ public sealed class TransferCoordinator : IAsyncDisposable
             Length = stamp.Length,
             LastWriteUnixMs = stamp.LastWriteUnixMs,
             RawCheck = rawCheck?.Summary ?? record.RawCheck,
+
+            // Cleared the moment the file reads as whole again, not on a successful upload.
+            // Clearing it only on success stranded any repaired file whose next attempt failed
+            // for an unrelated reason — the row kept a marker meaning "broken", which is held
+            // under every policy, so nothing offered it again and no setting could reach it.
+            ConflictKind = record.ConflictKind == ConflictKind.LocalFileDamaged
+                && rawCheck is not { IsProvenTruncated: true }
+                    ? ConflictKind.Unknown
+                    : record.ConflictKind,
         };
 
         if (rawCheck is { IsProvenTruncated: true })

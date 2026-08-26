@@ -103,20 +103,6 @@ public readonly record struct LocalFileStamp(string Path, long Length, long Last
         Length == length && LastWriteUnixMs == lastWriteUnixMs;
 }
 
-/// <summary>
-/// One row of the upload ledger: what is known about a local file and its remote copy.
-/// </summary>
-/// <param name="LocalPath">Full local path. The primary key.</param>
-/// <param name="RemotePath">Encoded destination path.</param>
-/// <param name="Length">Local size at the point recorded.</param>
-/// <param name="LastWriteUnixMs">Local modification time at the point recorded.</param>
-/// <param name="Md5">Lower-case hex MD5, once known.</param>
-/// <param name="Sha256">Lower-case hex SHA-256, kept as the provenance record.</param>
-/// <param name="State">Where it stands.</param>
-/// <param name="VerifyMethod">How the remote copy was checked.</param>
-/// <param name="VerifiedUtc">When verification last succeeded.</param>
-/// <param name="Attempts">Upload attempts so far.</param>
-/// <param name="LastError">Why the last attempt failed.</param>
 /// <summary>Why a row is held at <see cref="TransferState.Conflict"/>.</summary>
 /// <remarks>
 /// <para>
@@ -163,6 +149,20 @@ public enum ConflictKind
     WithdrawnDecision = 3,
 }
 
+/// <summary>
+/// One row of the upload ledger: what is known about a local file and its remote copy.
+/// </summary>
+/// <param name="LocalPath">Full local path. The primary key.</param>
+/// <param name="RemotePath">Encoded destination path.</param>
+/// <param name="Length">Local size at the point recorded.</param>
+/// <param name="LastWriteUnixMs">Local modification time at the point recorded.</param>
+/// <param name="Md5">Lower-case hex MD5, once known.</param>
+/// <param name="Sha256">Lower-case hex SHA-256, kept as the provenance record.</param>
+/// <param name="State">Where it stands.</param>
+/// <param name="VerifyMethod">How the remote copy was checked.</param>
+/// <param name="VerifiedUtc">When verification last succeeded.</param>
+/// <param name="Attempts">Upload attempts so far.</param>
+/// <param name="LastError">Why the last attempt failed.</param>
 public sealed record UploadRecord(
     string LocalPath,
     string RemotePath,

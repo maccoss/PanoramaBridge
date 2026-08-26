@@ -121,7 +121,7 @@
                                  Content="Replace the copy on the server"
                                  IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Overwrite}" />
                     <TextBlock Style="{StaticResource Hint}"
-                               Text="Changing this decides the files already being held, not just the next one: they are acted on at the following folder check, so press Check now to apply it straight away. It only applies to a file nobody can account for — editing a file that PanoramaBridge uploaded itself is treated as a new version and re-sent without asking. A file held because it is damaged stays held whichever option you choose." />
+                               Text="Changing this decides the files already being held, not just the next one: they are acted on at the following folder check, or straight away if you use the button above the folder list. It only applies to a file nobody can account for — editing a file that PanoramaBridge uploaded itself is treated as a new version and re-sent without asking. A file held because it is damaged stays held whichever option you choose." />
                 </StackPanel>
             </GroupBox>
 

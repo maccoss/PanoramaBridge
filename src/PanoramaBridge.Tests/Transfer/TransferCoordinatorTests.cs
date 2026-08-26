@@ -817,19 +817,20 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         // share is mounted -- and an unreachable path answers exactly as a deleted one does.
         // Writing rows off then claims data no longer exists while it sits untouched on the
         // share. Not being able to look is not evidence that nothing is there.
-        var missing = Path.Combine(_local, "not-mounted", "run.raw");
+        var missing = Path.Combine(UnmountedDrive(), "data", "run.raw");
 
         await _store.SaveAsync(
             new UploadRecord(missing, Destination.Append("run.raw").ToEncodedString(),
                 10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null));
 
-        // A coordinator whose monitored folder does not exist, as an unmounted share would not.
+        // A coordinator whose monitored folder is on that drive, as it would be for a share
+        // that has not come back yet.
         await using var coordinator = new TransferCoordinator(
             _server,
             _store,
             new TransferEngineOptions
             {
-                LocalBaseDirectory = Path.Combine(_local, "not-mounted"),
+                LocalBaseDirectory = Path.Combine(UnmountedDrive(), "data"),
                 DestinationRoot = Destination,
             });
 
@@ -840,6 +841,73 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         row.LastError.ShouldBeNull();
     }
 
+    /// <summary>A drive letter this machine does not have, standing in for a share that is not
+    /// mounted yet. Probing one answers immediately, where an invented UNC host would sit in an
+    /// SMB connect timeout and make the suite slow and machine-dependent.</summary>
+    private static string UnmountedDrive()
+    {
+        for (var letter = 'Z'; letter >= 'D'; letter--)
+        {
+            var root = $"{letter}:\\";
+
+            if (!Path.Exists(root))
+            {
+                return root;
+            }
+        }
+
+        throw new InvalidOperationException("Every drive letter is in use on this machine.");
+    }
+
+    [Fact]
+    public async Task A_repaired_file_stops_carrying_the_marker_that_says_it_is_broken()
+    {
+        // Clearing this only on a successful upload stranded the file: a repaired acquisition
+        // whose next attempt failed for an unrelated reason kept a marker meaning "broken",
+        // which is held under every policy, so nothing offered it again and no setting could
+        // reach it. It is cleared the moment the file reads as whole.
+        var file = await WriteRawHeaderAsync("cut-short.raw", formatVersion: 66, padding: 0);
+
+        await RunWithAsync(NewCoordinator(), file);
+        (await _store.GetAsync(file))!.ConflictKind.ShouldBe(ConflictKind.LocalFileDamaged);
+
+        // Re-copied complete, as somebody would after seeing it flagged -- and then the upload
+        // fails for a reason that has nothing to do with the file. That combination is the whole
+        // point: clearing the marker only on a successful upload leaves this row carrying
+        // "broken", which is held under every policy, so no sweep offers it and no setting
+        // reaches it. It never gets another attempt.
+        var repaired = await WriteRawHeaderAsync("cut-short.raw", formatVersion: 66, padding: 4096);
+
+        _server.FailUploadsBeforeSucceeding = 99;
+
+        await RunWithAsync(NewCoordinator(), repaired);
+
+        var row = await _store.GetAsync(repaired);
+        row!.State.ShouldNotBe(TransferState.Verified, "the upload did fail");
+        row.ConflictKind.ShouldBe(ConflictKind.Unknown, "but it is not held as damaged any more");
+    }
+
+    [Fact]
+    public async Task A_row_whose_folder_was_deleted_under_a_reachable_drive_is_written_off()
+    {
+        // Keying the probe on each file's own folder read as "cannot look" for a folder somebody
+        // had simply deleted, so the row was never written off and came back as interrupted work
+        // on every start, for ever. A reachable drive with a missing folder is a real deletion.
+        var gone = Path.Combine(_local, "deleted-acquisition", "run.raw");
+
+        await _store.SaveAsync(
+            new UploadRecord(gone, Destination.Append("run.raw").ToEncodedString(),
+                10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null));
+
+        var coordinator = NewCoordinator();
+
+        (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
+
+        var row = await _store.GetAsync(gone);
+        row!.State.ShouldBe(TransferState.Failed);
+        row.LastError.ShouldNotBeNull();
+    }
+
     [Fact]
     public async Task A_row_under_a_folder_that_cannot_be_seen_is_left_alone()
     {
@@ -847,20 +915,20 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         // still returned by recovery. Checking only today's monitored root said nothing about
         // whether yesterday's is reachable, so those rows were written off as deleted while the
         // data sat untouched on a share that simply was not mounted yet.
-        var elsewhere = Path.Combine(_local, "previously-watched", "run.raw");
+        var elsewhere = Path.Combine(UnmountedDrive(), "previously-watched", "run.raw");
 
         await _store.SaveAsync(
             new UploadRecord(elsewhere, Destination.Append("run.raw").ToEncodedString(),
                 10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null));
 
-        // The monitored root exists, so the old whole-root check passed and fell straight through
-        // to writing the row off.
+        // The monitored folder is the ordinary local one and exists, so the whole-root check
+        // passed and fell straight through to writing this row off.
         var coordinator = NewCoordinator();
 
         (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
 
         var row = await _store.GetAsync(elsewhere);
-        row!.State.ShouldBe(TransferState.Uploading, "waiting for that folder, not gone");
+        row!.State.ShouldBe(TransferState.Uploading, "waiting for that drive, not gone");
         row.LastError.ShouldBeNull();
     }
 
@@ -887,6 +955,7 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         await RunWithAsync(NewCoordinator(policy: ConflictPolicy.Overwrite), file);
 
         _server.UploadCalls.ShouldBe(0, "the preserved copy must not be replaced");
+        _server.TotalCalls.ShouldBe(0, "and it costs nothing to keep holding it");
 
         var row = await _store.GetAsync(file);
         row!.State.ShouldBe(TransferState.Conflict);

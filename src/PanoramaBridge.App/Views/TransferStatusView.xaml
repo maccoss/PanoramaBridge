@@ -27,9 +27,11 @@
             -->
             <TextBlock TextWrapping="Wrap" Foreground="#663C00">
                 <Run Text="{Binding AttentionCount, Mode=OneWay}" />
-                <Run Text="transfer(s) are held, and nothing is retried or sent silently. Each row gives its reason under Detail." />
+                <Run Text="transfer(s) need attention. Each row says which it is, and why, under Detail." />
                 <LineBreak />
-                <Run Text="Most are held because something different is already on the server. To decide what happens to them, go to the Local Monitoring tab, choose an option under &quot;When a different file is already on the server&quot;, save, and press Check now. That choice applies to every held file at once. To handle one file on its own, rename or move it instead." />
+                <Run Text="A row reading Held is waiting on you: something different is already on the server, and nothing will be sent or replaced until you say so. Choose what should happen on the Local Monitoring tab, under &quot;When a different file is already on the server&quot;, then save. It applies to every held file at once, at the next folder check - or straight away if you press the button above the folder list. To settle one file on its own, rename or move it instead." />
+                <LineBreak />
+                <Run Text="A row reading Failed or Changed is not waiting on you and is retried on its own." />
             </TextBlock>
         </Border>
 

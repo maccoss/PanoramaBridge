@@ -168,13 +168,19 @@ public sealed class UpgradeFromWithdrawnFeaturesTests : IDisposable
     }
 
     [Fact]
-    public async Task Saving_a_row_clears_whatever_a_withdrawn_build_left_in_its_retired_columns()
+    public async Task Saving_a_row_overwrites_whatever_a_withdrawn_build_left_behind()
     {
         // A row can carry rename_to/resolution/conflict_kind from a build between v26.3.0 and
-        // v26.4.6 without ever reaching the v5 migration's rewrite -- this build simply saves
-        // over it later, once the conflict is resolved some other way. If that save left the
-        // retired columns untouched, a later rollback to an old build would read the stale
-        // rename_to and resolve the row to a destination this build already moved past.
+        // v26.4.6 without ever reaching the conversion's rewrite — this build simply saves over
+        // it later, once the conflict is resolved some other way. If that save left the values
+        // untouched, a later rollback to an old build would read the stale rename_to and resolve
+        // the row to a destination this build already moved past.
+        //
+        // rename_to and resolution are retired and written as blank every time. conflict_kind is
+        // not retired: it is live again, and a save writes the record's own value — which is
+        // what makes the 3 planted below disappear. Asserted here rather than left implied,
+        // because the name of this test used to say all three were cleared, and a reader who
+        // believed that would write code relying on a save always zeroing the column.
         var path = Path.Combine(_dir, "retired-columns.db");
 
         await using var store = new SqliteStateStore(path);
@@ -206,7 +212,9 @@ public sealed class UpgradeFromWithdrawnFeaturesTests : IDisposable
 
             reader.IsDBNull(0).ShouldBeTrue("rename_to");
             reader.GetInt32(1).ShouldBe(0, "resolution");
-            reader.GetInt32(2).ShouldBe(0, "conflict_kind");
+            reader.GetInt32(2).ShouldBe(
+                (int)ConflictKind.Unknown,
+                "conflict_kind carries the saved record's value, which is Unknown here");
         }
     }
 
