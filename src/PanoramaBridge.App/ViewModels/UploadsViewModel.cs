@@ -34,7 +34,7 @@ public sealed class UploadRowViewModel
         TransferState.Skipped => "Already there",
         TransferState.Uploaded => "Uploaded",
         TransferState.Failed => "Failed",
-        TransferState.Conflict => "Needs a decision",
+        TransferState.Conflict => "Held",
         TransferState.Superseded => "Changed",
         TransferState.LockedRetrying => "File in use",
         _ => Record.State.ToString(),

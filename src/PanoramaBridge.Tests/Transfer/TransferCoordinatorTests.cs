@@ -841,6 +841,59 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_row_under_a_folder_that_cannot_be_seen_is_left_alone()
+    {
+        // The ledger outlives the setting: rows recorded while a different folder was watched are
+        // still returned by recovery. Checking only today's monitored root said nothing about
+        // whether yesterday's is reachable, so those rows were written off as deleted while the
+        // data sat untouched on a share that simply was not mounted yet.
+        var elsewhere = Path.Combine(_local, "previously-watched", "run.raw");
+
+        await _store.SaveAsync(
+            new UploadRecord(elsewhere, Destination.Append("run.raw").ToEncodedString(),
+                10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null));
+
+        // The monitored root exists, so the old whole-root check passed and fell straight through
+        // to writing the row off.
+        var coordinator = NewCoordinator();
+
+        (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
+
+        var row = await _store.GetAsync(elsewhere);
+        row!.State.ShouldBe(TransferState.Uploading, "waiting for that folder, not gone");
+        row.LastError.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task A_held_file_reaching_the_coordinator_directly_is_not_sent()
+    {
+        // The folder watcher and pbctl sync both enqueue without consulting the sweep, so a guard
+        // that lived only in the sweep could be walked straight past -- and the ladder would then
+        // re-save the row as an ordinary occupied-destination conflict, losing the marker that
+        // was protecting it. Nothing is sent, and nothing is even asked of the server.
+        var file = await WriteAsync("kept.raw", "mine");
+
+        await _store.SaveAsync(
+            UploadRecord.ForNewFile(
+                LocalFileStamp.FromFile(file),
+                Destination.Append("kept.raw").ToEncodedString())
+            with
+            {
+                State = TransferState.Conflict,
+                ConflictKind = ConflictKind.WithdrawnDecision,
+                LastError = "Held from an earlier version.",
+            });
+
+        await RunWithAsync(NewCoordinator(policy: ConflictPolicy.Overwrite), file);
+
+        _server.UploadCalls.ShouldBe(0, "the preserved copy must not be replaced");
+
+        var row = await _store.GetAsync(file);
+        row!.State.ShouldBe(TransferState.Conflict);
+        row.ConflictKind.ShouldBe(ConflictKind.WithdrawnDecision, "the marker survives");
+    }
+
+    [Fact]
     public async Task An_interrupted_folder_upload_is_failed_with_an_honest_reason()
     {
         // A row from a version that sent folders as one archive. That has been withdrawn, so the

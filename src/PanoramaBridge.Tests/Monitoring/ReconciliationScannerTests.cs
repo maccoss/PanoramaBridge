@@ -283,6 +283,60 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         offered.ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData(TransferState.Skipped)]
+    [InlineData(TransferState.Queued)]
+    [InlineData(TransferState.Discovered)]
+    public async Task A_withdrawn_decision_is_held_whatever_state_the_row_reached(
+        TransferState state)
+    {
+        // The hold used to be written as an arm of the state switch, matching Conflict only, and
+        // that left a two-step way straight round it: set Skip once and the row is retired to
+        // Skipped with its kind intact, then set Overwrite and nothing was looking at the kind
+        // any more -- the file went to its original name and replaced the preserved copy. The
+        // reason a row is held outlives the state it was recorded in.
+        var path = Write("run1.raw");
+        await RecordAsync(path, state, VerifyMethod.None,
+            kind: ConflictKind.WithdrawnDecision);
+
+        var (_, offered) = await SweepAsync(
+            NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
+
+        offered.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_damaged_file_is_held_after_being_retired_by_skip()
+    {
+        // Same shape for the damaged marker, which has no policy that answers it at all.
+        var path = Write("short.raw");
+        await RecordAsync(path, TransferState.Skipped, VerifyMethod.None,
+            kind: ConflictKind.LocalFileDamaged);
+
+        var (_, offered) = await SweepAsync(
+            NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
+
+        offered.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_withdrawn_decision_is_reopened_by_changing_the_file()
+    {
+        // The escape hatch every one of these holds is documented to have. Replacing the local
+        // file is a new question about new bytes, so the old decision stops applying and the row
+        // is offered like any other -- the ladder then answers it under whatever policy is set.
+        var path = Write("run1.raw");
+        await RecordAsync(path, TransferState.Conflict, VerifyMethod.None,
+            kind: ConflictKind.WithdrawnDecision);
+
+        await File.AppendAllTextAsync(path, "a newly acquired version");
+
+        var (_, offered) = await SweepAsync(
+            NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
+
+        offered.ShouldBe([path]);
+    }
+
     [Fact]
     public async Task A_withdrawn_decision_is_retired_safely_by_skip()
     {

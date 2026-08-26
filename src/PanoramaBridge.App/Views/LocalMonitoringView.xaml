@@ -105,8 +105,14 @@
 
             <GroupBox Header="When a different file is already on the server">
                 <StackPanel>
+                    <!--
+                        Not "Ask me". Nothing asks: there is no prompt and no per-file button, so
+                        the label promised an interaction that never arrives and left people
+                        waiting for a window that does not exist. It holds the file, which is a
+                        smaller and true thing to say.
+                    -->
                     <RadioButton Margin="{StaticResource RowMargin}" GroupName="Conflict"
-                                 Content="Ask me"
+                                 Content="Hold it and show it under Needs attention"
                                  IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Ask}" />
                     <RadioButton Margin="{StaticResource RowMargin}" GroupName="Conflict"
                                  Content="Leave the copy on the server alone"
@@ -115,7 +121,7 @@
                                  Content="Replace the copy on the server"
                                  IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Overwrite}" />
                     <TextBlock Style="{StaticResource Hint}"
-                               Text="This only applies to a file nobody can account for. Editing a file that PanoramaBridge uploaded itself is treated as a new version and re-sent without asking." />
+                               Text="Changing this decides the files already being held, not just the next one: they are acted on at the following folder check, so press Check now to apply it straight away. It only applies to a file nobody can account for — editing a file that PanoramaBridge uploaded itself is treated as a new version and re-sent without asking. A file held because it is damaged stays held whichever option you choose." />
                 </StackPanel>
             </GroupBox>
 

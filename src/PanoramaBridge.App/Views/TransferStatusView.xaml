@@ -18,9 +18,18 @@
 
         <Border DockPanel.Dock="Top" Margin="0,0,0,8" Padding="10,6" Background="#FFF4E5"
                 Visibility="{Binding HasAttentionItems, Converter={StaticResource BooleanToVisibility}}">
+            <!--
+                This says what to do, not just that something is wrong. It used to end at "see the
+                reason on each row", which tells someone where to look and not what to do about it
+                - and the state on those rows read "Needs a decision", naming per-file buttons
+                that were removed in v26.5.0. Between them the window asked for an action it no
+                longer offered anywhere.
+            -->
             <TextBlock TextWrapping="Wrap" Foreground="#663C00">
                 <Run Text="{Binding AttentionCount, Mode=OneWay}" />
-                <Run Text="transfer(s) need attention. Nothing is retried silently - see the reason on each row." />
+                <Run Text="transfer(s) are held, and nothing is retried or sent silently. Each row gives its reason under Detail." />
+                <LineBreak />
+                <Run Text="Most are held because something different is already on the server. To decide what happens to them, go to the Local Monitoring tab, choose an option under &quot;When a different file is already on the server&quot;, save, and press Check now. That choice applies to every held file at once. To handle one file on its own, rename or move it instead." />
             </TextBlock>
         </Border>
 

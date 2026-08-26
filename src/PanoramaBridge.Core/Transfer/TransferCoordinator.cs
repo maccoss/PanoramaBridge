@@ -174,27 +174,42 @@ public sealed class TransferCoordinator : IAsyncDisposable
             return 0;
         }
 
-        // Asked once, not per row. This runs at startup, which on a monitored network share is
-        // routinely before the share is mounted — and an unreachable path answers exactly as a
-        // deleted one does. Writing every interrupted row off then would claim data no longer
-        // exists while it sits untouched on the share, and probing a dead host once per row would
-        // stack SMB timeouts before the window is usable. Not being able to look is not evidence
-        // that nothing is there, which is the same rule the remote side follows.
-        if (!Path.Exists(_options.LocalBaseDirectory))
-        {
-            _log.LogInformation(
-                "The monitored folder {Root} cannot be seen, so {Count} interrupted "
-                + "transfer(s) are left as they are until it is reachable again.",
-                _options.LocalBaseDirectory,
-                interrupted.Count);
-
-            return 0;
-        }
-
+        // Asked per folder, and remembered. This runs at startup, which on a monitored network
+        // share is routinely before the share is mounted — and an unreachable path answers
+        // exactly as a deleted one does. Writing a row off then claims data no longer exists
+        // while it sits untouched on the share.
+        //
+        // Per folder rather than once for the monitored root, because the ledger outlives the
+        // setting: rows recorded while a different folder was watched are still returned here,
+        // and a check of today's root says nothing about whether yesterday's is reachable. Per
+        // folder rather than per row, because probing a dead host once per row stacks SMB
+        // timeouts before the window is usable.
+        //
+        // Not being able to look is not evidence that nothing is there, which is the rule the
+        // remote side already follows.
+        var reachable = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         var requeued = 0;
+        var unreachable = 0;
 
         foreach (var record in interrupted)
         {
+            var folder = Path.GetDirectoryName(record.LocalPath);
+
+            if (!string.IsNullOrEmpty(folder))
+            {
+                if (!reachable.TryGetValue(folder, out var canSee))
+                {
+                    canSee = Path.Exists(folder);
+                    reachable[folder] = canSee;
+                }
+
+                if (!canSee)
+                {
+                    unreachable++;
+                    continue;
+                }
+            }
+
             if (Directory.Exists(record.LocalPath))
             {
                 // A folder acquisition from a version that sent folders as one archive. That has
@@ -230,6 +245,14 @@ public sealed class TransferCoordinator : IAsyncDisposable
             {
                 requeued++;
             }
+        }
+
+        if (unreachable > 0)
+        {
+            _log.LogInformation(
+                "{Count} interrupted transfer(s) are in folders that cannot be seen, so they "
+                + "are left as they are until those folders are reachable again.",
+                unreachable);
         }
 
         if (requeued > 0)
@@ -364,6 +387,21 @@ public sealed class TransferCoordinator : IAsyncDisposable
         var record = await _store.GetAsync(localPath, cancellationToken).ConfigureAwait(false)
             ?? UploadRecord.ForNewFile(stamp, encoded);
 
+        // The same gate the sweep applies, applied again here because this is where every
+        // route arrives. A file reaches this method from the folder watcher and from pbctl sync
+        // as well, and neither consults the sweep — so a guard that lived only there could be
+        // walked straight past, and the ladder would then re-save the row as an ordinary
+        // occupied-destination conflict, losing the very marker that was protecting it.
+        //
+        // Before the ladder, so a held file costs no listing and no hashing while it waits.
+        if (stamp.Matches(record.Length, record.LastWriteUnixMs)
+            && record.IsHeldRegardlessOf(_options.ConflictPolicy))
+        {
+            Report(localPath, encoded, TransferState.Conflict, "Held",
+                0, stamp.Length, message: record.LastError);
+            return;
+        }
+
         // What the file says about itself, which is a different question from what the file
         // system says about it. The readiness gate has already established that nothing holds it
         // and its size has stopped changing, and neither of those can tell a finished
@@ -430,6 +468,14 @@ public sealed class TransferCoordinator : IAsyncDisposable
                         {
                             State = TransferState.Conflict,
                             LastError = decision.Reason,
+                            // Plainly reassigned, and deliberately so. The gate above already
+                            // turns back every held row whose file is unchanged, so the only way
+                            // to arrive here carrying a withdrawn decision is with a file that
+                            // has since changed — which is a new question about new bytes, and
+                            // an ordinary conflict is the honest answer to it. Preserving the old
+                            // marker here was tried and it held a file the person had just
+                            // replaced, which is the opposite of the escape hatch every one of
+                            // these holds is documented to have.
                             ConflictKind = ConflictKind.DestinationOccupied,
                             Md5 = decision.Hashes?.Md5 ?? record.Md5,
                             Sha256 = decision.Hashes?.Sha256 ?? record.Sha256,
@@ -437,7 +483,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                Report(localPath, encoded, TransferState.Conflict, "Needs a decision",
+                Report(localPath, encoded, TransferState.Conflict, "Held",
                     0, stamp.Length, message: decision.Reason);
                 return;
 
@@ -560,7 +606,14 @@ public sealed class TransferCoordinator : IAsyncDisposable
             .SaveCachedHashesAsync(stamp, result.Hashes, cancellationToken)
             .ConfigureAwait(false);
 
-        var uploaded = record.WithHashes(result.Hashes) with { State = TransferState.Uploaded };
+        // The marker is cleared because the question it recorded has just been answered. Left
+        // set, it would hold the row on every later sweep — and with verification turned off a
+        // sent row never satisfies IsSettled, so nothing else would ever release it.
+        var uploaded = record.WithHashes(result.Hashes) with
+        {
+            State = TransferState.Uploaded,
+            ConflictKind = ConflictKind.Unknown,
+        };
         await _store.SaveAsync(uploaded, cancellationToken).ConfigureAwait(false);
 
         // Something that grew while it was being sent means the remote copy is already stale.

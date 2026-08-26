@@ -1,4 +1,5 @@
 using PanoramaBridge.Core.Hashing;
+using PanoramaBridge.Core.Transfer;
 
 namespace PanoramaBridge.Core.Storage;
 
@@ -209,6 +210,47 @@ public sealed record UploadRecord(
     public bool IsSettledAt(LocalFileStamp stamp, string encodedDestination) =>
         IsSettled(stamp)
         && string.Equals(RemotePath, encodedDestination, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Whether this row is held for a reason the conflict policy is not an answer to.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One predicate, two callers — the sweep, which uses it to avoid queueing the file at all,
+    /// and the coordinator, which uses it as the actual gate. It lives here because putting it
+    /// only in the sweep is what made it bypassable: a file reaches the coordinator from the
+    /// folder watcher and from <c>pbctl sync</c> as well, and neither goes past the sweep.
+    /// Duplicating this decision rather than sharing it is the mistake that cost the most in this
+    /// area already.
+    /// </para>
+    /// <para>
+    /// Deliberately independent of <see cref="State"/>. Tying it to <see cref="TransferState.Conflict"/>
+    /// left a two-step way round: retire the row under Skip, which saves it
+    /// <see cref="TransferState.Skipped"/> with the kind intact, then change to Overwrite — and
+    /// a check that only looked at Conflict rows no longer applied. The reason a row is held
+    /// outlives the state it was recorded in.
+    /// </para>
+    /// <para>
+    /// Callers must test the stamp first. A file that changed is a new question, and both of
+    /// these holds are meant to be reopened by fixing or replacing the file.
+    /// </para>
+    /// </remarks>
+    public bool IsHeldRegardlessOf(ConflictPolicy policy) =>
+        ConflictKind switch
+        {
+            // The policy answers "something else is at the destination". It is not an answer to
+            // "this file is broken": Skip would bury a damaged acquisition, and Overwrite would
+            // push it over a good remote copy.
+            ConflictKind.LocalFileDamaged => true,
+
+            // A decision recorded by a withdrawn feature. The row no longer describes where the
+            // file's copy actually is, so Overwrite would send it to its original name and
+            // replace the very copy that decision existed to preserve. Skip retires it safely,
+            // because it sends nothing.
+            ConflictKind.WithdrawnDecision => policy != ConflictPolicy.Skip,
+
+            _ => false,
+        };
 
     /// <summary>A new row for a file that has just been discovered.</summary>
     public static UploadRecord ForNewFile(LocalFileStamp stamp, string remotePath) =>
