@@ -55,7 +55,8 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         TransferState state = TransferState.Verified,
         VerifyMethod verified = VerifyMethod.ServerMd5,
         int attempts = 1,
-        RemotePath? destination = null)
+        RemotePath? destination = null,
+        ConflictKind kind = ConflictKind.Unknown)
     {
         var stamp = LocalFileStamp.FromFile(path);
         var remote = PathSafety
@@ -73,7 +74,8 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
             VerifyMethod: verified,
             VerifiedUtc: DateTimeOffset.UtcNow,
             Attempts: attempts,
-            LastError: state == TransferState.Failed ? "The server refused it." : null));
+            LastError: state == TransferState.Failed ? "The server refused it." : null,
+            ConflictKind: kind));
     }
 
     private static async Task<(SweepResult Result, List<string> Offered)> SweepAsync(
@@ -226,6 +228,86 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         var (_, offered) = await SweepAsync(NewScanner(conflictPolicy: ConflictPolicy.Skip));
 
         offered.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(ConflictPolicy.Skip, true)]
+    [InlineData(ConflictPolicy.Overwrite, true)]
+    [InlineData(ConflictPolicy.Ask, false)]
+    public async Task Whether_a_damaged_file_is_offered_follows_the_policy_like_any_held_file(
+        ConflictPolicy policy, bool expectOffered)
+    {
+        // There is no arm here for damage. Holding one in the sweep as well kept it off the queue,
+        // so nothing reported it, and the Transfers tab and the attention count are built from
+        // reports alone -- the coordinator turns it back before the ladder, so offering it costs a
+        // queue trip and not one request, and that report is what keeps it visible.
+        //
+        // Ask is included because it is the default and it behaves differently: a held file is not
+        // offered while the answer is still "ask me", which is true of every held file and not
+        // special to damage. The first version of this test pinned only Skip and Overwrite, so it
+        // passed while claiming something about the case it never ran.
+        var path = Write("short.raw");
+        await RecordAsync(path, TransferState.Conflict, VerifyMethod.None,
+            kind: ConflictKind.LocalFileDamaged);
+
+        var (_, offered) = await SweepAsync(NewScanner(conflictPolicy: policy));
+
+        if (expectOffered)
+        {
+            offered.ShouldBe([path]);
+        }
+        else
+        {
+            offered.ShouldBeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task A_name_the_server_would_mangle_is_offered_once_and_not_for_ever()
+    {
+        // These fail before an upload begins, and attempts is only counted when one starts, so
+        // the Failed arm never retires them: the file was offered on every sweep for ever, failing
+        // identically each time and adding to the failure count each time.
+        var path = Write("run;rep1.raw");
+
+        var first = await SweepAsync(NewScanner());
+        first.Offered.ShouldBe([path], "offered once, so the failure is recorded against it");
+
+        // Written directly: RecordAsync resolves a destination, which is the very thing this
+        // name cannot have.
+        var stamp = LocalFileStamp.FromFile(path);
+        await _store.SaveAsync(new UploadRecord(
+            LocalPath: stamp.Path,
+            RemotePath: string.Empty,
+            Length: stamp.Length,
+            LastWriteUnixMs: stamp.LastWriteUnixMs,
+            Md5: null,
+            Sha256: null,
+            State: TransferState.Failed,
+            VerifyMethod: VerifyMethod.None,
+            VerifiedUtc: null,
+            Attempts: 0,
+            LastError: "contains a semicolon"));
+
+        var second = await SweepAsync(NewScanner());
+        second.Offered.ShouldBeEmpty("and not again while the file and the setting are unchanged");
+    }
+
+    [Fact]
+    public async Task A_damaged_file_is_offered_again_once_it_changes()
+    {
+        // The way out is fixing the file, not the policy. Re-copying the acquisition changes the
+        // stamp, and the stamp check releases the row before the state is even considered.
+        var path = Write("short.raw");
+        await RecordAsync(path, TransferState.Conflict, VerifyMethod.None,
+            kind: ConflictKind.LocalFileDamaged);
+
+        await File.AppendAllTextAsync(path, "the rest of the acquisition");
+
+        var (_, offered) = await SweepAsync(
+            NewScanner(conflictPolicy: ConflictPolicy.Overwrite));
+
+        offered.ShouldBe([path]);
     }
 
     [Fact]

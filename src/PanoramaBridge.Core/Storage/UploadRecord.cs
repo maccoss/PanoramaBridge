@@ -102,6 +102,41 @@ public readonly record struct LocalFileStamp(string Path, long Length, long Last
         Length == length && LastWriteUnixMs == lastWriteUnixMs;
 }
 
+/// <summary>Why a row is held at <see cref="TransferState.Conflict"/>.</summary>
+/// <remarks>
+/// <para>
+/// Restored after being withdrawn with the per-file decision feature, because one part of it was
+/// never about that feature: the sweep releases held files when the conflict policy is an answer,
+/// and two kinds of held row must not be released that way. The numeric values match what
+/// v26.4.1—v26.4.6 wrote into the <c>conflict_kind</c> column, so rows from those builds are
+/// read correctly without a migration.
+/// </para>
+/// <para>
+/// The lesson this enum keeps encoding: telling these apart by comparing message strings was
+/// tried, and broke the moment a message was reworded. The reason a row is held has to be stored,
+/// not inferred.
+/// </para>
+/// </remarks>
+public enum ConflictKind
+{
+    /// <summary>Not recorded — a row written before v26.4.1, or by v26.5.0.</summary>
+    Unknown = 0,
+
+    /// <summary>Something different occupies the destination.</summary>
+    DestinationOccupied = 1,
+
+    /// <summary>
+    /// The local file is damaged: reading it proved it ends before its data does.
+    /// </summary>
+    /// <remarks>
+    /// The conflict policy is not an answer to this. Skip would bury a broken acquisition, and
+    /// Overwrite would push it over a good remote copy — the outcome the truncation check
+    /// exists to prevent. The row is held until the local file changes, whatever the policy.
+    /// </remarks>
+    LocalFileDamaged = 2,
+
+}
+
 /// <summary>
 /// One row of the upload ledger: what is known about a local file and its remote copy.
 /// </summary>
@@ -128,7 +163,8 @@ public sealed record UploadRecord(
     DateTimeOffset? VerifiedUtc,
     int Attempts,
     string? LastError,
-    string? RawCheck = null)
+    string? RawCheck = null,
+    ConflictKind ConflictKind = ConflictKind.Unknown)
 {
     /// <summary>
     /// True when this file is known to be safely on the server, unchanged since.
@@ -162,6 +198,38 @@ public sealed record UploadRecord(
     public bool IsSettledAt(LocalFileStamp stamp, string encodedDestination) =>
         IsSettled(stamp)
         && string.Equals(RemotePath, encodedDestination, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Whether this row is held for a reason the conflict policy is not an answer to.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One caller: <c>TransferCoordinator.ProcessAsync</c>, which is where every route arrives —
+    /// a file reaches it from the sweep, from the folder watcher and from <c>pbctl sync</c>, and
+    /// the last two never consult the sweep. The sweep deliberately does <em>not</em> ask this,
+    /// because a row it accounts for is never queued, and a row that is never queued is never
+    /// reported, and the Transfers tab and the attention count are built from reports alone.
+    /// </para>
+    /// <para>
+    /// Deliberately independent of <see cref="State"/>: the reason a row is held outlives the
+    /// state it was recorded in, and a check written as an arm of a state switch stops applying
+    /// the moment something moves the row.
+    /// </para>
+    /// <para>
+    /// Callers must test the stamp first. A file that changed is a new question, and this hold is
+    /// meant to be reopened by fixing or replacing the file.
+    /// </para>
+    /// </remarks>
+    public bool IsHeldRegardlessOfPolicy =>
+        ConflictKind switch
+        {
+            // The policy answers "something else is at the destination". It is not an answer to
+            // "this file is broken": Skip would bury a damaged acquisition, and Overwrite would
+            // push it over a good remote copy.
+            ConflictKind.LocalFileDamaged => true,
+
+            _ => false,
+        };
 
     /// <summary>A new row for a file that has just been discovered.</summary>
     public static UploadRecord ForNewFile(LocalFileStamp stamp, string remotePath) =>

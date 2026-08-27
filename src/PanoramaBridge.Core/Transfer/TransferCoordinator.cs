@@ -168,13 +168,72 @@ public sealed class TransferCoordinator : IAsyncDisposable
         EnsureWorkersStarted(cancellationToken);
 
         var interrupted = await _store.GetInterruptedAsync(cancellationToken).ConfigureAwait(false);
+
+        if (interrupted.Count == 0)
+        {
+            return 0;
+        }
+
+        // Asked per folder, and remembered. This runs at startup, which on a monitored network
+        // share is routinely before the share is mounted — and an unreachable path answers
+        // exactly as a deleted one does. Writing a row off then claims data no longer exists
+        // while it sits untouched on the share.
+        //
+        // Keyed on the drive or UNC share, which is the thing that is reachable or not. Not the
+        // monitored folder, because the ledger outlives that setting and a check of today's root
+        // says nothing about whether yesterday's is reachable. Not each file's own folder either:
+        // that read as "cannot look" for a folder somebody had simply deleted, so those rows were
+        // never written off and came back as interrupted work on every start, for ever. It also
+        // meant a ledger spread over two hundred acquisition folders paid two hundred SMB connect
+        // timeouts against a dead host before the window was usable.
+        //
+        // A reachable root with a missing folder is a real deletion, and falls through to be
+        // recorded as one.
+        //
+        // Not being able to look is not evidence that nothing is there, which is the rule the
+        // remote side already follows.
+        var reachable = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         var requeued = 0;
+        var unreachable = 0;
 
         foreach (var record in interrupted)
         {
-            if (!File.Exists(record.LocalPath))
+            var root = Path.GetPathRoot(record.LocalPath);
+
+            if (!string.IsNullOrEmpty(root))
             {
-                // The source is gone, so there is nothing left to do about it either way.
+                if (!reachable.TryGetValue(root, out var canSee))
+                {
+                    canSee = Path.Exists(root);
+                    reachable[root] = canSee;
+                }
+
+                if (!canSee)
+                {
+                    // Said on the row, not only in the log. Left as it was, the row goes on
+                    // reading as an upload in progress — it appears under neither Verified nor
+                    // Needs attention, and the only trace was a log line nobody opens. The state
+                    // is deliberately unchanged, so it resumes untouched when the drive returns.
+                    await SafeSetErrorAsync(
+                        record,
+                        $"Waiting: the drive or share this file is on ({root}) cannot be seen "
+                        + "at the moment, so this was left exactly as it was. The file has not "
+                        + "been touched. It carries on by itself once that is reachable again.")
+                        .ConfigureAwait(false);
+
+                    unreachable++;
+                    continue;
+                }
+            }
+
+            // Path.Exists rather than File.Exists: a folder recorded by a version that sent them
+            // as one archive still exists, and answering "the local file no longer exists" about
+            // it would be untrue. It is queued like anything else and the worker says why it
+            // cannot be sent, so that wording lives in one place.
+            if (!Path.Exists(record.LocalPath))
+            {
+                // The drive is reachable and the file is not on it: genuinely gone, so there is
+                // nothing left to do about it either way.
                 await _store
                     .SetStateAsync(
                         record.LocalPath,
@@ -189,6 +248,14 @@ public sealed class TransferCoordinator : IAsyncDisposable
             {
                 requeued++;
             }
+        }
+
+        if (unreachable > 0)
+        {
+            _log.LogInformation(
+                "{Count} interrupted transfer(s) are on drives or shares that cannot be "
+                + "seen, so they are left as they are until those are reachable again.",
+                unreachable);
         }
 
         if (requeued > 0)
@@ -281,11 +348,43 @@ public sealed class TransferCoordinator : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// What a row held because the file itself is damaged reports as.
+    /// </summary>
+    /// <remarks>
+    /// One constant because it was two strings: the pass that first proves a file truncated said
+    /// "Incomplete file" and every pass after it said "Held - damaged", so one condition had two
+    /// names and the guidance in the window only ever explained the second.
+    /// </remarks>
+    private const string HeldDamagedPhase = "Held - damaged";
+
     private async Task ProcessAsync(string localPath, CancellationToken cancellationToken)
     {
         if (Directory.Exists(localPath))
         {
+            // Recorded once rather than dropped with a debug line. Sending a folder as a single
+            // archive was withdrawn, so this cannot be resumed by any route — and returning
+            // quietly left any ledger row for it sitting wherever it was, re-offered and dropped
+            // again on every pass. Recovery had its own copy of this rule; now the rule is here,
+            // where every route arrives, and recovery relies on it.
             _log.LogDebug("{Path} is a directory and is not a transferable file.", localPath);
+
+            const string Reason =
+                "Sending a folder as a single archive has been removed, so this folder cannot "
+                + "be uploaded. The folder itself is untouched. Its files can be sent on their "
+                + "own if their types are listed under the folder being monitored.";
+
+            // Counted and reported, like every other terminal outcome. Writing only the ledger
+            // row had pbctl print "failed 0" and left the Transfers tab and the attention count
+            // — both built from reports — with no sign of it at all.
+            Interlocked.Increment(ref _failed);
+
+            await SafeSetStateAsync(localPath, TransferState.Failed, Reason)
+                .ConfigureAwait(false);
+
+            Report(localPath, string.Empty, TransferState.Failed,
+                "Cannot be sent", 0, 0, message: Reason);
+
             return;
         }
 
@@ -297,11 +396,83 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         var stamp = LocalFileStamp.FromFile(localPath);
 
-        var destination = _destinations.For(localPath);
+        RemotePath destination;
+
+        try
+        {
+            destination = _destinations.For(localPath);
+        }
+        catch (PathNotPlaceableException ex)
+        {
+            // The message comes from the rejection, not from this handler. The first version of
+            // this caught every ArgumentException the resolver raises and wrote one sentence for
+            // all of them, so a file named with a semicolon — whose own message says the server
+            // truncates at it, names what the file would become, and tells you to rename it —
+            // was reported as being outside the monitored folder instead. That was false, and it
+            // threw away the only instruction that would have fixed it.
+            //
+            // UserMessage rather than Message: the latter ends in "(Parameter 'localFilePath')",
+            // and this text goes straight onto the Transfers tab for somebody to act on.
+            Interlocked.Increment(ref _failed);
+
+            _log.LogWarning(
+                "{Path} cannot be placed on the server ({Reason}).",
+                localPath,
+                ex.Reason);
+
+            var reason = ex.Reason == PathRejectionReason.OutsideMonitoredFolder
+                ? ex.UserMessage
+                    + " It was recorded when a different folder was being monitored. Point the "
+                    + "monitored folder back at it, or leave it - it will not be tried again "
+                    + "while the setting is as it is."
+                : ex.UserMessage;
+
+            await SafeSetStateAsync(localPath, TransferState.Failed, reason)
+                .ConfigureAwait(false);
+
+            // No remote path to report: working one out is exactly what just failed.
+            Report(localPath, string.Empty, TransferState.Failed,
+                "Cannot be placed", 0, stamp.Length, message: reason);
+            return;
+        }
 
         var encoded = destination.ToEncodedString();
 
-        // Decide BEFORE touching the row. Writing a Queued state first would erase the
+        var record = await _store.GetAsync(localPath, cancellationToken).ConfigureAwait(false)
+            ?? UploadRecord.ForNewFile(stamp, encoded);
+
+        // The same gate the sweep applies, applied again here because this is where every route
+        // arrives. A file reaches this method from the folder watcher and from pbctl sync as
+        // well, and neither consults the sweep — so a guard that lived only there could be
+        // walked straight past, and the ladder would then re-save the row as an ordinary
+        // occupied-destination conflict, losing the very marker that was protecting it.
+        //
+        // Genuinely before the ladder. It sat after it for one commit while the comment claimed
+        // otherwise, which cost every held file a listing, and often a full read of a multi-
+        // gigabyte acquisition, on every folder check and every touch of the file — to reach a
+        // decision that was then thrown away. Reading the row here is safe where writing one is
+        // not: it is the write below that would erase the verified standing the ladder reads.
+        if (stamp.Matches(record.Length, record.LastWriteUnixMs)
+            && record.IsHeldRegardlessOfPolicy)
+        {
+            // Counted, like every other conflict. Left out, a pbctl sync over a folder of held
+            // files reported nothing found and nothing done, which reads as "there was nothing
+            // to do".
+            Interlocked.Increment(ref _conflicts);
+
+            // Named apart from an ordinary hold because the two have different answers: the
+            // conflict setting resolves one and cannot touch the other. Reporting both as "Held"
+            // had the window's own guidance send people to a setting that would not move the file.
+            var phase = record.ConflictKind == ConflictKind.LocalFileDamaged
+                ? HeldDamagedPhase
+                : "Held";
+
+            Report(localPath, encoded, TransferState.Conflict, phase,
+                0, stamp.Length, message: record.LastError);
+            return;
+        }
+
+        // Decide before *writing* to the row. Writing a Queued state first would erase the
         // verified standing that the ledger tier reads, so every file would fall through to
         // the network and the fast path would never fire.
         var decision = await _decisions
@@ -320,8 +491,6 @@ public sealed class TransferCoordinator : IAsyncDisposable
                     message: Explain(step)))
             .ConfigureAwait(false);
 
-        var record = await _store.GetAsync(localPath, cancellationToken).ConfigureAwait(false)
-            ?? UploadRecord.ForNewFile(stamp, encoded);
 
         // What the file says about itself, which is a different question from what the file
         // system says about it. The readiness gate has already established that nothing holds it
@@ -338,6 +507,19 @@ public sealed class TransferCoordinator : IAsyncDisposable
             Length = stamp.Length,
             LastWriteUnixMs = stamp.LastWriteUnixMs,
             RawCheck = rawCheck?.Summary ?? record.RawCheck,
+
+            // Dropped here and re-established below if it still applies, rather than carried
+            // and cleared under some condition. Reaching this line at all means the gate above
+            // let the file through, which for a held row means its bytes have changed — and a
+            // verdict about the bytes that were there before says nothing about the ones that are
+            // there now.
+            //
+            // Deciding when to clear it instead was got wrong twice in opposite directions: first
+            // only on a successful upload, which stranded a repaired file whose next attempt
+            // failed for an unrelated reason, held under every policy with nothing able to offer
+            // it again; then on any check that did not prove truncation, which also covers a
+            // check that could not read the file at all. Re-deriving has neither failure.
+            ConflictKind = ConflictKind.Unknown,
         };
 
         if (rawCheck is { IsProvenTruncated: true })
@@ -350,6 +532,11 @@ public sealed class TransferCoordinator : IAsyncDisposable
                     {
                         State = TransferState.Conflict,
                         LastError = rawCheck.Summary,
+
+                        // Recorded so the sweep knows the conflict policy is not an answer to
+                        // this row. Skip would bury a broken acquisition and Overwrite would push
+                        // it over a good remote copy, so it stays held until the file changes.
+                        ConflictKind = ConflictKind.LocalFileDamaged,
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -360,7 +547,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 rawCheck.Summary,
                 string.Join("; ", rawCheck.Evidence));
 
-            Report(localPath, encoded, TransferState.Conflict, "Incomplete file",
+            Report(localPath, encoded, TransferState.Conflict, HeldDamagedPhase,
                 0, stamp.Length, message: rawCheck.Summary);
             return;
         }
@@ -384,13 +571,22 @@ public sealed class TransferCoordinator : IAsyncDisposable
                         {
                             State = TransferState.Conflict,
                             LastError = decision.Reason,
+                            // Plainly reassigned, and deliberately so. The gate above already
+                            // turns back every held row whose file is unchanged, so the only way
+                            // to arrive here carrying a withdrawn decision is with a file that
+                            // has since changed — which is a new question about new bytes, and
+                            // an ordinary conflict is the honest answer to it. Preserving the old
+                            // marker here was tried and it held a file the person had just
+                            // replaced, which is the opposite of the escape hatch every one of
+                            // these holds is documented to have.
+                            ConflictKind = ConflictKind.DestinationOccupied,
                             Md5 = decision.Hashes?.Md5 ?? record.Md5,
                             Sha256 = decision.Hashes?.Sha256 ?? record.Sha256,
                         },
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                Report(localPath, encoded, TransferState.Conflict, "Needs a decision",
+                Report(localPath, encoded, TransferState.Conflict, "Held",
                     0, stamp.Length, message: decision.Reason);
                 return;
 
@@ -513,7 +709,14 @@ public sealed class TransferCoordinator : IAsyncDisposable
             .SaveCachedHashesAsync(stamp, result.Hashes, cancellationToken)
             .ConfigureAwait(false);
 
-        var uploaded = record.WithHashes(result.Hashes) with { State = TransferState.Uploaded };
+        // The marker is cleared because the question it recorded has just been answered. Left
+        // set, it would hold the row on every later sweep — and with verification turned off a
+        // sent row never satisfies IsSettled, so nothing else would ever release it.
+        var uploaded = record.WithHashes(result.Hashes) with
+        {
+            State = TransferState.Uploaded,
+            ConflictKind = ConflictKind.Unknown,
+        };
         await _store.SaveAsync(uploaded, cancellationToken).ConfigureAwait(false);
 
         // Something that grew while it was being sent means the remote copy is already stale.
@@ -723,6 +926,41 @@ public sealed class TransferCoordinator : IAsyncDisposable
         catch (UnauthorizedAccessException)
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Records why a file is waiting, without disturbing where it had got to.
+    /// </summary>
+    /// <remarks>
+    /// For a row that is not failing and is not progressing either — its drive is not there. The
+    /// state has to survive so it resumes untouched when the drive returns, but a row saying only
+    /// "Uploading" is a row claiming an upload is under way, and it shows under neither Verified
+    /// nor Needs attention. The reason belongs where somebody can read it.
+    /// </remarks>
+    private async Task SafeSetErrorAsync(UploadRecord record, string error)
+    {
+        // Takes the row rather than the path: the only caller is holding it already, and reading
+        // it back would be a query per waiting row at every start, on the path whose whole point
+        // is that an absent drive must not make startup expensive.
+        if (string.Equals(record.LastError, error, StringComparison.Ordinal))
+        {
+            // Already says exactly this. Rewriting an unchanged row every launch buys nothing.
+            return;
+        }
+
+        try
+        {
+            // One column, not the whole record. Saving the record would re-stamp state and
+            // attempts from a snapshot taken before the workers started, so a worker's write
+            // could be undone by this one.
+            await _store
+                .SetErrorAsync(record.LocalPath, error, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not record why {Path} is waiting.", record.LocalPath);
         }
     }
 

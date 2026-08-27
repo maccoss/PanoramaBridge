@@ -165,7 +165,7 @@ public sealed partial class TransferRowViewModel : ObservableObject
         TransferState.Uploaded => "Verifying",
         TransferState.Verified => "Verified",
         TransferState.Skipped => "Already there",
-        TransferState.Conflict => "Needs a decision",
+        TransferState.Conflict => "Held",
         TransferState.LockedRetrying => "File in use",
         TransferState.Superseded => "Changed",
         TransferState.Failed => "Failed",

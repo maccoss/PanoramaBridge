@@ -24,18 +24,25 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
 {
     private const int CurrentSchemaVersion = 5;
 
+    /// <summary>
+    /// The state value v26.3.0—v26.4.6 wrote for "a person chose to keep the copy on the
+    /// server", which no longer exists.
+    /// </summary>
+    /// <remarks>
+    /// Named, and asserted against the live enum below, because the statement that converts these
+    /// rows runs on every open and is not guarded by the schema version — it cannot be, since a
+    /// rolled-back build can write one of these rows after the version is already current. A bare
+    /// 10 in a SQL string is invisible to the compiler, so the next state anybody adds takes the
+    /// value and every row in it is silently rewritten, on every launch, for ever.
+    /// <c>The_withdrawn_state_value_is_still_free</c> fails the moment somebody takes it — in CI,
+    /// where it can be fixed. A static constructor was tried first and is exactly the wrong place:
+    /// it turns the mistake into an application that will not launch, with the reason buried in a
+    /// TypeInitializationException, on an instrument.
+    /// </remarks>
+    private const int WithdrawnKeptOnServerState = 10;
+
     private readonly string _connectionString;
-
-    /// <summary>
-    /// Serializes writes. SQLite handles concurrent access itself, but funnelling writes avoids
-    /// spending the workers' time in lock retries under WAL.
-    /// </summary>
     private readonly SemaphoreSlim _writeLock = new(1, 1);
-
-    /// <summary>
-    /// Held open for the lifetime of the store so an in-memory database is not discarded
-    /// between operations, and so the file is opened once rather than per call.
-    /// </summary>
     private readonly SqliteConnection _keepAlive;
 
     public SqliteStateStore(string databasePath)
@@ -83,23 +90,25 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     {
         ArgumentNullException.ThrowIfNull(record);
 
-        // resolution/rename_to/conflict_kind are cleared on every save so a row this build
-        // fully rewrites cannot still carry a stale value a rolled-back build would act on.
+        // resolution/rename_to are cleared on every save so a row this build fully rewrites
+        // cannot still carry a stale value a rolled-back build would act on. conflict_kind is
+        // live again: it records why a row is held, which the sweep needs to know before
+        // releasing it under a policy.
         await ExecuteWriteAsync(
             """
             INSERT INTO uploads
               (local_path, remote_path, size, mtime_utc, md5, sha256,
                state, verify_method, verified_utc, attempts, last_error, is_dataset,
-               raw_check)
+               raw_check, conflict_kind)
             VALUES
               ($path, $remote, $size, $mtime, $md5, $sha256,
-               $state, $verify, $verified, $attempts, $error, 0, $rawcheck)
+               $state, $verify, $verified, $attempts, $error, 0, $rawcheck, $kind)
             ON CONFLICT(local_path) DO UPDATE SET
               local_path = $path, remote_path = $remote, size = $size, mtime_utc = $mtime,
               md5 = $md5, sha256 = $sha256, state = $state, verify_method = $verify,
               verified_utc = $verified, attempts = $attempts, last_error = $error,
-              is_dataset = 0, raw_check = $rawcheck,
-              resolution = 0, rename_to = NULL, conflict_kind = 0;
+              is_dataset = 0, raw_check = $rawcheck, conflict_kind = $kind,
+              resolution = 0, rename_to = NULL;
             """,
             command =>
             {
@@ -111,6 +120,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                 command.Parameters.AddWithValue("$sha256", record.Sha256 ?? (object)DBNull.Value);
                 command.Parameters.AddWithValue(
                     "$rawcheck", record.RawCheck ?? (object)DBNull.Value);
+                command.Parameters.AddWithValue("$kind", (int)record.ConflictKind);
                 command.Parameters.AddWithValue("$state", (int)record.State);
                 command.Parameters.AddWithValue("$verify", (int)record.VerifyMethod);
                 command.Parameters.AddWithValue(
@@ -266,6 +276,18 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     }
 
     /// <inheritdoc />
+    public Task SetErrorAsync(
+        string localPath, string? error, CancellationToken cancellationToken = default) =>
+        ExecuteWriteAsync(
+            "UPDATE uploads SET last_error = $error WHERE local_path = $path;",
+            command =>
+            {
+                command.Parameters.AddWithValue("$path", localPath);
+                command.Parameters.AddWithValue("$error", (object?)error ?? DBNull.Value);
+            },
+            cancellationToken);
+
+    /// <inheritdoc />
     public Task<IReadOnlyList<UploadRecord>> GetInterruptedAsync(
         CancellationToken cancellationToken = default) =>
         GetByStateAsync(
@@ -392,7 +414,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     private const string SelectColumns =
         """
          SELECT local_path, remote_path, size, mtime_utc, md5, sha256,
-             state, verify_method, verified_utc, attempts, last_error, raw_check
+             state, verify_method, verified_utc, attempts, last_error, raw_check,
+             conflict_kind
         """;
 
     private static UploadRecord Read(SqliteDataReader reader) => new(
@@ -409,7 +432,8 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             : DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(8)),
         Attempts: reader.GetInt32(9),
         LastError: reader.IsDBNull(10) ? null : reader.GetString(10),
-        RawCheck: reader.IsDBNull(11) ? null : reader.GetString(11));
+        RawCheck: reader.IsDBNull(11) ? null : reader.GetString(11),
+        ConflictKind: (ConflictKind)reader.GetInt32(12));
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {
@@ -521,6 +545,87 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             command.Parameters.AddWithValue("$v", CurrentSchemaVersion);
             command.ExecuteNonQuery();
         }
+
+        // After Migrate, which is where rename_to is added: the schema block above runs before
+        // it, and on a database written before schema 3 the column is not there yet, so creating
+        // an index on it would throw on open.
+        //
+        // Partial, so it holds only rows a withdrawn build left a rename on — none, on every
+        // ledger this was measured against. Both halves of the conversion's OR have to be indexed
+        // or SQLite cannot use the OR-by-union plan and reads the whole table instead, on every
+        // launch, to find nothing.
+        command.CommandText =
+            """
+            CREATE INDEX IF NOT EXISTS ix_uploads_renamed ON uploads(rename_to)
+                WHERE rename_to IS NOT NULL;
+            """;
+
+        command.ExecuteNonQuery();
+
+        // Every open, not a one-shot migration.
+        //
+        // This started life inside Migrate, guarded by the schema stamp — and the stamp cannot
+        // be trusted to mean the data is clean, because rollback is supported: roll back to
+        // v26.4.x, press Keep on a conflict (writing state 10) or send a file alongside (writing
+        // rename_to), and come forward again. The stamp already says 5, the guard skips, and the
+        // row is misread for ever — invisible to every filter, re-offered by every sweep.
+        //
+        // So it is idempotent instead of guarded. Converting sets the state and clears rename_to,
+        // so a converted row can never match again.
+        //
+        // Two statements, not one with an OR, because EXPLAIN QUERY PLAN over a real ledger says
+        // so: `state = ? OR rename_to IS NOT NULL` is "SCAN uploads" whether the indexes exist or
+        // not, while each half on its own uses one. This runs synchronously in the constructor at
+        // every start and an instrument ledger holds hundreds of thousands of rows, so the
+        // difference is a full read of the table per launch, to find nothing.
+        //
+        // The first version was one statement with an OR and a comment claiming it was answered
+        // from an index. It was not, and nothing had measured it.
+        //
+        // Deliberately stamps no conflict_kind. A value meaning "carried over from the withdrawn
+        // feature" was written here and then removed: v26.4.x reads this column and switches on
+        // it, so a value those builds do not define was swept up by their bulk actions — the
+        // conversion defeating the rollback it exists to survive. These become ordinary held
+        // conflicts, which the default of holding them already handles.
+        command.Parameters.Clear();
+        command.CommandText =
+            """
+            UPDATE uploads
+               SET state = $conflict,
+                   rename_to = NULL,
+
+                   -- Cleared with rename_to, never on its own. v26.4.x asks only whether
+                   -- resolution is set before acting, and clearing the target while leaving the
+                   -- intention gave a rolled-back build a pending rename with nowhere to go: it
+                   -- resolves to the file's original name and replaces the copy the rename
+                   -- existed to preserve. SaveAsync clears both together for this reason.
+                   resolution = 0,
+                   last_error = 'This file was sent under a different name by an earlier '
+                                || 'version. Sending files under a new name has been removed, '
+                                || 'so it is held for a decision.'
+             WHERE rename_to IS NOT NULL;
+            """;
+
+        command.Parameters.AddWithValue("$conflict", (int)TransferState.Conflict);
+        command.ExecuteNonQuery();
+        command.Parameters.Clear();
+
+        // The other half, which reads from a different index. Its message differs because the row
+        // means a different thing: a person pressed Keep, rather than a rename having been made.
+        command.CommandText =
+            """
+            UPDATE uploads
+               SET state = $conflict,
+                   resolution = 0,
+                   last_error = 'An earlier version recorded that you chose to keep the copy on '
+                                || 'the server. That choice is no longer stored, so it is held '
+                                || 'for a decision.'
+             WHERE state = $withdrawn;
+            """;
+
+        command.Parameters.AddWithValue("$conflict", (int)TransferState.Conflict);
+        command.Parameters.AddWithValue("$withdrawn", WithdrawnKeptOnServerState);
+        command.ExecuteNonQuery();
     }
 
     /// <summary>Brings an existing database up to the current shape.</summary>
@@ -562,44 +667,6 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             command.ExecuteNonQuery();
         }
 
-        if (from < 5)
-        {
-            // Two kinds of row were written by v26.3.0—v26.4.6 and cannot be read correctly any
-            // more, so they are brought somewhere honest rather than left to be misread.
-            //
-            // A row at state 10 meant "a person chose to keep the copy on the server". That state
-            // no longer exists, so nothing would list it — not even the All filter, which builds
-            // its WHERE from the enum's values — while the sweep, seeing a state it does not
-            // recognise, would offer the file again and undo the choice.
-            //
-            // A row with rename_to recorded a file sent under a different name. Nothing resolves
-            // destinations through that column now, so the sweep would work out the file's
-            // original name, find the row pointing elsewhere, and offer it again. Under Overwrite
-            // that overwrites the copy the rename existed to preserve.
-            //
-            // Both become held conflicts: visible, not sent, and answerable with the conflict
-            // setting. Held is the safe end of "this row means something this build cannot act
-            // on".
-            command.CommandText =
-                """
-                UPDATE uploads
-                   SET state = $conflict,
-                       last_error = CASE
-                           WHEN rename_to IS NOT NULL
-                               THEN 'This file was sent under a different name by an earlier '
-                                    || 'version. Sending files under a new name has been removed, '
-                                    || 'so it is held for a decision.'
-                           ELSE 'An earlier version recorded that you chose to keep the copy on '
-                                || 'the server. That choice is no longer stored, so it is held '
-                                || 'for a decision.'
-                       END
-                 WHERE state = 10 OR rename_to IS NOT NULL;
-                """;
-
-            command.Parameters.AddWithValue("$conflict", (int)TransferState.Conflict);
-            command.ExecuteNonQuery();
-            command.Parameters.Clear();
-        }
     }
 
     private static bool ColumnExists(SqliteCommand command, string table, string column)

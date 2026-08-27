@@ -148,4 +148,23 @@ public sealed class UploadsViewModelTests : IAsyncDisposable
     }
 
     public ValueTask DisposeAsync() => _store.DisposeAsync();
+    [Fact]
+    public void A_held_row_does_not_name_an_action_the_window_does_not_offer()
+    {
+        // This label read "Needs a decision" for the whole of v26.5.0, naming the per-file
+        // Replace / Send alongside / Keep buttons that were removed in that same release. It told
+        // people to do something the window no longer offered anywhere, and the only route out --
+        // the conflict setting on the Local Monitoring tab -- was named nowhere on screen.
+        //
+        // Nothing pinned it, which is why removing the buttons did not disturb it. This is that
+        // pin: the state says what is true of the row, and the banner carries the remedy.
+        var held = new UploadRowViewModel(
+            UploadRecord.ForNewFile(
+                new LocalFileStamp(@"C:\data\sample.raw", 10, 0), "/_webdav/uploads/run.raw")
+            with { State = TransferState.Conflict });
+
+        held.State.ShouldBe("Held");
+        held.State.ShouldNotContain("decision");
+    }
+
 }

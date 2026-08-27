@@ -18,9 +18,24 @@
 
         <Border DockPanel.Dock="Top" Margin="0,0,0,8" Padding="10,6" Background="#FFF4E5"
                 Visibility="{Binding HasAttentionItems, Converter={StaticResource BooleanToVisibility}}">
+            <!--
+                This says what to do, not just that something is wrong. It used to end at "see the
+                reason on each row", which tells someone where to look and not what to do about it
+                - and the state on those rows read "Needs a decision", naming per-file buttons
+                that were removed in v26.5.0. Between them the window asked for an action it no
+                longer offered anywhere.
+            -->
             <TextBlock TextWrapping="Wrap" Foreground="#663C00">
                 <Run Text="{Binding AttentionCount, Mode=OneWay}" />
-                <Run Text="transfer(s) need attention. Nothing is retried silently - see the reason on each row." />
+                <Run Text="transfer(s) need attention, and none of them is being retried silently. Each row says which it is, and why, under Detail." />
+                <LineBreak />
+                <Run Text="Held means something different is already on the server. Choose what should happen on the Local Monitoring tab, under &quot;When a different file is already on the server&quot;, and save. If monitoring is running, stop it and start it again - the setting is read when monitoring starts, so saving alone will not move files that are already held. It then applies to every file held for that reason. To settle one file on its own, rename or move it instead." />
+                <LineBreak />
+                <Run Text="Held - damaged means reading the file showed it ends before its data does. No setting sends that one; replace the file and it is picked up on its own." />
+                <LineBreak />
+                <Run Text="Cannot be placed means there is nowhere on the server the file belongs - usually it is not inside the folder being monitored, or its name is one Panorama would mangle. The row says what would change that, and it is not tried again until the file or the setting changes." />
+                <LineBreak />
+                <Run Text="Failed is an upload that started and did not finish. Those are tried again on their own until their attempts run out, and then they stop and wait for you." />
             </TextBlock>
         </Border>
 

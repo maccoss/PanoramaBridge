@@ -12,6 +12,9 @@ public enum PathRejectionReason
     /// <summary>A relative-path segment that would escape the destination.</summary>
     Traversal,
 
+    /// <summary>The file is not underneath the folder being monitored.</summary>
+    OutsideMonitoredFolder,
+
     /// <summary>
     /// Contains a semicolon, which the server silently truncates the name at.
     /// </summary>
@@ -22,6 +25,44 @@ public enum PathRejectionReason
 
     /// <summary>Longer than the server will accept.</summary>
     TooLong,
+}
+
+/// <summary>
+/// A file that cannot be given a place on the server, and why.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Derives from <see cref="ArgumentException"/> because that is what these throw sites raised
+/// before, and callers and tests catching that keep working.
+/// </para>
+/// <para>
+/// <see cref="UserMessage"/> exists because <see cref="ArgumentException.Message"/> appends
+/// <c>(Parameter 'localFilePath')</c>, and the coordinator puts the message it catches straight
+/// into the row a person then reads on the Transfers tab. A scientist looking at a stalled
+/// transfer was being shown a parameter name.
+/// </para>
+/// <para>
+/// <see cref="Reason"/> exists because the alternative is telling the rejections apart by their
+/// wording. A handler added for one of them caught all of them and replaced a message that says
+/// exactly what to do — rename the file, the server truncates at the semicolon — with one
+/// claiming the file was outside the monitored folder, which for that file was simply untrue.
+/// </para>
+/// </remarks>
+public sealed class PathNotPlaceableException : ArgumentException
+{
+    public PathNotPlaceableException(
+        PathRejectionReason reason, string userMessage, string paramName)
+        : base(userMessage, paramName)
+    {
+        Reason = reason;
+        UserMessage = userMessage;
+    }
+
+    /// <summary>Which rejection this is, without parsing the message.</summary>
+    public PathRejectionReason Reason { get; }
+
+    /// <summary>The message alone, fit to show to somebody.</summary>
+    public string UserMessage { get; }
 }
 
 /// <summary>The outcome of validating one name.</summary>
@@ -183,7 +224,19 @@ public static class PathSafety
         RemotePath destinationRoot,
         string? remoteName = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(localBaseDirectory);
+        // Typed, because this one is reachable from a setting rather than from a caller's
+        // mistake: clearing the monitored folder while rows are queued gets here. Left as a plain
+        // ArgumentException it went past the coordinator's typed catch into the general handler,
+        // which writes the exception's own text onto the row — "(Parameter 'localBaseDirectory')"
+        // and all.
+        if (string.IsNullOrWhiteSpace(localBaseDirectory))
+        {
+            throw new PathNotPlaceableException(
+                PathRejectionReason.OutsideMonitoredFolder,
+                "No folder to monitor has been chosen, so there is nowhere on the server this "
+                + "file belongs. Nothing has been sent and the file has not been touched.",
+                nameof(localBaseDirectory));
+        }
         ArgumentException.ThrowIfNullOrWhiteSpace(localFilePath);
         ArgumentNullException.ThrowIfNull(destinationRoot);
 
@@ -197,17 +250,32 @@ public static class PathSafety
             relative = string.IsNullOrEmpty(parent) ? remoteName : Path.Combine(parent, remoteName);
         }
 
-        if (Path.IsPathRooted(relative) || relative.StartsWith("..", StringComparison.Ordinal))
+        // Two dots followed by a separator, or nothing else at all — not merely a name that
+        // begins with two dots. "..2026-Levitt-AHA" is a legal Windows folder, and treating it as
+        // an escape told somebody their file was outside the folder being monitored when it was
+        // sitting inside it, along with advice that could not work.
+        var escapes = relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal)
+            || string.Equals(relative, "..", StringComparison.Ordinal);
+
+        if (Path.IsPathRooted(relative) || escapes)
         {
-            throw new ArgumentException(
-                $"'{localFilePath}' is not inside '{localBaseDirectory}'.",
+            throw new PathNotPlaceableException(
+                PathRejectionReason.OutsideMonitoredFolder,
+                $"This file is not inside the folder being monitored "
+                + $"({localBaseDirectory}), so there is nowhere on the server it belongs. "
+                + "Nothing has been sent and the file has not been touched.",
                 nameof(localFilePath));
         }
 
         var validation = ValidateRelativePath(relative);
         if (!validation.IsValid)
         {
-            throw new ArgumentException(validation.Message, nameof(localFilePath));
+            // Message is non-null whenever Reason is not None, which is the branch this is in.
+            throw new PathNotPlaceableException(
+                validation.Reason,
+                validation.Message ?? "This file's name cannot be used on the server.",
+                nameof(localFilePath));
         }
 
         var root = destinationRoot.AsCollection();
@@ -215,8 +283,11 @@ public static class PathSafety
 
         if (!resolved.IsUnder(root))
         {
-            throw new ArgumentException(
-                $"Refusing to upload outside the destination folder: '{resolved}'.",
+            throw new PathNotPlaceableException(
+                PathRejectionReason.Traversal,
+                $"This file would be placed outside the destination folder on the server "
+                + $"('{resolved}'), so it has not been sent. Its name or the folders above it "
+                + "would have to change.",
                 nameof(localFilePath));
         }
 

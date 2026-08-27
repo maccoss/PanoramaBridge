@@ -54,6 +54,9 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         return path;
     }
 
+    /// <summary>Directories made outside <c>_local</c>, which DisposeAsync does not cover.</summary>
+    private readonly List<string> _extraDirectories = [];
+
     private async Task<TransferSummary> RunWithAsync(
         TransferCoordinator coordinator,
         params string[] files)
@@ -145,9 +148,19 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
 
         var summary = await RunWithAsync(NewCoordinator(), directory);
 
-        summary.Total.ShouldBe(0);
+        // Counted, where it used to return silently. pbctl printed "failed 0" over a folder it
+        // had refused, which reads as "there was nothing to do".
+        summary.Failed.ShouldBe(1);
         _server.UploadCalls.ShouldBe(0);
-        (await _store.GetAsync(directory)).ShouldBeNull();
+
+        // Recorded rather than dropped with a debug line. Returning quietly left any ledger row
+        // for the folder sitting wherever it was, to be re-offered and dropped again on every
+        // pass, with the only trace in a log nobody opens.
+        var row = await _store.GetAsync(directory);
+        row.ShouldNotBeNull();
+        row!.State.ShouldBe(TransferState.Failed);
+        row.LastError!.ShouldContain("folder as a single archive has been removed");
+        Directory.Exists(directory).ShouldBeTrue("the folder itself is untouched");
     }
 
     [Fact]
@@ -811,6 +824,255 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Nothing_is_written_off_while_the_monitored_folder_is_unreachable()
+    {
+        // Recovery runs at startup, which on a monitored network share is routinely before the
+        // share is mounted -- and an unreachable path answers exactly as a deleted one does.
+        // Writing rows off then claims data no longer exists while it sits untouched on the
+        // share. Not being able to look is not evidence that nothing is there.
+        var missing = Path.Combine(UnmountedDrive(), "data", "run.raw");
+
+        await _store.SaveAsync(
+            new UploadRecord(missing, Destination.Append("run.raw").ToEncodedString(),
+                10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null));
+
+        // A coordinator whose monitored folder is on that drive, as it would be for a share
+        // that has not come back yet.
+        await using var coordinator = new TransferCoordinator(
+            _server,
+            _store,
+            new TransferEngineOptions
+            {
+                LocalBaseDirectory = Path.Combine(UnmountedDrive(), "data"),
+                DestinationRoot = Destination,
+            });
+
+        (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
+
+        var row = await _store.GetAsync(missing);
+        row!.State.ShouldBe(TransferState.Uploading, "waiting for the share, not gone");
+        row.LastError!.ShouldContain("cannot be seen");
+    }
+
+    /// <summary>A drive letter this machine does not have, standing in for a share that is not
+    /// mounted yet. Probing one answers immediately, where an invented UNC host would sit in an
+    /// SMB connect timeout and make the suite slow and machine-dependent.</summary>
+    private static string UnmountedDrive()
+    {
+        for (var letter = 'Z'; letter >= 'D'; letter--)
+        {
+            var root = $"{letter}:\\";
+
+            if (!Path.Exists(root))
+            {
+                return root;
+            }
+        }
+
+        throw new InvalidOperationException("Every drive letter is in use on this machine.");
+    }
+
+    [Fact]
+    public async Task A_file_outside_the_monitored_folder_fails_in_words_a_person_can_act_on()
+    {
+        // Taken from a real ledger. Three rows sat on the Transfers tab reading
+        //
+        //   '\...\2026-04-Shock-ITP-Plasma\...F10_198.raw' is not inside
+        //   '\...\2025-Levitt-AHA-StrokeEV-Plt1n2\Plate 1-QuantFiles'. (Parameter 'localFilePath')
+        //
+        // because the monitored folder had been changed and the ledger outlived the setting. The
+        // general failure handler puts exception.Message into the row, so a framework sentence
+        // naming a parameter was what a scientist read, against a file that would be retried
+        // until its attempts ran out and could not have succeeded on any of them.
+        var outside = Directory.CreateTempSubdirectory("pb-other-project-").FullName;
+        _extraDirectories.Add(outside);
+
+        var file = Path.Combine(outside, "run.raw");
+        await File.WriteAllTextAsync(file, "acquired under a different setting");
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        var row = await _store.GetAsync(file);
+        row!.State.ShouldBe(TransferState.Failed);
+
+        row.LastError.ShouldNotBeNull();
+        row.LastError!.ShouldNotContain("Parameter", Case.Insensitive);
+        row.LastError.ShouldNotContain("localFilePath");
+        row.LastError.ShouldContain("not inside the folder being monitored");
+        row.LastError.ShouldContain("has not been touched");
+
+        _server.TotalCalls.ShouldBe(0, "nothing can be asked of the server about it");
+        File.Exists(file).ShouldBeTrue("and the file itself is left alone");
+    }
+
+    [Fact]
+    public async Task A_repaired_file_stops_carrying_the_marker_that_says_it_is_broken()
+    {
+        // Clearing this only on a successful upload stranded the file: a repaired acquisition
+        // whose next attempt failed for an unrelated reason kept a marker meaning "broken",
+        // which is held under every policy, so nothing offered it again and no setting could
+        // reach it. It is cleared the moment the file reads as whole.
+        var file = await WriteRawHeaderAsync("cut-short.raw", formatVersion: 66, padding: 0);
+
+        await RunWithAsync(NewCoordinator(), file);
+        (await _store.GetAsync(file))!.ConflictKind.ShouldBe(ConflictKind.LocalFileDamaged);
+
+        // Re-copied complete, as somebody would after seeing it flagged -- and then the upload
+        // fails for a reason that has nothing to do with the file. That combination is the whole
+        // point: clearing the marker only on a successful upload leaves this row carrying
+        // "broken", which is held under every policy, so no sweep offers it and no setting
+        // reaches it. It never gets another attempt.
+        var repaired = await WriteRawHeaderAsync("cut-short.raw", formatVersion: 66, padding: 4096);
+
+        _server.FailUploadsBeforeSucceeding = 99;
+
+        await RunWithAsync(NewCoordinator(), repaired);
+
+        var row = await _store.GetAsync(repaired);
+        row!.State.ShouldNotBe(TransferState.Verified, "the upload did fail");
+        row.ConflictKind.ShouldBe(ConflictKind.Unknown, "but it is not held as damaged any more");
+    }
+
+    [Fact]
+    public async Task A_row_whose_folder_was_deleted_under_a_reachable_drive_is_written_off()
+    {
+        // Keying the probe on each file's own folder read as "cannot look" for a folder somebody
+        // had simply deleted, so the row was never written off and came back as interrupted work
+        // on every start, for ever. A reachable drive with a missing folder is a real deletion.
+        var gone = Path.Combine(_local, "deleted-acquisition", "run.raw");
+
+        await _store.SaveAsync(
+            new UploadRecord(gone, Destination.Append("run.raw").ToEncodedString(),
+                10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null));
+
+        await using var coordinator = NewCoordinator();
+
+        (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
+
+        var row = await _store.GetAsync(gone);
+        row!.State.ShouldBe(TransferState.Failed);
+        row.LastError.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task A_row_under_a_folder_that_cannot_be_seen_is_left_alone()
+    {
+        // The ledger outlives the setting: rows recorded while a different folder was watched are
+        // still returned by recovery. Checking only today's monitored root said nothing about
+        // whether yesterday's is reachable, so those rows were written off as deleted while the
+        // data sat untouched on a share that simply was not mounted yet.
+        var elsewhere = Path.Combine(UnmountedDrive(), "previously-watched", "run.raw");
+
+        await _store.SaveAsync(
+            new UploadRecord(elsewhere, Destination.Append("run.raw").ToEncodedString(),
+                10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null));
+
+        // The monitored folder is the ordinary local one and exists, so the whole-root check
+        // passed and fell straight through to writing this row off.
+        await using var coordinator = NewCoordinator();
+
+        (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
+
+        var row = await _store.GetAsync(elsewhere);
+        row!.State.ShouldBe(TransferState.Uploading, "waiting for that drive, not gone");
+
+        // The state is deliberately untouched so it resumes when the drive returns -- but a row
+        // saying only "Uploading" is a row claiming an upload is under way, showing under neither
+        // Verified nor Needs attention, with its reason only in a log.
+        row.LastError.ShouldNotBeNull();
+        row.LastError!.ShouldContain("cannot be seen");
+        row.LastError.ShouldContain("has not been touched");
+    }
+
+    [Fact]
+    public async Task A_held_file_reaching_the_coordinator_directly_is_not_sent()
+    {
+        // The folder watcher and pbctl sync both enqueue without consulting the sweep, so a guard
+        // that lived only in the sweep could be walked straight past -- and the ladder would then
+        // re-save the row as an ordinary occupied-destination conflict, losing the marker that
+        // was protecting it. Nothing is sent, and nothing is even asked of the server.
+        var file = await WriteAsync("kept.raw", "mine");
+
+        await _store.SaveAsync(
+            UploadRecord.ForNewFile(
+                LocalFileStamp.FromFile(file),
+                Destination.Append("kept.raw").ToEncodedString())
+            with
+            {
+                State = TransferState.Conflict,
+                ConflictKind = ConflictKind.LocalFileDamaged,
+                LastError = "This file ends before its data does.",
+            });
+
+        await RunWithAsync(NewCoordinator(policy: ConflictPolicy.Overwrite), file);
+
+        _server.UploadCalls.ShouldBe(0, "a damaged file must not be sent");
+        _server.TotalCalls.ShouldBe(0, "and it costs nothing to keep holding it");
+
+        // Reported, because the Transfers tab and the attention count are built from reports and
+        // nothing else. A hold that says nothing is a file that disappears from the window while
+        // its own guidance says it will be listed.
+        lock (_reported)
+        {
+            _reported.ShouldContain(
+                r => r.LocalPath == file && r.Phase == "Held - damaged",
+                "the row has to stay visible while it is held");
+        }
+
+        var row = await _store.GetAsync(file);
+        row!.State.ShouldBe(TransferState.Conflict);
+        row.ConflictKind.ShouldBe(ConflictKind.LocalFileDamaged, "the marker survives");
+    }
+
+    [Fact]
+    public async Task An_interrupted_folder_upload_is_failed_with_an_honest_reason()
+    {
+        // A row from a version that sent folders as one archive. That has been withdrawn, so the
+        // upload cannot be resumed -- and requeueing it would be silently dropped by the worker,
+        // leaving the row interrupted for ever and returned by recovery on every start.
+        var folder = Path.Combine(_local, "250314_HeLa.d");
+        Directory.CreateDirectory(folder);
+
+        await _store.SaveAsync(
+            new UploadRecord(folder, Destination.Append("250314_HeLa.d.zip").ToEncodedString(),
+                10, 0, null, null, TransferState.Uploading, VerifyMethod.None, null, 1, null));
+
+        // Recovery no longer carries its own copy of this rule. It queues the row like any other
+        // and the worker records the refusal, so there is one wording and one place that decides
+        // -- the comment in ProcessAsync used to claim exactly this while recovery still held a
+        // duplicate with different words.
+        var coordinator = NewCoordinator();
+
+        await coordinator.RecoverInterruptedAsync();
+        coordinator.CompleteAdding();
+
+        var summary = await coordinator.RunAsync();
+
+        summary.Failed.ShouldBe(1);
+        _server.UploadCalls.ShouldBe(0);
+
+        var row = await _store.GetAsync(folder);
+        row!.State.ShouldBe(TransferState.Failed);
+        row.LastError!.ShouldContain("folder as a single archive has been removed");
+        Directory.Exists(folder).ShouldBeTrue("the folder itself is untouched");
+    }
+
+    [Fact]
+    public async Task A_truncated_file_is_held_with_its_reason_recorded()
+    {
+        // The sweep can only hold a damaged row under every policy if the row says it is
+        // damaged. That was inferred from message text once, and broke when a message was
+        // reworded -- so it is stored, and this pins the store half of the contract.
+        var file = await WriteRawHeaderAsync("cut-short.raw", formatVersion: 66, padding: 0);
+
+        await RunWithAsync(NewCoordinator(), file);
+
+        var row = await _store.GetAsync(file);
+        row!.State.ShouldBe(TransferState.Conflict);
+        row.ConflictKind.ShouldBe(ConflictKind.LocalFileDamaged);
+    }
+
+    [Fact]
     public async Task An_interrupted_upload_that_actually_completed_is_recognised_and_skipped()
     {
         // The bytes may well have arrived before the process died. The decision ladder finds
@@ -970,14 +1232,41 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         summary.Failed.ShouldBe(1);
         _server.UploadCalls.ShouldBe(0);
         (await _store.GetAsync(file))?.State.ShouldBe(TransferState.Failed);
+
+        // The message, not just the state. Asserting only Failed let a handler added for a
+        // different rejection catch this one too and replace its text with a claim that the file
+        // was outside the monitored folder -- false, and it threw away the one instruction that
+        // fixes it. The row must still say what the server does and what to do about it.
+        var row = await _store.GetAsync(file);
+        row!.LastError.ShouldNotBeNull();
+        row.LastError!.ShouldContain("semicolon");
+        row.LastError.ShouldContain("Rename it before uploading");
+        row.LastError.ShouldNotContain("monitored", Case.Insensitive);
+
+        // And no framework noise: this text is shown to a scientist on the Transfers tab.
+        row.LastError.ShouldNotContain("Parameter", Case.Insensitive);
     }
 
     public async ValueTask DisposeAsync()
     {
         await _store.DisposeAsync();
-        if (Directory.Exists(_local))
+
+        foreach (var extra in _extraDirectories.Append(_local))
         {
-            Directory.Delete(_local, recursive: true);
+            if (!Directory.Exists(extra))
+            {
+                continue;
+            }
+
+            try
+            {
+                Directory.Delete(extra, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Something still has a handle open. Leaving a temp directory behind is not worth
+                // failing an otherwise green run over.
+            }
         }
     }
 }
