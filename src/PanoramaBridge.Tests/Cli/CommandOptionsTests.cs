@@ -55,6 +55,40 @@ public sealed class CommandOptionsTests
         Reject("--exclude").ShouldContain("--exclude");
     }
 
+    [Theory]
+    [InlineData("--exclude", "--no-verify")]
+    [InlineData("--ext", "--no-verify")]
+    [InlineData("--exclude", "--concurrency")]
+    public void A_list_switch_will_not_swallow_the_next_option(string switchName, string next)
+    {
+        // There IS a next argument, so a bare arity check passes and the option is taken as the
+        // value: the run would exclude nothing useful AND verify after being told not to, with
+        // nothing on screen about either.
+        Reject(switchName, next).ShouldContain(next);
+    }
+
+    [Fact]
+    public void An_empty_list_is_still_a_value_and_not_a_mistake()
+    {
+        // The escape hatch has to survive the check above -- "" is not option-shaped.
+        Parse("--exclude", "").ExcludedExtensions.ShouldBeEmpty();
+        Parse("--ext", "").Extensions.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Whether_a_filter_was_asked_for_is_recorded()
+    {
+        // sync mirrors the directory whole and builds no filter, so it refuses these rather than
+        // accepting them, ignoring them, and exiting zero.
+        Parse().FiltersGiven.ShouldBeFalse();
+        Parse("--concurrency", "4").FiltersGiven.ShouldBeFalse();
+        Parse("--ext", ".raw").FiltersGiven.ShouldBeTrue();
+        Parse("--exclude", ".skyd").FiltersGiven.ShouldBeTrue();
+
+        // Including the empty form, which is a deliberate instruction and not an absence.
+        Parse("--exclude", "").FiltersGiven.ShouldBeTrue();
+    }
+
     [Fact]
     public void Every_switch_is_understood()
     {

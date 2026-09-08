@@ -1,3 +1,5 @@
+using PanoramaBridge.Core.Storage;
+
 namespace PanoramaBridge.Core.Monitoring;
 
 /// <summary>
@@ -19,31 +21,6 @@ namespace PanoramaBridge.Core.Monitoring;
 /// </remarks>
 public sealed class CandidateFilter
 {
-    /// <summary>
-    /// Extensions the companion walk refuses to look past unless a user says otherwise.
-    /// </summary>
-    /// <remarks>
-    /// These are files another program derives from an acquisition and leaves beside it. They
-    /// have exactly the same shape as a genuine companion -- <c>run.raw.skyd</c> is built the
-    /// same way as <c>run.wiff.scan</c> -- so no rule about the shape of a name can tell them
-    /// apart, and this has to be knowledge rather than logic. It is a default rather than a
-    /// constant because the next tool to write beside an acquisition should not need a release.
-    /// <list type="bullet">
-    /// <item>
-    /// <c>.skyd</c> is Skyline's chromatogram cache. AutoQC commonly runs on the instrument
-    /// computer and imports each acquisition as it appears, leaving <c>run.raw.skyd</c> next to
-    /// <c>run.raw</c>. The walk reached <c>.raw</c> and took it, so a cache that can run to
-    /// gigabytes -- and is rebuilt on every re-import -- was transferred as though it were an
-    /// acquisition.
-    /// </item>
-    /// <item>
-    /// <c>.tmp</c> because a <c>run.raw.tmp</c> is by definition still being written. Uploading
-    /// one is the single thing this application must never do.
-    /// </item>
-    /// </list>
-    /// </remarks>
-    public static IReadOnlyList<string> DefaultExclusions { get; } = [".skyd", ".tmp"];
-
     private readonly HashSet<string> _extensions;
     private readonly HashSet<string> _exclusions;
 
@@ -53,16 +30,21 @@ public sealed class CandidateFilter
     /// </param>
     /// <param name="exclusions">
     /// Extensions the companion walk must not look past, with leading dots. Null takes
-    /// <see cref="DefaultExclusions"/>, so a caller that has never heard of the setting still
-    /// gets the safe behaviour; an empty list means excluding nothing, which is how somebody who
-    /// wants every companion asks for it.
+    /// <see cref="AppSettings.DefaultExcludedExtensions"/>, so a caller that has never heard of
+    /// the setting still gets the safe behaviour; an empty list means excluding nothing, which is
+    /// how somebody who wants every companion asks for it.
+    /// <para>
+    /// This list only narrows the companion walk. It is not where a rule that protects the
+    /// application belongs, because a user can empty it -- see <see cref="IsWorkingFile"/>.
+    /// </para>
     /// </param>
     public CandidateFilter(IEnumerable<string> extensions, IEnumerable<string>? exclusions = null)
     {
         ArgumentNullException.ThrowIfNull(extensions);
 
         _extensions = extensions.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        _exclusions = (exclusions ?? DefaultExclusions).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _exclusions = (exclusions ?? AppSettings.DefaultExcludedExtensions)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -101,6 +83,16 @@ public sealed class CandidateFilter
             return false;
         }
 
+        // An empty extensions box means "everything the working-file and exclusion rules do not
+        // reject". Answered here rather than by the walk below, because with nothing to match
+        // against, the walk runs to the end of the name and tests every segment on the way --
+        // which rejected QC.tmp.mzML, a finished mzML whose stem merely reads like a temporary
+        // file. Only the actual extension decides.
+        if (_extensions.Count == 0)
+        {
+            return !_exclusions.Contains(Path.GetExtension(name)) && !IsWorkingFile(name);
+        }
+
         // Companion files travel with the acquisition they belong to.
         //
         // Sciex writes run.wiff alongside run.wiff.scan, and the .wiff is metadata: the spectra
@@ -129,11 +121,8 @@ public sealed class CandidateFilter
 
             if (extension.Length == 0)
             {
-                // Out of extensions without reaching anything asked for. An empty extensions box
-                // means "everything the working-file rules do not exclude", not literally every
-                // file: our own .md5 sidecars, and the SQLite journals a vendor leaves beside a
-                // run, are never data.
-                return _extensions.Count == 0 && !IsWorkingFile(name);
+                // Out of extensions without reaching anything that was asked for.
+                return false;
             }
 
             if (_extensions.Contains(extension))
@@ -169,11 +158,19 @@ public sealed class CandidateFilter
     /// <c>.raw</c> would reach <c>run.raw</c> from <c>run.raw.md5</c> and upload our own
     /// bookkeeping as though it were data.
     /// </item>
+    /// <item>
+    /// A name ending <c>.tmp</c>. A <c>run.raw.tmp</c> is by definition still being written, and
+    /// uploading one is the single thing this application must never do -- so it belongs here
+    /// and not in the exclusion list, which a user can empty. Matched on the end of the whole
+    /// name rather than as one segment of the walk, so <c>QC.tmp.mzML</c> -- a finished mzML
+    /// whose stem merely reads like a temporary file -- is unaffected.
+    /// </item>
     /// </list>
     /// </remarks>
     private static bool IsWorkingFile(string name) =>
         name.EndsWith("-journal", StringComparison.OrdinalIgnoreCase)
         || name.EndsWith("-wal", StringComparison.OrdinalIgnoreCase)
         || name.EndsWith("-shm", StringComparison.OrdinalIgnoreCase)
-        || name.EndsWith(".md5", StringComparison.OrdinalIgnoreCase);
+        || name.EndsWith(".md5", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase);
 }

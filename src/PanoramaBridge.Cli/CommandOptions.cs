@@ -19,6 +19,9 @@ namespace PanoramaBridge.Cli;
 /// </remarks>
 internal sealed record CommandOptions
 {
+    /// <summary>The settings screen's own defaults, read once rather than per option.</summary>
+    private static readonly AppSettings Defaults = new();
+
     /// <summary>Files in flight at once.</summary>
     public int Concurrency { get; init; } = 3;
 
@@ -32,11 +35,22 @@ internal sealed record CommandOptions
     public int StableSeconds { get; init; } = 10;
 
     /// <summary>Extensions to transfer.</summary>
-    public IReadOnlyList<string> Extensions { get; init; } = new AppSettings().Extensions;
+    public IReadOnlyList<string> Extensions { get; init; } = Defaults.Extensions;
 
     /// <summary>Extensions the companion walk must not look past.</summary>
     public IReadOnlyList<string> ExcludedExtensions { get; init; } =
-        new AppSettings().ExcludedExtensions;
+        Defaults.ExcludedExtensions;
+
+    /// <summary>
+    /// Whether <c>--ext</c> or <c>--exclude</c> was actually given.
+    /// </summary>
+    /// <remarks>
+    /// One parser serves both commands, but only <c>watch</c> builds a filter -- <c>sync</c>
+    /// mirrors the directory whole. Without this, <c>pbctl sync --exclude .skyd</c> parsed
+    /// cleanly, mirrored the caches anyway and exited zero, which is the opposite of what was
+    /// asked for and says nothing about it.
+    /// </remarks>
+    public bool FiltersGiven { get; init; }
 
     /// <summary>Anything that was not a switch, in the order it was given.</summary>
     public IReadOnlyList<string> Paths { get; init; } = [];
@@ -55,9 +69,10 @@ internal sealed record CommandOptions
         var verify = true;
         var reconcileMinutes = 15;
         var stableSeconds = 10;
-        var extensions = new AppSettings().Extensions;
-        var excluded = new AppSettings().ExcludedExtensions;
+        var extensions = Defaults.Extensions;
+        var excluded = Defaults.ExcludedExtensions;
         var paths = new List<string>();
+        var filtersGiven = false;
 
         problem = null;
 
@@ -93,29 +108,26 @@ internal sealed record CommandOptions
                     break;
 
                 case "--ext":
-                    if (i + 1 >= args.Length)
+                    if (!TryList(args, ref i, ".raw,.d", out extensions, out problem))
                     {
-                        problem = "--ext needs a list of extensions, for example --ext .raw,.d";
                         options = new CommandOptions();
                         return false;
                     }
 
-                    extensions = AppSettings.ParseExtensions(args[++i]);
+                    filtersGiven = true;
                     break;
 
                 case "--exclude":
-                    if (i + 1 >= args.Length)
+                    // An empty argument is how a caller asks for no exclusions at all, which is
+                    // the behaviour before .skyd was excluded. ParseExtensions returns an empty
+                    // list for it rather than treating it as a mistake.
+                    if (!TryList(args, ref i, ".skyd", out excluded, out problem))
                     {
-                        problem = "--exclude needs a list of extensions, for example "
-                            + "--exclude .skyd,.tmp";
                         options = new CommandOptions();
                         return false;
                     }
 
-                    // An empty argument is how a caller asks for no exclusions at all, which is
-                    // the behaviour before .skyd was excluded. ParseExtensions returns an empty
-                    // list for it rather than treating it as a mistake.
-                    excluded = AppSettings.ParseExtensions(args[++i]);
+                    filtersGiven = true;
                     break;
 
                 case "--no-verify":
@@ -143,9 +155,52 @@ internal sealed record CommandOptions
             StableSeconds = stableSeconds,
             Extensions = extensions,
             ExcludedExtensions = excluded,
+            FiltersGiven = filtersGiven,
             Paths = paths,
         };
 
+        return true;
+    }
+
+    /// <summary>
+    /// Reads a comma-separated extension list, refusing one that looks like another switch.
+    /// </summary>
+    /// <remarks>
+    /// <c>--exclude --no-verify</c> passes a bare "is there a next argument?" check, and the
+    /// switch is then swallowed as the value: the run silently excludes nothing useful AND
+    /// verifies after being told not to, with nothing on screen about either. Argument parsing
+    /// here fails quietly by nature, so the check has to be about the shape of the value.
+    /// <para>
+    /// An empty string is still accepted -- it is how a caller asks for an empty list.
+    /// </para>
+    /// </remarks>
+    private static bool TryList(
+        string[] args,
+        ref int i,
+        string example,
+        out IReadOnlyList<string> value,
+        out string? problem)
+    {
+        var name = args[i];
+
+        value = [];
+
+        if (i + 1 >= args.Length)
+        {
+            problem = $"{name} needs a list of extensions, for example {name} {example}";
+            return false;
+        }
+
+        var text = args[++i];
+
+        if (text.StartsWith("--", StringComparison.Ordinal))
+        {
+            problem = $"{name} needs a list of extensions, but got the option '{text}'";
+            return false;
+        }
+
+        value = AppSettings.ParseExtensions(text);
+        problem = null;
         return true;
     }
 

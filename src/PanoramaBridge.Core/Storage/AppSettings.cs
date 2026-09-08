@@ -1,5 +1,4 @@
 using System.Text.Json.Serialization;
-using PanoramaBridge.Core.Monitoring;
 using PanoramaBridge.Core.Transfer;
 
 namespace PanoramaBridge.Core.Storage;
@@ -34,22 +33,61 @@ public sealed record AppSettings
     /// <summary>Whether to watch subdirectories as well.</summary>
     public bool IncludeSubdirectories { get; init; } = true;
 
-    /// <summary>File extensions to transfer, with leading dots.</summary>
-    public IReadOnlyList<string> Extensions { get; init; } =
+    /// <summary>
+    /// Extensions the companion walk will not look past unless a user says otherwise.
+    /// </summary>
+    /// <remarks>
+    /// Files another program derives from an acquisition and leaves beside it. They have exactly
+    /// the same shape as a genuine companion -- <c>run.raw.skyd</c> is built the same way as
+    /// <c>run.wiff.scan</c> -- so no rule about the shape of a name can tell them apart, and this
+    /// has to be knowledge rather than logic. A default rather than a constant, because the next
+    /// tool to write beside an acquisition should not need a release.
+    /// <para>
+    /// <c>.skyd</c> is Skyline's chromatogram cache. AutoQC commonly runs on the instrument
+    /// computer and imports each acquisition as it appears, leaving <c>run.raw.skyd</c> next to
+    /// <c>run.raw</c>. The walk reached <c>.raw</c> and took it, so a cache that can run to
+    /// gigabytes -- and is rebuilt on every re-import -- was transferred as though it were an
+    /// acquisition.
+    /// </para>
+    /// <para>
+    /// Nothing whose absence would be a safety failure belongs in here, because a user can empty
+    /// it. <c>.tmp</c> was briefly in this list and is now one of
+    /// <c>CandidateFilter.IsWorkingFile</c>'s own rules for exactly that reason.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> DefaultExcludedExtensions { get; } = [".skyd"];
+
+    private readonly IReadOnlyList<string> _extensions =
         [".raw", ".d", ".wiff", ".wiff2", ".mzml", ".mzxml", ".sld", ".csv"];
+
+    private readonly IReadOnlyList<string> _excludedExtensions = DefaultExcludedExtensions;
+
+    /// <summary>File extensions to transfer, with leading dots.</summary>
+    /// <remarks>
+    /// Null-coalescing on the way in, because a property initializer does not survive an explicit
+    /// <c>null</c> in the JSON file -- and that file is meant to be hand-editable. Without this,
+    /// one hand-typed null made <see cref="GetHashCode"/> and <see cref="FormatExtensions"/>
+    /// throw straight past the corrupt-file fallback, which only catches malformed JSON.
+    /// </remarks>
+    public IReadOnlyList<string> Extensions
+    {
+        get => _extensions;
+        init => _extensions = value ?? [];
+    }
 
     /// <summary>
     /// Extensions that are never data even when they sit on top of one that is.
     /// </summary>
     /// <remarks>
-    /// A file is accepted when stripping trailing extensions reaches one that was asked for, so
-    /// <c>run.wiff.scan</c> travels with the <c>.wiff</c> it belongs to. That also reached
-    /// <c>.raw</c> through <c>run.raw.skyd</c>, which is Skyline's chromatogram cache and not an
-    /// acquisition. Defaults to <see cref="CandidateFilter.DefaultExclusions"/>; a settings file
-    /// written before this existed picks them up on load.
+    /// Defaults to <see cref="DefaultExcludedExtensions"/>, so a settings file written before
+    /// this existed picks them up on load. Null-coalescing for the reason given on
+    /// <see cref="Extensions"/>.
     /// </remarks>
-    public IReadOnlyList<string> ExcludedExtensions { get; init; } =
-        CandidateFilter.DefaultExclusions;
+    public IReadOnlyList<string> ExcludedExtensions
+    {
+        get => _excludedExtensions;
+        init => _excludedExtensions = value ?? [];
+    }
 
     /// <summary>
     /// How long a file must be unchanged before it is considered finished.
@@ -348,6 +386,21 @@ public sealed record AppSettings
         if (Extensions.Count == 0)
         {
             problems.Add("List at least one file extension to transfer.");
+        }
+
+        // Excluding a suffix that a listed format needs is the 38 MB-of-13.7 GB truncation all
+        // over again, arrived at by configuration instead of by a bug: the .wiff uploads and
+        // records as verified while the spectra in the .wiff.scan stay behind, and nothing looks
+        // wrong until somebody opens it in Skyline. The walk cannot know which suffixes are
+        // load-bearing in general, so this says so for the one pairing that is known rather than
+        // staying silent about all of them.
+        if (Extensions.Any(e => e is ".wiff" or ".wiff2")
+            && ExcludedExtensions.Contains(".scan", StringComparer.OrdinalIgnoreCase))
+        {
+            problems.Add(
+                "Remove .scan from the never-transfer list, or stop transferring .wiff files. "
+                + "A Sciex acquisition keeps its spectra in the .wiff.scan beside the .wiff, so "
+                + "excluding it would upload the metadata on its own.");
         }
 
         if (!Uri.TryCreate(ServerUrl, UriKind.Absolute, out var server)

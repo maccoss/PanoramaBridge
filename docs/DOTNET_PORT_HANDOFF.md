@@ -557,12 +557,26 @@ list of suffixes, on the grounds that the vendor inventing the next suffix will 
 is still true and still not sufficient, because the tool writing beside an acquisition is not
 always the vendor.
 
-So the walk now stops at an extension in a user-editable exclusion list, defaulting to `.skyd`
-and `.tmp`. Two details are load-bearing: it stops **mid-walk** rather than inspecting only the
-last extension, or `run.raw.skyd.gz` walks straight past `.skyd` to `.raw`; and a **match is
-looked for before an exclusion**, so the list can only narrow the walk and never veto an
-extension somebody typed into the transfer box. `pbctl watch --exclude ""` reproduces the old
-behaviour against a real folder, which is how the difference was confirmed outside the tests.
+So the walk now stops at an extension in a user-editable exclusion list, defaulting to `.skyd`.
+Two details are load-bearing: it stops **mid-walk** rather than inspecting only the last
+extension, or `run.raw.skyd.gz` walks straight past `.skyd` to `.raw`; and a **match is looked
+for before an exclusion**, so the list can only narrow the walk and never veto an extension
+somebody typed into the transfer box. `pbctl watch --exclude ""` reproduces the old behaviour
+against a real folder, which is how the difference was confirmed outside the tests.
+
+**Nothing safety-critical goes in a list a user can empty.** `.tmp` was in that default for one
+review cycle, which put "never upload a partial file" — the property §6 exists to protect —
+somewhere a user could delete it by following the UI's own advice to clear the box. It is an
+`IsWorkingFile` rule now, matched on the end of the whole name rather than as a segment of the
+walk, so `QC.tmp.mzML` stays acceptable. The general shape: the exclusion list is a *preference*
+about what counts as data, and `IsWorkingFile` is the set of *invariants*; a rule that belongs in
+the second and is written into the first looks identical until somebody empties the box.
+
+**An empty extensions box takes a different path on purpose.** With nothing to match against, the
+walk has no reason to stop, so it ran to the end of the name and tested every segment — rejecting
+`QC.tmp.mzML` and `backup.tmp.zip` as though their stems were their extensions. That case now
+checks only the actual extension. Reachable via `pbctl watch --ext ""` and `CandidateFilter.
+Everything`, not from the UI, where `Validate` requires at least one extension.
 
 See [`VENDOR_FORMATS.md`](VENDOR_FORMATS.md) for the supported formats and the companion rule.
 

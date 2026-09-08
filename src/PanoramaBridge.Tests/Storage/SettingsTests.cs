@@ -40,6 +40,55 @@ public sealed class AppSettingsTests
     }
 
     [Fact]
+    public void A_null_list_does_not_take_the_whole_settings_screen_down_with_it()
+    {
+        // A property initializer does not survive an explicit null in the JSON, and the settings
+        // file is meant to be hand-editable. One hand-typed null used to reach GetHashCode and
+        // FormatExtensions and throw -- straight past the corrupt-file fallback, which only
+        // catches malformed JSON, so the file was valid and the application still fell over.
+        var settings = new AppSettings { Extensions = null!, ExcludedExtensions = null! };
+
+        settings.Extensions.ShouldBeEmpty();
+        settings.ExcludedExtensions.ShouldBeEmpty();
+
+        Should.NotThrow(() => settings.GetHashCode());
+        Should.NotThrow(() => settings.FormatExtensions());
+        Should.NotThrow(() => settings.FormatExcludedExtensions());
+        Should.NotThrow(() => settings.Equals(new AppSettings()));
+
+        // And it degrades to something the screen can explain rather than an empty list quietly
+        // meaning "everything".
+        settings.Validate().ShouldContain(p => p.Contains("at least one file extension"));
+    }
+
+    [Fact]
+    public void Excluding_the_suffix_that_holds_the_spectra_is_reported()
+    {
+        // The 38 MB-of-13.7 GB truncation reachable by configuration instead of by a bug: the
+        // .wiff uploads and records as verified while the spectra stay behind, and nothing looks
+        // wrong until somebody opens it in Skyline.
+        var problems = new AppSettings
+        {
+            LocalDirectory = Path.GetTempPath(),
+            Extensions = [".wiff"],
+            ExcludedExtensions = [".skyd", ".scan"],
+        }.Validate();
+
+        problems.ShouldContain(p => p.Contains(".scan"));
+    }
+
+    [Fact]
+    public void Excluding_a_suffix_nothing_listed_needs_is_not_reported()
+    {
+        new AppSettings
+        {
+            LocalDirectory = Path.GetTempPath(),
+            Extensions = [".raw"],
+            ExcludedExtensions = [".skyd", ".scan"],
+        }.Validate().ShouldNotContain(p => p.Contains(".scan"));
+    }
+
+    [Fact]
     public void The_lab_default_destination_is_offered_out_of_the_box()
     {
         // Nearly every upload from this lab goes here, so nobody should have to remember the
@@ -279,6 +328,28 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         loaded.Extensions.ShouldBe([".raw"]);
         loaded.ExcludedExtensions.ShouldContain(".skyd");
+    }
+
+    [Fact]
+    public async Task A_hand_edited_null_list_loads_instead_of_throwing()
+    {
+        // null is valid JSON, so it sails past the corrupt-file fallback and reaches the record.
+        await File.WriteAllTextAsync(
+            SettingsPath,
+            """
+            {
+              "LocalDirectory": "D:\\Data",
+              "Extensions": null,
+              "ExcludedExtensions": null
+            }
+            """);
+
+        var loaded = await new JsonSettingsStore(SettingsPath).LoadAsync();
+
+        loaded.LocalDirectory.ShouldBe(@"D:\Data");
+        loaded.Extensions.ShouldBeEmpty();
+        loaded.ExcludedExtensions.ShouldBeEmpty();
+        Should.NotThrow(() => loaded.FormatExcludedExtensions());
     }
 
     [Fact]

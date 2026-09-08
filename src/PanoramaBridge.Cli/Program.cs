@@ -290,6 +290,17 @@ internal static class Program
             return 2;
         }
 
+        // sync mirrors the directory whole; only watch builds a CandidateFilter. Accepting a
+        // filter switch and ignoring it would send exactly the files the caller asked to keep
+        // back, and report success doing it.
+        if (options.FiltersGiven)
+        {
+            Console.Error.WriteLine(
+                "error: sync mirrors the whole directory and has no file filter. "
+                + "--ext and --exclude apply to watch.");
+            return 2;
+        }
+
         var concurrency = options.Concurrency;
         var verify = options.Verify;
         var destination = Target([.. options.Paths], 0).AsCollection();
@@ -378,7 +389,7 @@ internal static class Program
         {
             Console.Error.WriteLine(
                 "usage: pbctl watch <local-dir> [remote-dir] [--concurrency N] [--no-verify] "
-                + "[--every MINUTES] [--stable SECONDS] [--ext .raw,.d] [--exclude .skyd,.tmp]");
+                + "[--every MINUTES] [--stable SECONDS] [--ext .raw,.d] [--exclude .skyd]");
             return 2;
         }
 
@@ -625,7 +636,7 @@ internal static class Program
                   --every N                  minutes between folder checks (default 15)
                   --stable N                 seconds a file must be unchanged (default 10)
                   --ext .raw,.d              extensions to transfer
-                  --exclude .skyd,.tmp       extensions that are never data, even sitting on
+                  --exclude .skyd            extensions that are never data, even sitting on
                                              one that is (run.raw.skyd is Skyline's cache,
                                              not an acquisition). Pass "" for none.
                   --concurrency N            files in flight at once (default 3)

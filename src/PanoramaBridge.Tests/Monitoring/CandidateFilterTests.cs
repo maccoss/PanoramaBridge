@@ -1,4 +1,5 @@
 using PanoramaBridge.Core.Monitoring;
+using PanoramaBridge.Core.Storage;
 
 namespace PanoramaBridge.Tests.Monitoring;
 
@@ -172,6 +173,49 @@ public sealed class CandidateFilterTests
         // Clearing the box means excluding nothing, not falling back to the defaults. A user who
         // wants the old behaviour has to be able to get it.
         new CandidateFilter([".raw"], []).Accepts("run.raw.skyd").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Emptying_the_exclusion_list_cannot_re_arm_uploading_a_partial_file()
+    {
+        // .tmp was briefly in the default exclusion list, which put the one rule this
+        // application must never break somewhere a user can delete it: clearing the box to get
+        // every companion back also re-armed uploading a half-written acquisition. It is one of
+        // IsWorkingFile's own rules now, alongside the .md5 sidecar and SQLite's journals.
+        new CandidateFilter([".raw"], []).Accepts("QC.raw.tmp").ShouldBeFalse();
+        new CandidateFilter([".raw"]).Accepts("QC.raw.tmp").ShouldBeFalse();
+        CandidateFilter.Everything.Accepts("QC.raw.tmp").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void A_finished_file_is_not_rejected_for_reading_like_a_temporary_one()
+    {
+        // The .tmp rule matches the end of the whole name, not one segment of the walk. An mzML
+        // whose stem happens to end in .tmp is a finished mzML.
+        new CandidateFilter([".mzml"]).Accepts("QC.tmp.mzML").ShouldBeTrue();
+        CandidateFilter.Everything.Accepts("QC.tmp.mzML").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void An_empty_extension_list_judges_a_file_by_its_own_extension()
+    {
+        // With nothing to match against, the walk has no reason to stop, so it used to test
+        // every segment of the name on the way down and reject a finished file whose stem merely
+        // read like an excluded one. backup.tmp.zip is a zip; QC.skyd.mzML is an mzML.
+        CandidateFilter.Everything.Accepts("backup.tmp.zip").ShouldBeTrue();
+        CandidateFilter.Everything.Accepts("QC.skyd.mzML").ShouldBeTrue();
+
+        // While the file whose actual extension is excluded is still refused.
+        CandidateFilter.Everything.Accepts("QC.raw.skyd").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void The_filter_and_the_settings_screen_agree_on_the_defaults()
+    {
+        // Two defaults that can drift are worse than one in the wrong place: the screen would
+        // show a list the filter does not use. AppSettings owns it; the filter falls back to it.
+        new CandidateFilter([".raw"]).Exclusions
+            .ShouldBe(AppSettings.DefaultExcludedExtensions, ignoreOrder: true);
     }
 
     [Fact]
