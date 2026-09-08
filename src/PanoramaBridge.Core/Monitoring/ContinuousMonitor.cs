@@ -47,7 +47,7 @@ public sealed record MonitorOptions
         {
             Root = settings.LocalDirectory,
             DestinationRoot = RemotePath.Parse(settings.RemotePath),
-            Filter = new CandidateFilter(settings.Extensions),
+            Filter = new CandidateFilter(settings.Extensions, settings.ExcludedExtensions),
             IncludeSubdirectories = settings.IncludeSubdirectories,
             ConflictPolicy = settings.ConflictPolicy,
             StabilityPeriod = TimeSpan.FromSeconds(Math.Max(0, settings.StabilitySeconds)),

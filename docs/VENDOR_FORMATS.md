@@ -41,18 +41,42 @@ asked for, so `.wiff` brings `.wiff.scan`, `.wiff.dia` and `.wiff.dia.quant` wit
 about the shape of the name rather than a list of vendor suffixes, because the vendor that invents
 the next suffix will not tell us.
 
-Two things are excluded from that walk: SQLite's `-journal`, `-wal` and `-shm` working files, and
-the `.md5` sidecar PanoramaBridge writes itself — which would otherwise reach `run.raw` from
-`run.raw.md5` and upload our own bookkeeping as data.
+Two things are always excluded from that walk, and are not a user's to remove: SQLite's
+`-journal`, `-wal` and `-shm` working files, and the `.md5` sidecar PanoramaBridge writes itself
+— which would otherwise reach `run.raw` from `run.raw.md5` and upload our own bookkeeping as data.
 
-**One consequence to be aware of:** the rule brings *every* `.wiff.*` sibling, including derived
-files. On the dataset above that means `.wiff.dia` and `.wiff.dia.quant`, another 5.5 GB per
-acquisition — but note those were written months after the run, by processing rather than by the
-instrument. A folder an instrument writes into would not normally contain them; the dataset
-examined here is an analysis folder, which is why they are in it.
+### Derived output that sits beside an acquisition
 
-So this is unlikely to matter when monitoring an instrument, and would matter when pointing
-PanoramaBridge at a folder that also holds processed output. If that turns out to be a real
-nuisance, the fix is a way to exclude an extension rather than a hardcoded list of which
-companions count as data — the latter needs someone who works with the format, and would be wrong
-the moment a vendor adds a suffix.
+**The consequence to be aware of** was that the rule brings *every* `.wiff.*` or `.raw.*` sibling,
+including files another program derived from the acquisition. It turned out to matter on the
+instrument computer after all, and not only in an analysis folder: AutoQC commonly runs alongside
+the acquisition software, imports each run into Skyline as it appears, and leaves the chromatogram
+cache next to it as `run.raw.skyd`. The walk reached `.raw` and took it, so caches that can run to
+gigabytes — and are rebuilt on every re-import — were transferred as though they were
+acquisitions.
+
+No rule about the shape of a name can fix that. `run.raw.skyd` is built exactly the way
+`run.wiff.scan` is, and one is derived output while the other is where the spectra live, so
+telling them apart needs knowledge rather than logic.
+
+**Never transfer** on the Local Monitoring tab is that knowledge, and it is the user's to extend
+rather than a hardcoded list of which companions count as data. The walk stops at an extension
+in it instead of looking past it — so `run.raw.skyd.gz` is refused too, which checking only the
+last extension would have missed. It defaults to:
+
+| Extension | Why |
+|---|---|
+| `.skyd` | Skyline's chromatogram cache, written beside the acquisition by AutoQC. |
+| `.tmp` | A `run.raw.tmp` is by definition still being written. |
+
+An extension in the transfer list always wins, so putting one in both boxes still sends it: the
+exclusions can only narrow the companion walk, never veto something somebody typed. Clearing the
+box restores the earlier behaviour of taking every companion.
+
+On the Sciex dataset above, `.wiff.dia` and `.wiff.dia.quant` are still taken — another 5.5 GB per
+acquisition. Those were written months after the run by processing rather than by the instrument,
+so a folder an instrument writes into would not normally hold them; anyone pointing PanoramaBridge
+at an analysis folder can add them.
+
+`pbctl watch --exclude .skyd,.tmp` is the same setting, and `--exclude ""` reproduces the
+behaviour before it existed, which is how the difference is checked against a real folder.

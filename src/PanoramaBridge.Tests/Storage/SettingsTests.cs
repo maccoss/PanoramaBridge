@@ -18,6 +18,28 @@ public sealed class AppSettingsTests
     }
 
     [Fact]
+    public void Skyline_caches_are_excluded_out_of_the_box()
+    {
+        // AutoQC runs on the instrument computer beside the acquisition software and leaves
+        // run.raw.skyd next to run.raw. Nobody should have to discover that and configure it.
+        new AppSettings().ExcludedExtensions.ShouldContain(".skyd");
+        new AppSettings().FormatExcludedExtensions().ShouldContain(".skyd");
+    }
+
+    [Fact]
+    public void Editing_the_exclusions_counts_as_a_change()
+    {
+        // Equality here is hand-written, because the compiler-generated version compares the
+        // lists by reference. A property left out of it makes the settings screen believe
+        // nothing was edited and quietly drop the edit.
+        var settings = new AppSettings();
+
+        settings.ShouldNotBe(settings with { ExcludedExtensions = [".skyd", ".blib"] });
+        settings.ShouldNotBe(settings with { ExcludedExtensions = [] });
+        settings.ShouldBe(settings with { ExcludedExtensions = [.. settings.ExcludedExtensions] });
+    }
+
+    [Fact]
     public void The_lab_default_destination_is_offered_out_of_the_box()
     {
         // Nearly every upload from this lab goes here, so nobody should have to remember the
@@ -134,6 +156,7 @@ public sealed class JsonSettingsStoreTests : IDisposable
         {
             LocalDirectory = @"D:\Data",
             Extensions = [".raw", ".d"],
+            ExcludedExtensions = [".skyd", ".blib"],
             MaxConcurrentTransfers = 5,
             ConflictPolicy = ConflictPolicy.Overwrite,
             AuthMode = AuthMode.UserNameAndPassword,
@@ -235,6 +258,38 @@ public sealed class JsonSettingsStoreTests : IDisposable
         rewritten.ShouldNotContain("Rename");
         rewritten.ShouldNotContain("FolderAcquisitions");
         rewritten.ShouldContain("Ask");
+    }
+
+    [Fact]
+    public async Task A_file_written_before_exclusions_existed_picks_up_the_defaults()
+    {
+        // The upgrade path is the whole point of the fix: anyone already running PanoramaBridge
+        // next to AutoQC has a settings file with no ExcludedExtensions in it, and has to stop
+        // collecting .skyd caches without being told to go and edit a box.
+        await File.WriteAllTextAsync(
+            SettingsPath,
+            """
+            {
+              "LocalDirectory": "D:\\Data",
+              "Extensions": [".raw"]
+            }
+            """);
+
+        var loaded = await new JsonSettingsStore(SettingsPath).LoadAsync();
+
+        loaded.Extensions.ShouldBe([".raw"]);
+        loaded.ExcludedExtensions.ShouldContain(".skyd");
+    }
+
+    [Fact]
+    public async Task An_empty_exclusion_list_survives_a_round_trip()
+    {
+        // Clearing the box is how somebody asks for every companion file, so it must not be
+        // mistaken for "this file predates the setting" and quietly refilled with the defaults.
+        var store = new JsonSettingsStore(SettingsPath);
+        await store.SaveAsync(new AppSettings { ExcludedExtensions = [] });
+
+        (await store.LoadAsync()).ExcludedExtensions.ShouldBeEmpty();
     }
 
     [Fact]

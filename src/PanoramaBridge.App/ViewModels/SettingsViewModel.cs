@@ -54,6 +54,11 @@ public sealed partial class SettingsViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
     private string _extensionsText = string.Empty;
 
+    /// <summary>Extensions never treated as data, as the comma-separated text the user edits.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
+    private string _excludedExtensionsText = string.Empty;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
     private int _stabilitySeconds = 10;
@@ -163,6 +168,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         LocalDirectory = LocalDirectory,
         IncludeSubdirectories = IncludeSubdirectories,
         Extensions = AppSettings.ParseExtensions(ExtensionsText),
+        ExcludedExtensions = AppSettings.ParseExtensions(ExcludedExtensionsText),
         StabilitySeconds = StabilitySeconds,
         ReconcileMinutes = ReconcileMinutes,
         LockedFileRetryIntervalSeconds = LockedFileRetryIntervalSeconds,
@@ -245,6 +251,10 @@ public sealed partial class SettingsViewModel : ObservableObject
         ExtensionsText = new AppSettings().FormatExtensions();
 
     [RelayCommand]
+    private void RestoreDefaultExcludedExtensions() =>
+        ExcludedExtensionsText = new AppSettings().FormatExcludedExtensions();
+
+    [RelayCommand]
     private static void OpenApiKeyPage()
     {
         try
@@ -262,6 +272,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         LocalDirectory = settings.LocalDirectory;
         IncludeSubdirectories = settings.IncludeSubdirectories;
         ExtensionsText = settings.FormatExtensions();
+        ExcludedExtensionsText = settings.FormatExcludedExtensions();
         StabilitySeconds = settings.StabilitySeconds;
         ReconcileMinutes = settings.ReconcileMinutes;
         LockedFileRetryIntervalSeconds = settings.LockedFileRetryIntervalSeconds;

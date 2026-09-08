@@ -36,6 +36,23 @@ public sealed class CommandOptionsTests
         options.StableSeconds.ShouldBe(10);
         options.Paths.ShouldBeEmpty();
         options.Extensions.ShouldContain(".raw", "the defaults are the ones the settings screen uses");
+        options.ExcludedExtensions.ShouldContain(".skyd", "so does the exclusion list");
+    }
+
+    [Fact]
+    public void Exclusions_can_be_replaced_or_turned_off_altogether()
+    {
+        Parse("--exclude", ".skyd,.blib").ExcludedExtensions.ShouldBe([".skyd", ".blib"]);
+
+        // An empty argument is how watch reproduces the behaviour before .skyd was excluded,
+        // which is what makes the fix checkable against a real folder rather than only in tests.
+        Parse("--exclude", "").ExcludedExtensions.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void An_exclusion_switch_with_nothing_after_it_says_so()
+    {
+        Reject("--exclude").ShouldContain("--exclude");
     }
 
     [Fact]
@@ -46,12 +63,14 @@ public sealed class CommandOptionsTests
             "--every", "45",
             "--stable", "90",
             "--ext", ".wiff,.d",
+            "--exclude", ".skyd",
             "--no-verify");
 
         options.Concurrency.ShouldBe(6);
         options.ReconcileMinutes.ShouldBe(45);
         options.StableSeconds.ShouldBe(90);
         options.Extensions.ShouldBe([".wiff", ".d"]);
+        options.ExcludedExtensions.ShouldBe([".skyd"]);
         options.Verify.ShouldBeFalse();
     }
 

@@ -137,6 +137,25 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_skyline_cache_beside_an_acquisition_costs_nothing_every_sweep()
+    {
+        // AutoQC rebuilds run.raw.skyd whenever it re-imports, so this is not one wasted upload
+        // but a file that keeps changing under a sweep running every quarter of an hour. It has
+        // to be rejected by the filter, before anything opens it, hashes it or asks the ledger
+        // about it -- otherwise the cost comes back even once the upload does not.
+        var wanted = Write("QC_2026_09_08.raw");
+        Write("QC_2026_09_08.raw.skyd", "a chromatogram cache, not an acquisition");
+        Write("QC_2026_09_08.raw.skyd.gz");
+
+        var (result, offered) = await SweepAsync(NewScanner());
+
+        offered.ShouldBe([wanted]);
+        result.Examined.ShouldBe(1, "the caches are not data");
+        _store.PathsLookedUp.ShouldBe(1, "and are never looked up");
+        _store.Saves.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task A_verified_file_costs_one_lookup_and_nothing_else()
     {
         // The case that has to stay free. This runs every quarter of an hour for the whole life

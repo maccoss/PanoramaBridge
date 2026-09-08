@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using PanoramaBridge.Core.Monitoring;
 using PanoramaBridge.Core.Transfer;
 
 namespace PanoramaBridge.Core.Storage;
@@ -36,6 +37,19 @@ public sealed record AppSettings
     /// <summary>File extensions to transfer, with leading dots.</summary>
     public IReadOnlyList<string> Extensions { get; init; } =
         [".raw", ".d", ".wiff", ".wiff2", ".mzml", ".mzxml", ".sld", ".csv"];
+
+    /// <summary>
+    /// Extensions that are never data even when they sit on top of one that is.
+    /// </summary>
+    /// <remarks>
+    /// A file is accepted when stripping trailing extensions reaches one that was asked for, so
+    /// <c>run.wiff.scan</c> travels with the <c>.wiff</c> it belongs to. That also reached
+    /// <c>.raw</c> through <c>run.raw.skyd</c>, which is Skyline's chromatogram cache and not an
+    /// acquisition. Defaults to <see cref="CandidateFilter.DefaultExclusions"/>; a settings file
+    /// written before this existed picks them up on load.
+    /// </remarks>
+    public IReadOnlyList<string> ExcludedExtensions { get; init; } =
+        CandidateFilter.DefaultExclusions;
 
     /// <summary>
     /// How long a file must be unchanged before it is considered finished.
@@ -215,6 +229,7 @@ public sealed record AppSettings
             && MinimizeToTray == other.MinimizeToTray
             && Version == other.Version
             && Extensions.SequenceEqual(other.Extensions, StringComparer.Ordinal)
+            && ExcludedExtensions.SequenceEqual(other.ExcludedExtensions, StringComparer.Ordinal)
             && RecentRemotePaths.SequenceEqual(other.RecentRemotePaths, StringComparer.Ordinal);
     }
 
@@ -240,6 +255,11 @@ public sealed record AppSettings
         hash.Add(Version);
 
         foreach (var extension in Extensions)
+        {
+            hash.Add(extension, StringComparer.Ordinal);
+        }
+
+        foreach (var extension in ExcludedExtensions)
         {
             hash.Add(extension, StringComparer.Ordinal);
         }
@@ -282,6 +302,9 @@ public sealed record AppSettings
 
     /// <summary>Renders <see cref="Extensions"/> for display in a single text box.</summary>
     public string FormatExtensions() => string.Join(", ", Extensions);
+
+    /// <summary>Renders <see cref="ExcludedExtensions"/> for display in a single text box.</summary>
+    public string FormatExcludedExtensions() => string.Join(", ", ExcludedExtensions);
 
     /// <summary>
     /// Returns these settings with <paramref name="path"/> promoted to the front of the recent

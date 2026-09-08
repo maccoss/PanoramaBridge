@@ -34,6 +34,10 @@ internal sealed record CommandOptions
     /// <summary>Extensions to transfer.</summary>
     public IReadOnlyList<string> Extensions { get; init; } = new AppSettings().Extensions;
 
+    /// <summary>Extensions the companion walk must not look past.</summary>
+    public IReadOnlyList<string> ExcludedExtensions { get; init; } =
+        new AppSettings().ExcludedExtensions;
+
     /// <summary>Anything that was not a switch, in the order it was given.</summary>
     public IReadOnlyList<string> Paths { get; init; } = [];
 
@@ -52,6 +56,7 @@ internal sealed record CommandOptions
         var reconcileMinutes = 15;
         var stableSeconds = 10;
         var extensions = new AppSettings().Extensions;
+        var excluded = new AppSettings().ExcludedExtensions;
         var paths = new List<string>();
 
         problem = null;
@@ -98,6 +103,21 @@ internal sealed record CommandOptions
                     extensions = AppSettings.ParseExtensions(args[++i]);
                     break;
 
+                case "--exclude":
+                    if (i + 1 >= args.Length)
+                    {
+                        problem = "--exclude needs a list of extensions, for example "
+                            + "--exclude .skyd,.tmp";
+                        options = new CommandOptions();
+                        return false;
+                    }
+
+                    // An empty argument is how a caller asks for no exclusions at all, which is
+                    // the behaviour before .skyd was excluded. ParseExtensions returns an empty
+                    // list for it rather than treating it as a mistake.
+                    excluded = AppSettings.ParseExtensions(args[++i]);
+                    break;
+
                 case "--no-verify":
                     verify = false;
                     break;
@@ -122,6 +142,7 @@ internal sealed record CommandOptions
             ReconcileMinutes = reconcileMinutes,
             StableSeconds = stableSeconds,
             Extensions = extensions,
+            ExcludedExtensions = excluded,
             Paths = paths,
         };
 

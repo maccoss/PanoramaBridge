@@ -378,7 +378,7 @@ internal static class Program
         {
             Console.Error.WriteLine(
                 "usage: pbctl watch <local-dir> [remote-dir] [--concurrency N] [--no-verify] "
-                + "[--every MINUTES] [--stable SECONDS] [--ext .raw,.d]");
+                + "[--every MINUTES] [--stable SECONDS] [--ext .raw,.d] [--exclude .skyd,.tmp]");
             return 2;
         }
 
@@ -395,6 +395,7 @@ internal static class Program
         var reconcileMinutes = options.ReconcileMinutes;
         var stableSeconds = options.StableSeconds;
         var extensions = options.Extensions;
+        var excluded = options.ExcludedExtensions;
         var destination = Target([.. options.Paths], 0).AsCollection();
 
         await using var store = new SqliteStateStore(StateDatabasePath());
@@ -426,7 +427,7 @@ internal static class Program
             {
                 Root = localDirectory,
                 DestinationRoot = destination,
-                Filter = new CandidateFilter(extensions),
+                Filter = new CandidateFilter(extensions, excluded),
                 StabilityPeriod = TimeSpan.FromSeconds(stableSeconds),
                 ReconcileInterval = TimeSpan.FromMinutes(Math.Max(1, reconcileMinutes)),
             });
@@ -450,6 +451,8 @@ internal static class Program
         Console.WriteLine($"      to {destination}");
         Console.WriteLine(
             $"  extensions {(extensions.Count == 0 ? "(all)" : string.Join(", ", extensions))}");
+        Console.WriteLine(
+            $"  excluding  {(excluded.Count == 0 ? "(nothing)" : string.Join(", ", excluded))}");
         Console.WriteLine(
             $"  every {reconcileMinutes} min, stable after {stableSeconds}s, "
             + $"concurrency {concurrency}, verify {(verify ? "on" : "off")}");
@@ -622,6 +625,9 @@ internal static class Program
                   --every N                  minutes between folder checks (default 15)
                   --stable N                 seconds a file must be unchanged (default 10)
                   --ext .raw,.d              extensions to transfer
+                  --exclude .skyd,.tmp       extensions that are never data, even sitting on
+                                             one that is (run.raw.skyd is Skyline's cache,
+                                             not an acquisition). Pass "" for none.
                   --concurrency N            files in flight at once (default 3)
                   --no-verify                skip hash verification
           status                           what the upload ledger currently holds

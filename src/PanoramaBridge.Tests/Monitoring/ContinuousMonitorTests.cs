@@ -32,6 +32,23 @@ public sealed class ContinuousMonitorTests : IAsyncDisposable
         LockedFiles = LockedFilePolicy.None,
     };
 
+    [Fact]
+    public void The_exclusion_setting_reaches_the_filter_the_monitor_uses()
+    {
+        // FromSettings is the only place the settings screen meets the sweep and the watcher, so
+        // a setting dropped here is a setting that appears to work and does nothing. The .skyd
+        // fix is worthless if the box on the screen never arrives.
+        var options = MonitorOptions.FromSettings(new AppSettings
+        {
+            LocalDirectory = _watched,
+            Extensions = [".raw"],
+            ExcludedExtensions = [".skyd"],
+        });
+
+        options.Filter.Accepts(Path.Combine(_watched, "QC.raw")).ShouldBeTrue();
+        options.Filter.Accepts(Path.Combine(_watched, "QC.raw.skyd")).ShouldBeFalse();
+    }
+
     private TransferCoordinator NewCoordinator() =>
         new(
             _server,

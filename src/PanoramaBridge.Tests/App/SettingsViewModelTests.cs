@@ -39,6 +39,7 @@ public sealed class SettingsViewModelTests
         LocalDirectory = @"\\fileserver\instruments\QE",
         IncludeSubdirectories = false,
         Extensions = [".wiff", ".d"],
+        ExcludedExtensions = [".skyd", ".blib"],
         StabilitySeconds = 42,
         ReconcileMinutes = 7,
         LockedFileRetryIntervalSeconds = 11,

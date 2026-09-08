@@ -29,13 +29,27 @@
 
             <GroupBox Header="File types">
                 <StackPanel>
+                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,4"
+                               Text="Transfer" />
                     <DockPanel Margin="{StaticResource RowMargin}">
                         <Button DockPanel.Dock="Right" Content="Defaults" Margin="8,0,0,0"
                                 Command="{Binding RestoreDefaultExtensionsCommand}" />
                         <TextBox Text="{Binding ExtensionsText, UpdateSourceTrigger=PropertyChanged}" />
                     </DockPanel>
                     <TextBlock Style="{StaticResource Hint}"
-                               Text="Comma-separated. Matched against the file extension exactly, so .raw does not also match archive.notraw." />
+                               Text="Comma-separated. Matched against the file extension exactly, so .raw does not also match archive.notraw. A file whose name carries an extra suffix travels with the acquisition it belongs to, so asking for .wiff also brings run.wiff.scan, where the spectra actually are." />
+
+                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,12,0,4"
+                               Text="Never transfer" />
+                    <DockPanel Margin="{StaticResource RowMargin}">
+                        <Button DockPanel.Dock="Right" Content="Defaults" Margin="8,0,0,0"
+                                Command="{Binding RestoreDefaultExcludedExtensionsCommand}" />
+                        <TextBox Text="{Binding ExcludedExtensionsText, UpdateSourceTrigger=PropertyChanged}" />
+                    </DockPanel>
+                    <TextBlock Style="{StaticResource Hint}"
+                               Text="Files another program derives from an acquisition and leaves next to it. Skyline writes run.raw.skyd beside run.raw, so a folder AutoQC is watching fills up with chromatogram caches that look like .raw files and are not. Add anything else that appears alongside your data." />
+                    <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0"
+                               Text="An extension listed above is always transferred, so putting one in both boxes still sends it. Clearing this box transfers every companion file." />
                 </StackPanel>
             </GroupBox>
 
