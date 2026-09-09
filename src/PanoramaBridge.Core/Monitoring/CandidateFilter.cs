@@ -1,3 +1,5 @@
+using PanoramaBridge.Core.Storage;
+
 namespace PanoramaBridge.Core.Monitoring;
 
 /// <summary>
@@ -20,22 +22,41 @@ namespace PanoramaBridge.Core.Monitoring;
 public sealed class CandidateFilter
 {
     private readonly HashSet<string> _extensions;
+    private readonly HashSet<string> _exclusions;
 
     /// <param name="extensions">
     /// Extensions to accept, with leading dots. An empty list accepts every file, which is what
     /// the settings screen means by leaving the box empty.
     /// </param>
-    public CandidateFilter(IEnumerable<string> extensions)
+    /// <param name="exclusions">
+    /// Extensions the companion walk must not look past, with leading dots. Null takes
+    /// <see cref="AppSettings.DefaultExcludedExtensions"/>, so a caller that has never heard of
+    /// the setting still gets the safe behaviour; an empty list means excluding nothing, which is
+    /// how somebody who wants every companion asks for it.
+    /// <para>
+    /// This list only narrows the companion walk. It is not where a rule that protects the
+    /// application belongs, because a user can empty it -- see <see cref="IsWorkingFile"/>.
+    /// </para>
+    /// </param>
+    public CandidateFilter(IEnumerable<string> extensions, IEnumerable<string>? exclusions = null)
     {
         ArgumentNullException.ThrowIfNull(extensions);
+
         _extensions = extensions.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _exclusions = (exclusions ?? AppSettings.DefaultExcludedExtensions)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
-    /// <summary>A filter that accepts any file the working-file rules do not exclude.</summary>
+    /// <summary>
+    /// A filter that accepts any file the working-file and exclusion rules do not reject.
+    /// </summary>
     public static CandidateFilter Everything { get; } = new([]);
 
     /// <summary>Extensions accepted, for logging and for the status line.</summary>
     public IReadOnlyCollection<string> Extensions => _extensions;
+
+    /// <summary>Extensions the walk will not look past, for logging and for diagnostics.</summary>
+    public IReadOnlyCollection<string> Exclusions => _exclusions;
 
     /// <summary>
     /// True when the file is one this application should try to transfer.
@@ -62,13 +83,14 @@ public sealed class CandidateFilter
             return false;
         }
 
-        // An empty list means "everything the working-file rules do not exclude", not literally
-        // every file. Our own .md5 sidecars, and the SQLite journals a vendor leaves beside a
-        // run, are never data: an empty settings box is not a request to upload this
-        // application's own bookkeeping.
+        // An empty extensions box means "everything the working-file and exclusion rules do not
+        // reject". Answered here rather than by the walk below, because with nothing to match
+        // against, the walk runs to the end of the name and tests every segment on the way --
+        // which rejected QC.tmp.mzML, a finished mzML whose stem merely reads like a temporary
+        // file. Only the actual extension decides.
         if (_extensions.Count == 0)
         {
-            return !IsWorkingFile(name);
+            return !_exclusions.Contains(Path.GetExtension(name)) && !IsWorkingFile(name);
         }
 
         // Companion files travel with the acquisition they belong to.
@@ -80,9 +102,17 @@ public sealed class CandidateFilter
         // is visible until somebody tries to open it in Skyline.
         //
         // So a name is accepted if removing trailing extensions one at a time reaches one that
-        // was asked for. run.wiff.scan reaches run.wiff; run.wiff.dia.quant reaches it too. The
-        // rule is deliberately about the shape of the name rather than a list of vendor
-        // suffixes, because the vendor that adds a new one will not tell us.
+        // was asked for. run.wiff.scan reaches run.wiff; run.wiff.dia.quant reaches it too.
+        //
+        // The walk stops at an excluded extension instead of looking past it, which is what
+        // keeps it from reaching .raw through a Skyline cache named run.raw.skyd. Stopping
+        // mid-walk rather than only inspecting the last extension is the part that matters:
+        // run.raw.skyd.gz would otherwise carry straight on past .skyd and be accepted.
+        //
+        // A match is looked for before an exclusion, so the exclusion list can only narrow the
+        // walk and can never veto something typed into the extensions box. Somebody who
+        // deliberately asks for .skyd gets .skyd; the alternative is an empty queue and nothing
+        // on screen to explain it.
         var candidate = name;
 
         while (true)
@@ -91,12 +121,18 @@ public sealed class CandidateFilter
 
             if (extension.Length == 0)
             {
+                // Out of extensions without reaching anything that was asked for.
                 return false;
             }
 
             if (_extensions.Contains(extension))
             {
                 return !IsWorkingFile(name);
+            }
+
+            if (_exclusions.Contains(extension))
+            {
+                return false;
             }
 
             candidate = Path.GetFileNameWithoutExtension(candidate);
@@ -108,7 +144,9 @@ public sealed class CandidateFilter
     /// </summary>
     /// <remarks>
     /// Checked only once a name has otherwise been accepted, so it costs nothing on the common
-    /// path.
+    /// path. Deliberately not folded into the user-editable exclusion list: these are the rules
+    /// that stop the application tripping over its own output, so they are not a user's to
+    /// remove.
     /// <list type="bullet">
     /// <item>
     /// SQLite's journal, write-ahead log and shared-memory files sit beside a database while it
@@ -120,11 +158,19 @@ public sealed class CandidateFilter
     /// <c>.raw</c> would reach <c>run.raw</c> from <c>run.raw.md5</c> and upload our own
     /// bookkeeping as though it were data.
     /// </item>
+    /// <item>
+    /// A name ending <c>.tmp</c>. A <c>run.raw.tmp</c> is by definition still being written, and
+    /// uploading one is the single thing this application must never do -- so it belongs here
+    /// and not in the exclusion list, which a user can empty. Matched on the end of the whole
+    /// name rather than as one segment of the walk, so <c>QC.tmp.mzML</c> -- a finished mzML
+    /// whose stem merely reads like a temporary file -- is unaffected.
+    /// </item>
     /// </list>
     /// </remarks>
     private static bool IsWorkingFile(string name) =>
         name.EndsWith("-journal", StringComparison.OrdinalIgnoreCase)
         || name.EndsWith("-wal", StringComparison.OrdinalIgnoreCase)
         || name.EndsWith("-shm", StringComparison.OrdinalIgnoreCase)
-        || name.EndsWith(".md5", StringComparison.OrdinalIgnoreCase);
+        || name.EndsWith(".md5", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase);
 }

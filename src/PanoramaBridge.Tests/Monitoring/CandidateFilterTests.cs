@@ -1,4 +1,5 @@
 using PanoramaBridge.Core.Monitoring;
+using PanoramaBridge.Core.Storage;
 
 namespace PanoramaBridge.Tests.Monitoring;
 
@@ -98,6 +99,123 @@ public sealed class CandidateFilterTests
         // application must not do.
         Instrument.Accepts(path).ShouldBeFalse();
         CandidateFilter.Everything.Accepts(path).ShouldBeFalse();
+    }
+
+    // -- derived output written beside an acquisition -------------------------------------------
+
+    [Theory]
+    [InlineData("QC_2026_09_08.raw", true)]
+    [InlineData("QC_2026_09_08.raw.skyd", false)]
+    [InlineData("QC_2026_09_08.raw.skyd.tmp", false)]
+    [InlineData("QC_2026_09_08.raw.tmp", false)]
+    public void Skyline_output_beside_an_acquisition_is_not_data(string name, bool expected)
+    {
+        // AutoQC runs on the instrument computer, imports each acquisition into Skyline as it
+        // appears, and leaves the chromatogram cache beside it as run.raw.skyd. The extension
+        // walk reaches .raw and took it -- so a cache that can run to gigabytes, rewritten every
+        // time AutoQC re-imports, was uploaded as though it were an acquisition.
+        //
+        // Constructed with no exclusion list, so this is the out-of-the-box behaviour rather
+        // than something a user has to know to configure.
+        new CandidateFilter([".raw"]).Accepts(name).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void The_walk_stops_at_an_excluded_extension_however_deeply_buried()
+    {
+        // Checking only the last extension would let run.raw.skyd.gz through: .gz is not
+        // excluded, and the walk would carry on past .skyd to .raw.
+        new CandidateFilter([".raw"], [".skyd"])
+            .Accepts("run.raw.skyd.gz")
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void An_exclusion_only_bites_where_it_is_an_extension()
+    {
+        // Excluding .skyd must not reject a file that merely contains the letters.
+        var filter = new CandidateFilter([".raw"], [".skyd"]);
+
+        filter.Accepts("skyd_calibration.raw").ShouldBeTrue();
+        filter.Accepts("run.notskyd.raw").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void What_was_asked_for_is_sent_even_if_it_is_also_excluded()
+    {
+        // The exclusion list exists to stop the companion walk over-reaching, not to veto a
+        // choice someone typed. Somebody who deliberately asks for .skyd gets .skyd; leaving it
+        // in both boxes and then finding an empty queue would be the worse surprise.
+        new CandidateFilter([".raw", ".skyd"], [".skyd"]).Accepts("run.raw.skyd").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Exclusions_apply_when_the_extension_list_is_empty()
+    {
+        // "Everything" means every acquisition, not every byte in the folder -- and an
+        // instrument computer running AutoQC has plenty of the latter.
+        CandidateFilter.Everything.Accepts(@"C:\data\run.raw.skyd").ShouldBeFalse();
+        CandidateFilter.Everything.Accepts(@"C:\data\run.raw").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void The_exclusion_list_is_the_users_to_extend()
+    {
+        // The defaults cover what is known to sit beside an acquisition today. The point of the
+        // setting is that the next tool to do it does not need a new release.
+        new CandidateFilter([".raw"], [".blib"]).Accepts("run.raw.blib").ShouldBeFalse();
+        new CandidateFilter([".raw"]).Accepts("run.raw.blib").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void An_empty_exclusion_list_is_respected()
+    {
+        // Clearing the box means excluding nothing, not falling back to the defaults. A user who
+        // wants the old behaviour has to be able to get it.
+        new CandidateFilter([".raw"], []).Accepts("run.raw.skyd").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Emptying_the_exclusion_list_cannot_re_arm_uploading_a_partial_file()
+    {
+        // .tmp was briefly in the default exclusion list, which put the one rule this
+        // application must never break somewhere a user can delete it: clearing the box to get
+        // every companion back also re-armed uploading a half-written acquisition. It is one of
+        // IsWorkingFile's own rules now, alongside the .md5 sidecar and SQLite's journals.
+        new CandidateFilter([".raw"], []).Accepts("QC.raw.tmp").ShouldBeFalse();
+        new CandidateFilter([".raw"]).Accepts("QC.raw.tmp").ShouldBeFalse();
+        CandidateFilter.Everything.Accepts("QC.raw.tmp").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void A_finished_file_is_not_rejected_for_reading_like_a_temporary_one()
+    {
+        // The .tmp rule matches the end of the whole name, not one segment of the walk. An mzML
+        // whose stem happens to end in .tmp is a finished mzML.
+        new CandidateFilter([".mzml"]).Accepts("QC.tmp.mzML").ShouldBeTrue();
+        CandidateFilter.Everything.Accepts("QC.tmp.mzML").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void An_empty_extension_list_judges_a_file_by_its_own_extension()
+    {
+        // With nothing to match against, the walk has no reason to stop, so it used to test
+        // every segment of the name on the way down and reject a finished file whose stem merely
+        // read like an excluded one. backup.tmp.zip is a zip; QC.skyd.mzML is an mzML.
+        CandidateFilter.Everything.Accepts("backup.tmp.zip").ShouldBeTrue();
+        CandidateFilter.Everything.Accepts("QC.skyd.mzML").ShouldBeTrue();
+
+        // While the file whose actual extension is excluded is still refused.
+        CandidateFilter.Everything.Accepts("QC.raw.skyd").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void The_filter_and_the_settings_screen_agree_on_the_defaults()
+    {
+        // Two defaults that can drift are worse than one in the wrong place: the screen would
+        // show a list the filter does not use. AppSettings owns it; the filter falls back to it.
+        new CandidateFilter([".raw"]).Exclusions
+            .ShouldBe(AppSettings.DefaultExcludedExtensions, ignoreOrder: true);
     }
 
     [Fact]

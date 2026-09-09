@@ -36,6 +36,57 @@ public sealed class CommandOptionsTests
         options.StableSeconds.ShouldBe(10);
         options.Paths.ShouldBeEmpty();
         options.Extensions.ShouldContain(".raw", "the defaults are the ones the settings screen uses");
+        options.ExcludedExtensions.ShouldContain(".skyd", "so does the exclusion list");
+    }
+
+    [Fact]
+    public void Exclusions_can_be_replaced_or_turned_off_altogether()
+    {
+        Parse("--exclude", ".skyd,.blib").ExcludedExtensions.ShouldBe([".skyd", ".blib"]);
+
+        // An empty argument is how watch reproduces the behaviour before .skyd was excluded,
+        // which is what makes the fix checkable against a real folder rather than only in tests.
+        Parse("--exclude", "").ExcludedExtensions.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void An_exclusion_switch_with_nothing_after_it_says_so()
+    {
+        Reject("--exclude").ShouldContain("--exclude");
+    }
+
+    [Theory]
+    [InlineData("--exclude", "--no-verify")]
+    [InlineData("--ext", "--no-verify")]
+    [InlineData("--exclude", "--concurrency")]
+    public void A_list_switch_will_not_swallow_the_next_option(string switchName, string next)
+    {
+        // There IS a next argument, so a bare arity check passes and the option is taken as the
+        // value: the run would exclude nothing useful AND verify after being told not to, with
+        // nothing on screen about either.
+        Reject(switchName, next).ShouldContain(next);
+    }
+
+    [Fact]
+    public void An_empty_list_is_still_a_value_and_not_a_mistake()
+    {
+        // The escape hatch has to survive the check above -- "" is not option-shaped.
+        Parse("--exclude", "").ExcludedExtensions.ShouldBeEmpty();
+        Parse("--ext", "").Extensions.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Whether_a_filter_was_asked_for_is_recorded()
+    {
+        // sync mirrors the directory whole and builds no filter, so it refuses these rather than
+        // accepting them, ignoring them, and exiting zero.
+        Parse().FiltersGiven.ShouldBeFalse();
+        Parse("--concurrency", "4").FiltersGiven.ShouldBeFalse();
+        Parse("--ext", ".raw").FiltersGiven.ShouldBeTrue();
+        Parse("--exclude", ".skyd").FiltersGiven.ShouldBeTrue();
+
+        // Including the empty form, which is a deliberate instruction and not an absence.
+        Parse("--exclude", "").FiltersGiven.ShouldBeTrue();
     }
 
     [Fact]
@@ -46,12 +97,14 @@ public sealed class CommandOptionsTests
             "--every", "45",
             "--stable", "90",
             "--ext", ".wiff,.d",
+            "--exclude", ".skyd",
             "--no-verify");
 
         options.Concurrency.ShouldBe(6);
         options.ReconcileMinutes.ShouldBe(45);
         options.StableSeconds.ShouldBe(90);
         options.Extensions.ShouldBe([".wiff", ".d"]);
+        options.ExcludedExtensions.ShouldBe([".skyd"]);
         options.Verify.ShouldBeFalse();
     }
 

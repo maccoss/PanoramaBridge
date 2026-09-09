@@ -142,7 +142,7 @@ implicit usings, so the test project puts them back explicitly. See §6.
 | `Monitoring/ReconciliationScanner` | The periodic walk. The mechanism monitoring rests on, and the only thing that guarantees a file is found. |
 | `Monitoring/DirectoryMonitor` | `FileSystemWatcher`, wrapped so it is allowed to fail. An accelerator, never the mechanism. |
 | `Monitoring/ContinuousMonitor` | Puts those two together and feeds the gate. |
-| `Monitoring/CandidateFilter` | Which files count as data. One filter, so the sweep and the watcher cannot disagree. Also walks trailing extensions, so `.wiff` brings `.wiff.scan`. |
+| `Monitoring/CandidateFilter` | Which files count as data. One filter, so the sweep and the watcher cannot disagree. Also walks trailing extensions, so `.wiff` brings `.wiff.scan` — stopping at an excluded one, so `.raw` does not bring `run.raw.skyd`. |
 | `Transfer/UploadDecisionService` | The three-tier "does this need uploading?" ladder. |
 | `Transfer/ChecksumSidecar` | The `.md5` written beside every upload. The only record of a file's hash, and of the date it was acquired, that travels with the data rather than living in a database on one instrument PC. `md5sum -c` reads it unmodified. |
 | `Transfer/TransferCoordinator` | Owns all mutable transfer state, a bounded `Channel`, and N workers. |
@@ -545,8 +545,38 @@ an acquisition early must not remain merely opt-in.
 **Companions travel with the acquisition.** `Path.GetExtension("run.wiff.scan")` is `.scan`, so a
 filter of `.wiff` matched 38 MB of metadata and left 8.2 GB of spectra behind — and recorded it
 verified, correctly as far as it went. `CandidateFilter` now strips trailing extensions one at a
-time, so `.wiff` reaches `.wiff.scan`. Excluded from that walk: SQLite's `-journal`, `-wal` and
-`-shm`, and our own `.md5` sidecar, which would otherwise reach `run.raw` from `run.raw.md5`.
+time, so `.wiff` reaches `.wiff.scan`. Always excluded from that walk, and not a user's to
+remove: SQLite's `-journal`, `-wal` and `-shm`, and our own `.md5` sidecar, which would otherwise
+reach `run.raw` from `run.raw.md5`.
+
+**But the shape of a name cannot tell derived output from a companion.** `run.raw.skyd` is built
+exactly the way `run.wiff.scan` is, and it is Skyline's chromatogram cache — which AutoQC leaves
+beside every run it imports, on the instrument computer, rebuilt from scratch on each re-import.
+The walk reached `.raw` and took it. The comment that used to sit here argued for shape *over* a
+list of suffixes, on the grounds that the vendor inventing the next suffix will not tell us; that
+is still true and still not sufficient, because the tool writing beside an acquisition is not
+always the vendor.
+
+So the walk now stops at an extension in a user-editable exclusion list, defaulting to `.skyd`.
+Two details are load-bearing: it stops **mid-walk** rather than inspecting only the last
+extension, or `run.raw.skyd.gz` walks straight past `.skyd` to `.raw`; and a **match is looked
+for before an exclusion**, so the list can only narrow the walk and never veto an extension
+somebody typed into the transfer box. `pbctl watch --exclude ""` reproduces the old behaviour
+against a real folder, which is how the difference was confirmed outside the tests.
+
+**Nothing safety-critical goes in a list a user can empty.** `.tmp` was in that default for one
+review cycle, which put "never upload a partial file" — the property §6 exists to protect —
+somewhere a user could delete it by following the UI's own advice to clear the box. It is an
+`IsWorkingFile` rule now, matched on the end of the whole name rather than as a segment of the
+walk, so `QC.tmp.mzML` stays acceptable. The general shape: the exclusion list is a *preference*
+about what counts as data, and `IsWorkingFile` is the set of *invariants*; a rule that belongs in
+the second and is written into the first looks identical until somebody empties the box.
+
+**An empty extensions box takes a different path on purpose.** With nothing to match against, the
+walk has no reason to stop, so it ran to the end of the name and tested every segment — rejecting
+`QC.tmp.mzML` and `backup.tmp.zip` as though their stems were their extensions. That case now
+checks only the actual extension. Reachable via `pbctl watch --ext ""` and `CandidateFilter.
+Everything`, not from the UI, where `Validate` requires at least one extension.
 
 See [`VENDOR_FORMATS.md`](VENDOR_FORMATS.md) for the supported formats and the companion rule.
 
