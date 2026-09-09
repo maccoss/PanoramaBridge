@@ -14,7 +14,7 @@
         WindowStartupLocation="CenterScreen">
 
     <!--
-        Overall progress on the taskbar button, so someone can leave the window minimised during
+        Overall progress on the taskbar button, so someone can leave the window minimized during
         a long transfer and still see where it is up to.
     -->
     <Window.TaskbarItemInfo>

@@ -220,7 +220,7 @@ public sealed record AppSettings
     public bool MinimizeToTray { get; init; } = true;
 
 
-    /// <summary>Schema marker, so a future format change can be recognised.</summary>
+    /// <summary>Schema marker, so a future format change can be recognized.</summary>
     [JsonPropertyName("$version")]
     public int Version { get; init; } = 1;
 
@@ -323,7 +323,7 @@ public sealed record AppSettings
         ConflictPolicy == ConflictPolicy.Rename ? this with { ConflictPolicy = ConflictPolicy.Ask } : this;
 
     /// <summary>
-    /// Parses <see cref="Extensions"/> from the comma-separated form the UI shows, normalising
+    /// Parses <see cref="Extensions"/> from the comma-separated form the UI shows, normalizing
     /// each entry to a lower-case leading-dot extension.
     /// </summary>
     public static IReadOnlyList<string> ParseExtensions(string commaSeparated)

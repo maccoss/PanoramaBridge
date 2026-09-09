@@ -909,7 +909,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
             var result = ThermoRawValidator.Validate(reading, reading.Length, localPath);
 
-            if (result.Verdict is ThermoRawVerdict.Unknown or ThermoRawVerdict.NotFinalised)
+            if (result.Verdict is ThermoRawVerdict.Unknown or ThermoRawVerdict.NotFinalized)
             {
                 // Recorded rather than acted on. These are the files that say the checker needs
                 // to learn something, and they are worth nothing if they are invisible.

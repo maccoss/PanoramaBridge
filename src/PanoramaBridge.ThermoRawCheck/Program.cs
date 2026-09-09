@@ -11,7 +11,7 @@ namespace PanoramaBridge.ThermoRawCheck;
 /// Exit codes follow thermo-raw-file-validator so results from the two can be compared directly
 /// in a script: 0 when nothing is wrong or nothing could be determined, 1 when a file is
 /// positively short, 3 when a file could not be read. "Could not be determined" is not a failure;
-/// treating it as one would make an unrecognised revision look like a broken file.
+/// treating it as one would make an unrecognized revision look like a broken file.
 /// </remarks>
 public static class Program
 {

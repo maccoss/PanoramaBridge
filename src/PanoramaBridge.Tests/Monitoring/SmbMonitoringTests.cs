@@ -124,7 +124,7 @@ public sealed class SmbMonitoringTests : IAsyncLifetime
     public void A_file_held_open_on_a_share_is_reported_as_locked()
     {
         // Share modes are enforced by the SMB server, not just locally, so this has to be
-        // confirmed against a real share rather than assumed from local behaviour.
+        // confirmed against a real share rather than assumed from local behavior.
         var path = PathFor("held.raw");
         File.WriteAllBytes(path, new byte[4096]);
 
@@ -186,7 +186,7 @@ public sealed class SmbMonitoringTests : IAsyncLifetime
     public async Task Whether_change_notifications_arrive_is_recorded_not_relied_upon()
     {
         // FileSystemWatcher over SMB depends on the server supporting change notify, and plenty
-        // of appliances do not. The design therefore treats notifications as an optimisation and
+        // of appliances do not. The design therefore treats notifications as an optimization and
         // a periodic sweep as the mechanism. This measures which we are getting, so the answer
         // is known rather than assumed.
         var root = Require();

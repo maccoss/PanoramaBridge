@@ -10,7 +10,7 @@ public sealed class AppSettingsTests
     [InlineData(".RAW; .D", ".raw,.d")]
     [InlineData("raw raw .raw RAW", ".raw")]
     [InlineData("", "")]
-    public void Extensions_are_normalised_to_lower_case_with_a_leading_dot(string input, string expected)
+    public void Extensions_are_normalized_to_lower_case_with_a_leading_dot(string input, string expected)
     {
         // Users type these however they like; matching is done on Path.GetExtension, which is
         // dotted and case-folded, so the stored form has to be too.

@@ -98,7 +98,7 @@ public readonly record struct TransferTotals(
 /// rather than by transfer speed.
 /// </para>
 /// <para>
-/// Deliberately UI-framework-free so this behaviour can be tested without a dispatcher.
+/// Deliberately UI-framework-free so this behavior can be tested without a dispatcher.
 /// </para>
 /// </remarks>
 public sealed class TransferProgressAggregator

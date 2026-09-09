@@ -143,17 +143,17 @@ public sealed class ThermoRawValidatorTests
         // A run that was aborted can be perfectly well-formed for as far as it goes. Calling that
         // truncation would be wrong, and would send someone looking for missing bytes that are
         // not missing.
-        var bytes = new SyntheticRawFile { Finalised = false }.Build();
+        var bytes = new SyntheticRawFile { Finalized = false }.Build();
 
         var result = Check(bytes);
 
-        result.Verdict.ShouldBe(ThermoRawVerdict.NotFinalised);
+        result.Verdict.ShouldBe(ThermoRawVerdict.NotFinalized);
         result.AcquisitionFinished.ShouldBe(false);
         result.IsProvenTruncated.ShouldBeFalse("nothing about it is short");
     }
 
     [Fact]
-    public void An_unrecognised_revision_is_unknown_and_says_so()
+    public void An_unrecognized_revision_is_unknown_and_says_so()
     {
         // The one that must never block. Thermo ships new revisions; if an unfamiliar one stopped
         // uploads, a firmware update would silently halt an instrument.
@@ -162,14 +162,14 @@ public sealed class ThermoRawValidatorTests
         var result = Check(bytes);
 
         result.Verdict.ShouldBe(ThermoRawVerdict.Unknown);
-        result.Reason.ShouldBe(ThermoRawUnknownReason.UnrecognisedFormatVersion);
+        result.Reason.ShouldBe(ThermoRawUnknownReason.UnrecognizedFormatVersion);
         result.FormatVersion.ShouldBe(70);
         result.IsProvenTruncated.ShouldBeFalse();
         result.Summary.ShouldContain("70", customMessage: "the revision has to be recoverable from the record");
     }
 
     [Fact]
-    public void A_recognised_but_unconfirmed_revision_is_also_unknown()
+    public void A_recognized_but_unconfirmed_revision_is_also_unknown()
     {
         var bytes = new SyntheticRawFile { FormatVersion = 8 }.Build();
 
@@ -243,7 +243,7 @@ public sealed class ThermoRawValidatorTests
     [InlineData("run.mzML", false)]
     [InlineData("raw", false)]
     [InlineData("run.raw.md5", false)]
-    public void Candidates_are_recognised_by_extension(string name, bool expected)
+    public void Candidates_are_recognized_by_extension(string name, bool expected)
     {
         ThermoRawValidator.IsCandidate(name).ShouldBe(expected);
     }

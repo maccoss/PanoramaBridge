@@ -6,7 +6,7 @@ and a Sciex dataset with its companions — rather than against an instrument wr
 is real; the acquisition in progress is not.
 
 That distinction is the whole of this page. A downloaded folder is already finished, so it
-establishes everything about recognising, packing, naming and transferring an acquisition, and
+establishes everything about recognizing, packing, naming and transferring an acquisition, and
 nothing at all about deciding when one has stopped being written. The first set is settled. The
 second is not, and cannot be until somebody with the instrument watches it happen — which is why
 a report has somewhere to land at the bottom of this page.
@@ -75,7 +75,7 @@ acquisition.
 
 An extension in the transfer list always wins, so putting one in both boxes still sends it: the
 exclusions can only narrow the companion walk, never veto something somebody typed. That is why
-the label says *as a companion*. Clearing the box restores the earlier behaviour of taking every
+the label says *as a companion*. Clearing the box restores the earlier behavior of taking every
 companion — and settings validation reports the one case where that goes badly wrong, excluding
 `.scan` while `.wiff` is being transferred, which would upload the metadata without the spectra.
 
@@ -85,4 +85,4 @@ so a folder an instrument writes into would not normally hold them; anyone point
 at an analysis folder can add them.
 
 `pbctl watch --exclude .skyd` is the same setting, and `--exclude ""` reproduces the
-behaviour before it existed, which is how the difference is checked against a real folder.
+behavior before it existed, which is how the difference is checked against a real folder.

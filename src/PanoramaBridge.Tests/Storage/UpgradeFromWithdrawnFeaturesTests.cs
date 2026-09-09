@@ -49,7 +49,7 @@ public sealed class UpgradeFromWithdrawnFeaturesTests : IDisposable
         // Both rows were written by a version between v26.3.0 and v26.4.6 and mean something this
         // build has no way to act on. Left alone, the first is listed by no filter at all -- the
         // All filter builds its WHERE from the enum's values -- while the sweep, seeing states and
-        // destinations it does not recognise, offers both files again: under Overwrite that
+        // destinations it does not recognize, offers both files again: under Overwrite that
         // destroys the copy a rename existed to preserve.
         var path = Path.Combine(_dir, $"ledger-{legacy.GetHashCode():x}.db");
 

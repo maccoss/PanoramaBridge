@@ -14,7 +14,7 @@ public enum ThermoRawVerdict
     NotChecked = 0,
 
     /// <summary>
-    /// Every internal pointer lands inside the file and the acquisition is finalised.
+    /// Every internal pointer lands inside the file and the acquisition is finalized.
     /// </summary>
     /// <remarks>
     /// Not a completeness proof. Bytes can be missing from the end of a region whose pointer
@@ -35,7 +35,7 @@ public enum ThermoRawVerdict
     /// The run never finished: aborted, or the instrument stopped. The file may be perfectly
     /// readable as far as it goes, which is why this is not <see cref="Truncated"/>.
     /// </remarks>
-    NotFinalised = 3,
+    NotFinalized = 3,
 
     /// <summary>The file is not a Thermo RAW file at all.</summary>
     NotThermoRaw = 4,
@@ -44,7 +44,7 @@ public enum ThermoRawVerdict
     /// It is a Thermo RAW file, and this could not say anything useful about it.
     /// </summary>
     /// <remarks>
-    /// Never a reason to hold a file back. A Thermo firmware update shipping an unrecognised
+    /// Never a reason to hold a file back. A Thermo firmware update shipping an unrecognized
     /// revision would otherwise stop an instrument uploading, which is a far worse outcome than
     /// transferring a file whose structure was not understood. <see cref="ThermoRawResult.Reason"/>
     /// says why, so the gap can be closed rather than guessed at.
@@ -65,11 +65,11 @@ public enum ThermoRawUnknownReason
     /// <summary>Not applicable: the verdict is not Unknown.</summary>
     None = 0,
 
-    /// <summary>The header parsed, but this revision of the format is not recognised.</summary>
-    UnrecognisedFormatVersion = 1,
+    /// <summary>The header parsed, but this revision of the format is not recognized.</summary>
+    UnrecognizedFormatVersion = 1,
 
     /// <summary>
-    /// A recognised revision whose layout has not been confirmed against real files.
+    /// A recognized revision whose layout has not been confirmed against real files.
     /// </summary>
     UnconfirmedFormatVersion = 2,
 
@@ -113,7 +113,7 @@ public sealed record ThermoRawResult(
     /// </summary>
     public bool NeedsAttention =>
         Verdict is ThermoRawVerdict.Truncated
-            or ThermoRawVerdict.NotFinalised
+            or ThermoRawVerdict.NotFinalized
             or ThermoRawVerdict.Unknown;
 
     /// <summary>One line, for a table cell or a log.</summary>
@@ -124,13 +124,13 @@ public sealed record ThermoRawResult(
         ThermoRawVerdict.Truncated => RequiredBytes is { } needed
             ? $"Truncated - needs {needed:N0} bytes, file is {FileSize:N0}"
             : "Truncated",
-        ThermoRawVerdict.NotFinalised => "Acquisition never finished",
+        ThermoRawVerdict.NotFinalized => "Acquisition never finished",
         ThermoRawVerdict.NotThermoRaw => "Not a Thermo RAW file",
         ThermoRawVerdict.Error => "Could not be read",
         _ => Reason switch
         {
-            ThermoRawUnknownReason.UnrecognisedFormatVersion =>
-                $"Unchecked - RAW revision {FormatVersion} is not recognised",
+            ThermoRawUnknownReason.UnrecognizedFormatVersion =>
+                $"Unchecked - RAW revision {FormatVersion} is not recognized",
             ThermoRawUnknownReason.UnconfirmedFormatVersion =>
                 $"Unchecked - RAW revision {FormatVersion} is not confirmed",
             ThermoRawUnknownReason.LayoutNotUnderstood => "Unchecked - layout not understood",

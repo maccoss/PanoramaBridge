@@ -105,16 +105,16 @@ exactly what would make a growing file look truncated.
 
 | Verdict | Meaning |
 |---|---|
-| `NoTruncationDetected` | Every pointer fits and the acquisition is finalised. Not a completeness proof. |
+| `NoTruncationDetected` | Every pointer fits and the acquisition is finalized. Not a completeness proof. |
 | `Truncated` | Proven short: a pointer or the scan index addresses bytes that are not there. |
-| `NotFinalised` | Structurally sound, but the acquisition-end timestamp is absent — the run never finished. |
+| `NotFinalized` | Structurally sound, but the acquisition-end timestamp is absent — the run never finished. |
 | `Unknown` | It is a RAW file and nothing useful could be established. Carries a reason. |
 | `NotThermoRaw` | Not a Thermo RAW file. |
 | `Error` | Could not be read. |
 
 **`Unknown` never means "do not use this file."** Thermo ships new format revisions, and a checker
 that refused an unfamiliar one would turn a firmware update into an instrument that has silently
-stopped uploading. Unknown verdicts carry a reason — `UnrecognisedFormatVersion`,
+stopped uploading. Unknown verdicts carry a reason — `UnrecognizedFormatVersion`,
 `UnconfirmedFormatVersion`, `LayoutNotUnderstood` — and PanoramaBridge records them against the
 upload so the gaps are findable rather than invisible.
 

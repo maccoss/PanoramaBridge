@@ -31,7 +31,7 @@ public sealed class CandidateFilter
     /// <param name="exclusions">
     /// Extensions the companion walk must not look past, with leading dots. Null takes
     /// <see cref="AppSettings.DefaultExcludedExtensions"/>, so a caller that has never heard of
-    /// the setting still gets the safe behaviour; an empty list means excluding nothing, which is
+    /// the setting still gets the safe behavior; an empty list means excluding nothing, which is
     /// how somebody who wants every companion asks for it.
     /// <para>
     /// This list only narrows the companion walk. It is not where a rule that protects the

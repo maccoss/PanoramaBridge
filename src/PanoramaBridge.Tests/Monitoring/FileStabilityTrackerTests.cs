@@ -3,7 +3,7 @@ using PanoramaBridge.Core.Monitoring;
 namespace PanoramaBridge.Tests.Monitoring;
 
 /// <summary>
-/// Uses real files and real Windows file handles throughout. The behaviour being relied on here
+/// Uses real files and real Windows file handles throughout. The behavior being relied on here
 /// -- which share modes conflict, and when the directory entry's size is stale -- is a property
 /// of the operating system, so a mock would only test the assumptions rather than the reality.
 /// </summary>

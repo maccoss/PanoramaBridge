@@ -103,7 +103,7 @@ public sealed class UpdateService
         catch (Exception ex)
         {
             // A missing or malformed Velopack install must not stop the app from running.
-            _log.LogWarning(ex, "Update manager could not be initialised; updates are disabled.");
+            _log.LogWarning(ex, "Update manager could not be initialized; updates are disabled.");
             _manager = null;
         }
     }

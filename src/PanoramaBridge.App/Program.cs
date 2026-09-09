@@ -73,7 +73,7 @@ public static class Program
             governor.ApplyPoliteDefaults(settings.YieldToInstrumentSoftware);
 
             // The verbose-logging toggle had no effect at all: the level switch existed and
-            // nothing ever set it. Exactly the defect this codebase criticises the Python
+            // nothing ever set it. Exactly the defect this codebase criticizes the Python
             // version for, and it hid a monitoring bug for an afternoon.
             LoggingSetup.ApplyVerbosity(settings.VerboseLogging);
 

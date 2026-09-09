@@ -242,7 +242,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         await RunWithAsync(NewCoordinator(), file);
 
         _server.Content(Destination.Append("future.raw")).ShouldNotBeNull(
-            "an unrecognised revision is not a reason to hold a file back");
+            "an unrecognized revision is not a reason to hold a file back");
 
         var record = await _store.GetAsync(file);
         record!.RawCheck!.ShouldContain("70", customMessage:
@@ -433,7 +433,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_file_uploaded_a_moment_ago_is_recognised_without_asking_again()
+    public async Task A_file_uploaded_a_moment_ago_is_recognized_without_asking_again()
     {
         // Folding the upload into the cached listing has to leave it correct, not merely cheap.
         // A second offer of the same file must reach the same conclusion the server would.
@@ -1073,7 +1073,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task An_interrupted_upload_that_actually_completed_is_recognised_and_skipped()
+    public async Task An_interrupted_upload_that_actually_completed_is_recognized_and_skipped()
     {
         // The bytes may well have arrived before the process died. The decision ladder finds
         // the identical remote copy and does not send it a second time.

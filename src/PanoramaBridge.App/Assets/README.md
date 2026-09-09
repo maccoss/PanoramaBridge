@@ -42,12 +42,12 @@ square.resize((256, 256), Image.LANCZOS).save(
 ## Why the disc is opaque
 
 An earlier version left the inside of the ring transparent, which looked clean in isolation and
-was wrong in use: the blue skyline sat straight on the taskbar colour and disappeared against a
+was wrong in use: the blue skyline sat straight on the taskbar color and disappeared against a
 dark one. The emblem now sits on an opaque **white disc**, clipped to the ring rather than to the
 whole tile.
 
-White rather than a grey matched to the Windows 11 title bar (`#F2F3F4`, sampled from a
-screenshot): an icon carries one fixed colour and cannot follow the theme, and white is the one
+White rather than a gray matched to the Windows 11 title bar (`#F2F3F4`, sampled from a
+screenshot): an icon carries one fixed color and cannot follow the theme, and white is the one
 that survives a dark taskbar. On a light taskbar the yellow ring supplies the edge, so the disc
 disappearing into the background does not matter. A square white tile was tried too and is worse
 -- a round emblem in a hard white box, heavy against a dark bar.

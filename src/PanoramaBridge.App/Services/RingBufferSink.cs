@@ -6,7 +6,7 @@ namespace PanoramaBridge.App.Services;
 
 /// <summary>A single rendered log line held in memory for the Activity Log pane.</summary>
 /// <param name="Timestamp">When the event was raised.</param>
-/// <param name="Level">Severity, so the pane can filter and colour.</param>
+/// <param name="Level">Severity, so the pane can filter and color.</param>
 /// <param name="Message">The rendered message, already redacted by the enricher.</param>
 public readonly record struct LogLine(DateTimeOffset Timestamp, LogEventLevel Level, string Message);
 

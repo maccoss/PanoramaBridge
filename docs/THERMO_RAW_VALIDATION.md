@@ -116,7 +116,7 @@ rather than an error, because most files in a monitored folder are not RAW files
 ### 2. Is the revision one we understand?
 
 Structural layout is **confirmed** for revisions **47, 57, 60, 62, 63, 64, 66**. Revision 8 is
-recognised but unconfirmed. Anything else stops here with `Unknown`, carrying a reason.
+recognized but unconfirmed. Anything else stops here with `Unknown`, carrying a reason.
 
 ### 3. The preamble — `RawStructure.LocateRunHeaders`
 
@@ -159,9 +159,9 @@ perfectly whole.
 
 | Verdict | Meaning | Effect on a transfer |
 |---|---|---|
-| `NoTruncationDetected` | Pointers fit, acquisition finalised | Uploads |
+| `NoTruncationDetected` | Pointers fit, acquisition finalized | Uploads |
 | `Truncated` | **Proven** short | **Held** |
-| `NotFinalised` | Sound, but the acquisition-end timestamp is absent | Uploads, recorded |
+| `NotFinalized` | Sound, but the acquisition-end timestamp is absent | Uploads, recorded |
 | `Unknown` | Nothing could be established. Carries a reason | Uploads, recorded |
 | `NotThermoRaw` | Not a RAW file | Uploads, nothing recorded |
 | `Error` | Could not be read | Uploads |
@@ -178,7 +178,7 @@ unfamiliar one would turn a firmware update into an instrument that has silently
 — far worse than transferring a file whose structure was not understood. A test walks every verdict
 asserting that only `Truncated` holds anything back.
 
-`NotFinalised` also does not block: an aborted run is a real file that someone may well want kept.
+`NotFinalized` also does not block: an aborted run is a real file that someone may well want kept.
 It is recorded so the decision is theirs.
 
 ---
@@ -254,11 +254,11 @@ Read these before trusting a green result.
    external digest instead — which is what PanoramaBridge's server-MD5 verification already is, over
    every byte the server stored. Adding the Adler-32 would be a weaker guarantee than one we have.
 
-5. **Thermo only.** Waters also writes `.raw`, as a *directory*; those are recognised and skipped.
+5. **Thermo only.** Waters also writes `.raw`, as a *directory*; those are recognized and skipped.
    Bruker `.d`, Sciex `.wiff` and everything else are untouched.
 
 6. **A file could in principle be reopened after the check.** The window between the exclusive open
-   closing and the upload starting is not zero. Nothing in normal acquisition behaviour does this,
+   closing and the upload starting is not zero. Nothing in normal acquisition behavior does this,
    and the existing size-and-hash checks during upload would catch the result.
 
 7. **Anomalies and truncation can be confused by a misread layout.** If the preamble walk goes
@@ -274,7 +274,7 @@ Read these before trusting a green result.
 To add a format revision:
 
 1. Get real files of that revision and run the current build against them.
-2. Add the number to `ThermoRawHeader.RecognisedVersions`, and to `ConfirmedVersions` only once it
+2. Add the number to `ThermoRawHeader.RecognizedVersions`, and to `ConfirmedVersions` only once it
    has been checked against real acquisitions.
 3. Adjust `RawStructure.LocateRunHeaders` and `ParseRunHeader` if the preamble or run header moved,
    and `RunHeader.ScanIndexEntrySize` if the entry grew.

@@ -10,7 +10,7 @@ namespace PanoramaBridge.Core.WebDav;
 /// <remarks>
 /// Preferred over PROPFIND for every listing: it is a smaller payload, needs no XML namespace
 /// handling, and carries the per-resource permission flags and allowed-verb string that PROPFIND
-/// does not. Those are what let the remote folder browser grey out a folder the user cannot
+/// does not. Those are what let the remote folder browser gray out a folder the user cannot
 /// upload to, instead of letting them choose it and discover a 403 hours later.
 /// </remarks>
 public static class MethodJsonParser

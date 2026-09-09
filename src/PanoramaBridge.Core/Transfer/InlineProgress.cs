@@ -7,7 +7,7 @@ namespace PanoramaBridge.Core.Transfer;
 /// <para>
 /// The framework's <see cref="Progress{T}"/> deliberately does not do this: it captures a
 /// synchronization context and <em>posts</em> each report, falling back to the thread pool when
-/// there is none. That is the right behaviour for a UI callback, and the wrong behaviour here,
+/// there is none. That is the right behavior for a UI callback, and the wrong behavior here,
 /// because it means a report can be delivered after the code that follows it has already run.
 /// </para>
 /// <para>

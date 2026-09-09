@@ -4,7 +4,7 @@ PanoramaBridge is a native Windows application built on .NET 8 and WPF.
 
 | Document | What it covers |
 |---|---|
-| **[.NET port handoff](DOTNET_PORT_HANDOFF.md)** | The one to read first. Architecture, verified server behaviour, measured costs, and the traps that cost real time to learn. |
+| **[.NET port handoff](DOTNET_PORT_HANDOFF.md)** | The one to read first. Architecture, verified server behavior, measured costs, and the traps that cost real time to learn. |
 | **[AI development guide](../CLAUDE.md)** | House style, layout, build and release commands. |
 | **[Release process](../release-notes/README.md)** | Versioning, writing release notes, and how a release is actually published. |
 | **[Release notes](../release-notes/)** | One file per version; each becomes the GitHub Release body. |

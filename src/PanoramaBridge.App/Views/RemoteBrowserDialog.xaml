@@ -14,7 +14,7 @@
     <DockPanel Margin="12" LastChildFill="True">
 
         <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}" Margin="0,0,0,8"
-                   Text="Folders you cannot upload to are greyed out. Knowing that now beats finding out at the end of a long transfer." />
+                   Text="Folders you cannot upload to are grayed out. Knowing that now beats finding out at the end of a long transfer." />
 
         <Border DockPanel.Dock="Bottom" Margin="0,10,0,0">
             <DockPanel>
