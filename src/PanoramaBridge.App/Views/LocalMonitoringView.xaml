@@ -8,60 +8,67 @@
              d:DataContext="{d:DesignInstance Type=vm:SettingsViewModel}"
              d:DesignHeight="600" d:DesignWidth="900">
 
+    <!--
+        The explanations are tooltips rather than gray paragraphs under every control. There was
+        more explanation on this tab than there were settings, which buried the settings; the
+        text is worth keeping and worth reading once, but not worth re-reading on every visit.
+
+        Where the tooltip belongs to a whole row rather than one control, it goes on the panel,
+        which carries the HelpRow style — see App.xaml for why that style exists.
+    -->
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel>
 
             <GroupBox Header="Directory to monitor">
                 <StackPanel>
-                    <DockPanel Margin="{StaticResource RowMargin}">
+                    <DockPanel Margin="{StaticResource RowMargin}" Style="{StaticResource HelpRow}"
+                               ToolTip="A folder on a file server works too. Pick a mapped drive and PanoramaBridge records the full network path instead, because a drive letter belongs to a single Windows sign-in and would not resolve if PanoramaBridge were ever started as a service or scheduled task.&#10;&#10;Choose the folder your instrument writes into rather than the top of a shared drive. Every re-check walks the whole folder, and over the network that takes about half a minute for thirty thousand files.">
                         <Button DockPanel.Dock="Right" Content="Browse..." Margin="8,0,0,0"
                                 Command="{Binding BrowseLocalDirectoryCommand}" />
                         <TextBox Text="{Binding LocalDirectory, UpdateSourceTrigger=PropertyChanged}" />
                     </DockPanel>
                     <CheckBox Content="Include subdirectories"
-                              IsChecked="{Binding IncludeSubdirectories}" />
-                    <TextBlock Style="{StaticResource Hint}"
-                               Text="A folder on a file server works too. Pick a mapped drive and PanoramaBridge records the full network path instead, because a drive letter belongs to a single Windows sign-in and would not resolve if PanoramaBridge were ever started as a service or scheduled task." />
-                    <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0"
-                               Text="Choose the folder your instrument writes into rather than the top of a shared drive. Every re-check walks the whole folder, and over the network that takes about half a minute for thirty thousand files." />
+                              IsChecked="{Binding IncludeSubdirectories}"
+                              ToolTip="Walk folders inside the monitored folder as well. Leave this on unless the instrument writes everything into one flat folder." />
                 </StackPanel>
             </GroupBox>
 
             <GroupBox Header="File types">
                 <StackPanel>
-                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,4"
-                               Text="Transfer" />
-                    <DockPanel Margin="{StaticResource RowMargin}">
-                        <Button DockPanel.Dock="Right" Content="Defaults" Margin="8,0,0,0"
-                                Command="{Binding RestoreDefaultExtensionsCommand}" />
-                        <TextBox Text="{Binding ExtensionsText, UpdateSourceTrigger=PropertyChanged}" />
-                    </DockPanel>
-                    <TextBlock Style="{StaticResource Hint}"
-                               Text="Comma-separated. Matched against the file extension exactly, so .raw does not also match archive.notraw. A file whose name carries an extra suffix travels with the acquisition it belongs to, so asking for .wiff also brings run.wiff.scan, where the spectra actually are." />
+                    <StackPanel Style="{StaticResource HelpRow}"
+                                ToolTip="Comma-separated. Matched against the file extension exactly, so .raw does not also match archive.notraw.&#10;&#10;A file whose name carries an extra suffix travels with the acquisition it belongs to, so asking for .wiff also brings run.wiff.scan, where the spectra actually are.">
+                        <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,4"
+                                   Text="Transfer" />
+                        <DockPanel Margin="{StaticResource RowMargin}">
+                            <Button DockPanel.Dock="Right" Content="Defaults" Margin="8,0,0,0"
+                                    Command="{Binding RestoreDefaultExtensionsCommand}" />
+                            <TextBox Text="{Binding ExtensionsText, UpdateSourceTrigger=PropertyChanged}" />
+                        </DockPanel>
+                    </StackPanel>
 
-                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,12,0,4"
-                               Text="Never transfer as a companion" />
-                    <DockPanel Margin="{StaticResource RowMargin}">
-                        <Button DockPanel.Dock="Right" Content="Defaults" Margin="8,0,0,0"
-                                Command="{Binding RestoreDefaultExcludedExtensionsCommand}" />
-                        <TextBox Text="{Binding ExcludedExtensionsText, UpdateSourceTrigger=PropertyChanged}" />
-                    </DockPanel>
-                    <TextBlock Style="{StaticResource Hint}"
-                               Text="Files another program derives from an acquisition and leaves next to it. Skyline writes run.raw.skyd beside run.raw, so a folder AutoQC is watching fills up with chromatogram caches that look like .raw files and are not. Add anything else that appears alongside your data." />
-                    <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0"
-                               Text="These are only ignored when they sit on top of something else, which is why an extension listed above is still transferred in its own right. Clearing this box transfers every companion file." />
+                    <StackPanel Style="{StaticResource HelpRow}" Margin="0,8,0,0"
+                                ToolTip="Files another program derives from an acquisition and leaves next to it. Skyline writes run.raw.skyd beside run.raw, so a folder AutoQC is watching fills up with chromatogram caches that look like .raw files and are not. Add anything else that appears alongside your data.&#10;&#10;These are only ignored when they sit on top of something else, which is why an extension listed above is still transferred in its own right. Clearing this box transfers every companion file.">
+                        <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,4"
+                                   Text="Never transfer as a companion" />
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="Defaults" Margin="8,0,0,0"
+                                    Command="{Binding RestoreDefaultExcludedExtensionsCommand}" />
+                            <TextBox Text="{Binding ExcludedExtensionsText, UpdateSourceTrigger=PropertyChanged}" />
+                        </DockPanel>
+                    </StackPanel>
                 </StackPanel>
             </GroupBox>
 
-            <GroupBox Header="When is a file finished?">
+            <GroupBox Header="When is a file finished?"
+                      ToolTip="A file is only uploaded once nothing else holds it open AND its size has stopped changing. Both checks are needed: an instrument often leaves its output readable while still writing, and Windows does not keep a file's recorded size up to date while a write handle is open.">
                 <StackPanel>
-                    <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,10"
-                               Text="A file is only uploaded once nothing else holds it open AND its size has stopped changing. Both checks are needed: an instrument often leaves its output readable while still writing, and Windows does not keep a file's recorded size up to date while a write handle is open." />
-
-                    <Grid Margin="{StaticResource RowMargin}">
+                    <Grid Margin="{StaticResource RowMargin}" Style="{StaticResource HelpRow}"
+                          ToolTip="How long a file's size must stay unchanged before it counts as finished.">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220" />
                             <ColumnDefinition Width="90" />
+                            <!-- Empty, and kept: it stretches the row so the whole width is a
+                                 hover target for the tooltip, not just the label and the box. -->
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}"
@@ -69,56 +76,66 @@
                         <TextBox Grid.Column="1" Text="{Binding StabilitySeconds}" />
                     </Grid>
 
-                    <Grid>
+                    <Grid Style="{StaticResource HelpRow}"
+                          ToolTip="Always on. File system notifications get dropped under load and are unreliable over network shares, so the periodic sweep is the real safety net.">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220" />
                             <ColumnDefinition Width="90" />
+                            <!-- Empty, and kept: it stretches the row so the whole width is a
+                                 hover target for the tooltip, not just the label and the box. -->
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}"
                                    Text="Re-check the folder every (minutes)" />
                         <TextBox Grid.Column="1" Text="{Binding ReconcileMinutes}" />
-                        <TextBlock Grid.Column="2" Style="{StaticResource Hint}" Margin="12,0,0,0"
-                                   Text="Always on. File system notifications get dropped under load and are unreliable over network shares, so the periodic sweep is the real safety net." />
                     </Grid>
                 </StackPanel>
             </GroupBox>
 
-            <GroupBox Header="Files held open by an instrument">
+            <GroupBox Header="Files held open by an instrument"
+                      ToolTip="An instrument holds its output file for the whole of a run. PanoramaBridge keeps looking at it, slowly, because the only way to find out that a file has been released is to try.">
                 <StackPanel>
-                    <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,10"
-                               Text="An instrument holds its output file for the whole of a run. PanoramaBridge keeps looking at it, slowly, because the only way to find out that a file has been released is to try." />
-
-                    <Grid Margin="{StaticResource RowMargin}">
+                    <Grid Margin="{StaticResource RowMargin}" Style="{StaticResource HelpRow}"
+                          ToolTip="Also how long you may wait for a finished file to start transferring.">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220" />
                             <ColumnDefinition Width="90" />
+                            <!-- Empty, and kept: it stretches the row so the whole width is a
+                                 hover target for the tooltip, not just the label and the box. -->
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}"
                                    Text="Look again every (seconds)" />
                         <TextBox Grid.Column="1" Text="{Binding LockedFileRetryIntervalSeconds}" />
-                        <TextBlock Grid.Column="2" Style="{StaticResource Hint}" Margin="12,0,0,0"
-                                   Text="Also how long you may wait for a finished file to start transferring." />
                     </Grid>
 
-                    <Grid>
+                    <Grid Style="{StaticResource HelpRow}"
+                          ToolTip="The file is not forgotten. It goes back to the folder check above, which offers it again on its next pass.">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220" />
                             <ColumnDefinition Width="90" />
+                            <!-- Empty, and kept: it stretches the row so the whole width is a
+                                 hover target for the tooltip, not just the label and the box. -->
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}"
                                    Text="Stop watching closely after (checks)" />
                         <TextBox Grid.Column="1" Text="{Binding LockedFileMaxRetries}" />
-                        <TextBlock Grid.Column="2" Style="{StaticResource Hint}" Margin="12,0,0,0"
-                                   Text="The file is not forgotten. It goes back to the folder check above, which offers it again on its next pass." />
                     </Grid>
                 </StackPanel>
             </GroupBox>
 
-            <GroupBox Header="When a different file is already on the server">
+            <GroupBox Header="When a different file is already on the server"
+                      ToolTip="Changing this decides the files already being held, not just the next one — but it is read when monitoring starts, so save it and then stop and start monitoring for it to reach files that are already held.&#10;&#10;It only applies to a file nobody can account for: editing a file that PanoramaBridge uploaded itself is treated as a new version and re-sent without asking. A file held because it is damaged stays held whichever option you choose, until the file itself is replaced.">
                 <StackPanel>
+                    <!--
+                        The options deliberately carry no tooltips of their own. The innermost
+                        tooltip is the one shown, so giving each option a short description hid
+                        the group's text behind the group header — and the sentence that matters
+                        most is in there: that changing this reaches files already held only
+                        after monitoring is stopped and started. That is what the pointer needs
+                        to find when it is on the option being chosen.
+                    -->
                     <!--
                         Not "Ask me". Nothing asks: there is no prompt and no per-file button, so
                         the label promised an interaction that never arrives and left people
@@ -134,8 +151,6 @@
                     <RadioButton GroupName="Conflict"
                                  Content="Replace the copy on the server"
                                  IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Overwrite}" />
-                    <TextBlock Style="{StaticResource Hint}"
-                               Text="Changing this decides the files already being held, not just the next one — but it is read when monitoring starts, so save it and then stop and start monitoring for it to reach files that are already held. It only applies to a file nobody can account for: editing a file that PanoramaBridge uploaded itself is treated as a new version and re-sent without asking. A file held because it is damaged stays held whichever option you choose, until the file itself is replaced." />
                 </StackPanel>
             </GroupBox>
 
@@ -148,13 +163,12 @@
             <GroupBox Header="This application">
                 <StackPanel>
                     <CheckBox Content="Keep running in the notification area when closed"
-                              IsChecked="{Binding MinimizeToTray}" />
-                    <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,10"
-                               Text="Closing the window leaves PanoramaBridge running and, if it was monitoring, still watching. Click its icon to bring the window back, or use Exit on the icon's menu to stop it." />
+                              Margin="{StaticResource RowMargin}"
+                              IsChecked="{Binding MinimizeToTray}"
+                              ToolTip="Closing the window leaves PanoramaBridge running and, if it was monitoring, still watching. Click its icon to bring the window back, or use Exit on the icon's menu to stop it." />
 
-                    <CheckBox Content="Verbose logging" IsChecked="{Binding VerboseLogging}" />
-                    <TextBlock Style="{StaticResource Hint}"
-                               Text="Records every decision rather than the important ones. Useful when reporting a problem; it takes effect immediately, without a restart." />
+                    <CheckBox Content="Verbose logging" IsChecked="{Binding VerboseLogging}"
+                              ToolTip="Records every decision rather than the important ones. Useful when reporting a problem; it takes effect immediately, without a restart." />
                 </StackPanel>
             </GroupBox>
 

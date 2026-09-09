@@ -68,7 +68,7 @@
                 Padding="12,10">
             <DockPanel>
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
-                    <Button Content="{Binding MonitoringButtonText}" Style="{StaticResource ToolbarButton}"
+                    <Button Content="{Binding MonitoringButtonText}" Style="{StaticResource MonitoringButton}"
                             Command="{Binding ToggleMonitoringCommand}" />
                     <Button Content="{Binding UploadNowButtonText}" Style="{StaticResource ToolbarButton}"
                             Command="{Binding UploadNowCommand}" IsDefault="True" />

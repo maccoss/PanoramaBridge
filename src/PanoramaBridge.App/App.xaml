@@ -36,27 +36,156 @@
             <Setter Property="Margin" Value="0,0,0,6" />
         </Style>
 
+        <!--
+            Explanation lives in tooltips rather than under every control. Two settings make that
+            workable: paragraphs have to wrap, and they have to stay on screen long enough to be
+            read. The default ToolTip does neither — it lays a paragraph out as one very long
+            line, and takes it away after five seconds, which is not enough for the longer ones
+            here.
+        -->
+        <Style TargetType="ToolTip">
+            <Setter Property="MaxWidth" Value="460" />
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!--
+            ShowDuration is set on every type that owns a tooltip, rather than once near the root,
+            because ToolTipService's attached properties do not inherit down the tree — confirmed
+            rather than assumed: ShowDurationProperty's metadata reports Inherits false. It is
+            read from the element the ToolTip is set on, so a control that only sits inside a
+            tooltip's owner does not need it.
+        -->
         <Style TargetType="GroupBox">
             <Setter Property="Padding" Value="{StaticResource GroupPadding}" />
             <Setter Property="Margin" Value="{StaticResource GroupMargin}" />
+            <Setter Property="ToolTipService.ShowDuration" Value="60000" />
+        </Style>
+
+        <Style TargetType="RadioButton">
+            <Setter Property="ToolTipService.ShowDuration" Value="60000" />
+        </Style>
+
+        <!--
+            For a panel that carries the tooltip for a whole row, so hovering the label, the box,
+            or the space between them all explain the same setting.
+
+            Background matters as much as the duration: a panel with no background does not
+            hit-test, so the tooltip would appear over the controls and nowhere else — which
+            looks like it works, until the pointer crosses the gap.
+        -->
+        <Style x:Key="HelpRow" TargetType="Panel">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="ToolTipService.ShowDuration" Value="60000" />
         </Style>
 
         <Style TargetType="Button">
             <Setter Property="Padding" Value="14,5" />
             <Setter Property="MinWidth" Value="92" />
+            <Setter Property="ToolTipService.ShowDuration" Value="60000" />
         </Style>
 
         <Style x:Key="ToolbarButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Margin" Value="0,0,8,0" />
         </Style>
 
+        <!--
+            The monitoring button, colored by what pressing it will do: green to start, red to
+            stop. Both are dark enough for white text (5.4:1 and 6.7:1, so AA at any size), and
+            the color only repeats what the label already says, so nothing depends on being able
+            to tell them apart.
+        -->
+        <SolidColorBrush x:Key="StartGreen" Color="#1F7A3F" />
+        <SolidColorBrush x:Key="StopRed" Color="#B3261E" />
+
+        <Style x:Key="MonitoringButton" TargetType="Button" BasedOn="{StaticResource ToolbarButton}">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Background" Value="{StaticResource StartGreen}" />
+
+            <!--
+                Wide enough for either label, so the button does not resize when it toggles.
+                Without this, every button to its right slides sideways the instant monitoring
+                starts — under a pointer that is usually still moving toward one of them.
+            -->
+            <Setter Property="MinWidth" Value="150" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <!--
+                        A template is needed, not just a Background setter. The default Windows
+                        button template swaps in its own theme brush on hover and while pressed,
+                        so a plain Background is dropped the moment the pointer crosses the
+                        button and it flickers back to gray.
+
+                        Hover and pressed are a black wash over whichever color is underneath,
+                        rather than six more brushes, so the two states stay in step by
+                        construction: adding a third color later needs no new trigger.
+                    -->
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="Chrome" CornerRadius="3"
+                                    Background="{TemplateBinding Background}"
+                                    SnapsToDevicePixels="True" />
+                            <Border x:Name="Shade" CornerRadius="3" Background="Black"
+                                    Opacity="0" SnapsToDevicePixels="True" />
+                            <ContentPresenter x:Name="Label"
+                                              Margin="{TemplateBinding Padding}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Shade" Property="Opacity" Value="0.12" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Shade" Property="Opacity" Value="0.24" />
+                            </Trigger>
+                            <!--
+                                No focus trigger here on purpose. Replacing the template does not
+                                replace FocusVisualStyle, so Windows still draws its own focus
+                                rectangle; adding a border of our own drew a second one over it.
+                                The platform's is also the one that stays visible whatever color
+                                the button currently is, which a fixed white border would not.
+                            -->
+                            <!--
+                                Disabled has to drop the color entirely. A grayed-out green
+                                button still reads as "press me", and this one is disabled
+                                precisely when starting would fail.
+                            -->
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Chrome" Property="Background" Value="#D6D6D6" />
+                                <Setter Property="Foreground" Value="#6E6E6E" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <!--
+                    Bound to the same property as the label, so the color and the words cannot
+                    disagree about which state the application is in.
+                -->
+                <DataTrigger Binding="{Binding IsMonitoring}" Value="True">
+                    <Setter Property="Background" Value="{StaticResource StopRed}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <Style TargetType="CheckBox">
             <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="ToolTipService.ShowDuration" Value="60000" />
         </Style>
 
         <Style TargetType="TextBox">
             <Setter Property="Padding" Value="4,3" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="ToolTipService.ShowDuration" Value="60000" />
         </Style>
 
     </Application.Resources>

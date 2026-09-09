@@ -8,29 +8,26 @@
              d:DataContext="{d:DesignInstance Type=vm:SettingsViewModel}"
              d:DesignHeight="600" d:DesignWidth="900">
 
+    <!-- Explanation is in tooltips here for the same reason as Local Monitoring. -->
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel>
 
-            <GroupBox Header="Panorama server">
-                <StackPanel>
-                    <TextBox Margin="{StaticResource RowMargin}"
-                             Text="{Binding ServerUrl, UpdateSourceTrigger=PropertyChanged}" />
-                    <TextBlock Style="{StaticResource Hint}"
-                               Text="Certificates are always validated. If your site uses a TLS-inspecting proxy, add its root certificate below rather than turning checking off - there is no option to do that." />
-                </StackPanel>
+            <GroupBox Header="Panorama server"
+                      ToolTip="Certificates are always validated. If your site uses a TLS-inspecting proxy, add its root certificate under Advanced rather than turning checking off — there is no option to do that.">
+                <TextBox Text="{Binding ServerUrl, UpdateSourceTrigger=PropertyChanged}" />
             </GroupBox>
 
             <GroupBox Header="Sign in">
                 <StackPanel>
                     <RadioButton Margin="{StaticResource RowMargin}" GroupName="Auth"
                                  Content="API key (recommended)"
-                                 IsChecked="{Binding AuthMode, Converter={StaticResource EnumMatch}, ConverterParameter=ApiKey}" />
-                    <TextBlock Style="{StaticResource Hint}" Margin="22,0,0,8"
-                               Text="An API key can be revoked without changing your account password, can be limited to a role, and expires on its own. Safer than a password on a shared instrument PC." />
+                                 IsChecked="{Binding AuthMode, Converter={StaticResource EnumMatch}, ConverterParameter=ApiKey}"
+                                 ToolTip="An API key can be revoked without changing your account password, can be limited to a role, and expires on its own. Safer than a password on a shared instrument PC." />
 
                     <RadioButton Margin="{StaticResource RowMargin}" GroupName="Auth"
                                  Content="User name and password"
-                                 IsChecked="{Binding AuthMode, Converter={StaticResource EnumMatch}, ConverterParameter=UserNameAndPassword}" />
+                                 IsChecked="{Binding AuthMode, Converter={StaticResource EnumMatch}, ConverterParameter=UserNameAndPassword}"
+                                 ToolTip="Your ordinary Panorama account. Prefer an API key where you can." />
 
                     <Grid Margin="0,8,0,0"
                           Visibility="{Binding IsApiKey, Converter={StaticResource InverseBooleanToVisibility}}">
@@ -61,33 +58,35 @@
 
                         <Button Grid.Column="2" Margin="8,0,0,0" Content="Get a key"
                                 Command="{Binding OpenApiKeyPageCommand}"
+                                ToolTip="Opens the page on Panorama where an API key is generated."
                                 Visibility="{Binding IsApiKey, Converter={StaticResource BooleanToVisibility}}" />
                     </Grid>
 
                     <CheckBox Margin="0,10,0,0"
                               Content="Remember this in Windows Credential Manager"
-                              IsChecked="{Binding SaveCredentials}" />
-                    <TextBlock Style="{StaticResource Hint}"
-                               Text="Stored by Windows, encrypted for your account, and removable from Control Panel. It is never written to PanoramaBridge's own settings file." />
+                              IsChecked="{Binding SaveCredentials}"
+                              ToolTip="Stored by Windows, encrypted for your account, and removable from Control Panel. It is never written to PanoramaBridge's own settings file." />
                 </StackPanel>
             </GroupBox>
 
-            <GroupBox Header="Where to upload">
-                <StackPanel>
-                    <DockPanel Margin="{StaticResource RowMargin}">
-                        <Button DockPanel.Dock="Right" Content="Browse..." Margin="8,0,0,0"
-                                Click="BrowseRemote_Click" />
-                        <ComboBox IsEditable="True"
-                                  Text="{Binding RemotePath, UpdateSourceTrigger=PropertyChanged}"
-                                  ItemsSource="{Binding RecentRemotePaths}" />
-                    </DockPanel>
-                    <TextBlock Style="{StaticResource Hint}"
-                               Text="The MacCoss lab folder is offered by default. The local folder structure below the monitored directory is mirrored here." />
-                </StackPanel>
+            <GroupBox Header="Where to upload"
+                      ToolTip="The MacCoss lab folder is offered by default. The local folder structure below the monitored directory is mirrored here.">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="Browse..." Margin="8,0,0,0"
+                            Click="BrowseRemote_Click" />
+                    <ComboBox IsEditable="True"
+                              Text="{Binding RemotePath, UpdateSourceTrigger=PropertyChanged}"
+                              ItemsSource="{Binding RecentRemotePaths}" />
+                </DockPanel>
             </GroupBox>
 
             <GroupBox Header="Transfers">
                 <StackPanel>
+                    <!--
+                        ConcurrencyAdvice stays on screen rather than moving into a tooltip: it
+                        changes as the slider moves, and advice you have to stop and hover for is
+                        advice you get after choosing rather than while choosing.
+                    -->
                     <Grid Margin="{StaticResource RowMargin}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="150" />
@@ -107,27 +106,23 @@
                     </Grid>
 
                     <CheckBox Content="Check every upload against the server's own hash"
-                              IsChecked="{Binding VerifyUploads}" />
-                    <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,10"
-                               Text="Costs one extra request per file and is the only thing that makes a green tick mean anything. Turning it off is not recommended." />
+                              Margin="{StaticResource RowMargin}"
+                              IsChecked="{Binding VerifyUploads}"
+                              ToolTip="Costs one extra request per file and is the only thing that makes a green tick mean anything. Turning it off is not recommended." />
 
                     <CheckBox Content="Write a .md5 file beside each upload"
-                              IsChecked="{Binding WriteChecksumSidecars}" />
-                    <TextBlock Style="{StaticResource Hint}"
-                               Text="A small text file next to each uploaded file, holding its checksum and the date the instrument wrote it, in the format md5sum reads. It is the only record that travels with the data: PanoramaBridge's own database stays on this computer, and Panorama stamps an uploaded file with the time it arrived rather than the time it was collected." />
+                              IsChecked="{Binding WriteChecksumSidecars}"
+                              ToolTip="A small text file next to each uploaded file, holding its checksum and the date the instrument wrote it, in the format md5sum reads. It is the only record that travels with the data: PanoramaBridge's own database stays on this computer, and Panorama stamps an uploaded file with the time it arrived rather than the time it was collected." />
                 </StackPanel>
             </GroupBox>
 
-            <GroupBox Header="Advanced">
-                <StackPanel>
-                    <DockPanel Margin="{StaticResource RowMargin}">
-                        <Button DockPanel.Dock="Right" Content="Browse..." Margin="8,0,0,0"
-                                Command="{Binding BrowseCertificateCommand}" />
-                        <TextBox Text="{Binding TrustedRootCertificatePath, UpdateSourceTrigger=PropertyChanged}" />
-                    </DockPanel>
-                    <TextBlock Style="{StaticResource Hint}"
-                               Text="Optional additional root certificate, trusted in addition to the ones Windows already trusts." />
-                </StackPanel>
+            <GroupBox Header="Advanced"
+                      ToolTip="Optional additional root certificate, trusted in addition to the ones Windows already trusts.">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="Browse..." Margin="8,0,0,0"
+                            Command="{Binding BrowseCertificateCommand}" />
+                    <TextBox Text="{Binding TrustedRootCertificatePath, UpdateSourceTrigger=PropertyChanged}" />
+                </DockPanel>
             </GroupBox>
 
         </StackPanel>
