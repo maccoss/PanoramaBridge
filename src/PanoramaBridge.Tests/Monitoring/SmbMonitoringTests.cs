@@ -545,14 +545,22 @@ public sealed class SmbMonitoringTests : IAsyncLifetime
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    // Someone else's, or still held. Not worth failing a run over.
+                    // Someone else's, or still held. Not worth failing a run over -- but said
+                    // out loud, because a folder this old failing to delete is the shape of the
+                    // problem this sweep exists to clear, and swallowing it silently is how
+                    // that went unnoticed in the first place.
+                    Console.WriteLine(
+                        $"SMB sweep: left {Path.GetFileName(stale)} alone "
+                        + $"({ex.GetType().Name}: {ex.Message}).");
                 }
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // The share went away between the check and the walk. The tests themselves will
-            // report that far more clearly than a sweep can.
+            // report that far more clearly than a sweep can, so this is a note and not a
+            // failure.
+            Console.WriteLine($"SMB sweep: skipped ({ex.GetType().Name}: {ex.Message}).");
         }
     }
 }
