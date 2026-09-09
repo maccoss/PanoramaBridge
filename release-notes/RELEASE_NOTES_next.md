@@ -12,9 +12,10 @@ time and update the heading; see `README.md` in this directory for the process.
 
 - **The settings tabs explain themselves on hover instead of in grey paragraphs.** Local
   Monitoring and Remote Settings carried more explanation than settings, which buried the things
-  you came to change — the whole of Local Monitoring now fits on screen without scrolling. The
-  text is unchanged and none of it is lost: hover a setting, or its label, or the space beside it,
-  and the same words appear.
+  you came to change — the whole of Local Monitoring now fits on screen without scrolling. None of
+  the explanation is lost: hover a setting, or its label, or the space beside it, and it appears.
+  A few settings that had no explanation before have gained a short one, and the note about
+  TLS-inspecting proxies now points at the Advanced section rather than saying "below".
 
   One exception stays on screen: the advice beside the "Files at once" slider, which changes as
   you move the slider and would be no use hidden behind a hover.

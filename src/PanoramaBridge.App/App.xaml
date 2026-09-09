@@ -15,7 +15,6 @@
         <Thickness x:Key="GroupPadding">12</Thickness>
 
         <Style x:Key="FieldLabel" TargetType="TextBlock">
-            <Setter Property="ToolTipService.ShowDuration" Value="60000" />
             <Setter Property="Opacity" Value="0.75" />
             <Setter Property="Margin" Value="0,0,12,0" />
             <Setter Property="VerticalAlignment" Value="Center" />
@@ -56,9 +55,11 @@
         </Style>
 
         <!--
-            ShowDuration is set per control rather than once, because ToolTipService's attached
-            properties are read from the element that owns the tooltip and do not inherit down
-            the tree.
+            ShowDuration is set on every type that owns a tooltip, rather than once near the root,
+            because ToolTipService's attached properties do not inherit down the tree — confirmed
+            rather than assumed: ShowDurationProperty's metadata reports Inherits false. It is
+            read from the element the ToolTip is set on, so a control that only sits inside a
+            tooltip's owner does not need it.
         -->
         <Style TargetType="GroupBox">
             <Setter Property="Padding" Value="{StaticResource GroupPadding}" />
@@ -86,6 +87,7 @@
         <Style TargetType="Button">
             <Setter Property="Padding" Value="14,5" />
             <Setter Property="MinWidth" Value="92" />
+            <Setter Property="ToolTipService.ShowDuration" Value="60000" />
         </Style>
 
         <Style x:Key="ToolbarButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
@@ -105,6 +107,13 @@
             <Setter Property="Foreground" Value="White" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Background" Value="{StaticResource StartGreen}" />
+
+            <!--
+                Wide enough for either label, so the button does not resize when it toggles.
+                Without this, every button to its right slides sideways the instant monitoring
+                starts — under a pointer that is usually still moving toward one of them.
+            -->
+            <Setter Property="MinWidth" Value="150" />
             <Setter Property="Template">
                 <Setter.Value>
                     <!--
@@ -137,10 +146,13 @@
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Shade" Property="Opacity" Value="0.24" />
                             </Trigger>
-                            <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Chrome" Property="BorderThickness" Value="2" />
-                                <Setter TargetName="Chrome" Property="BorderBrush" Value="White" />
-                            </Trigger>
+                            <!--
+                                No focus trigger here on purpose. Replacing the template does not
+                                replace FocusVisualStyle, so Windows still draws its own focus
+                                rectangle; adding a border of our own drew a second one over it.
+                                The platform's is also the one that stays visible whatever colour
+                                the button currently is, which a fixed white border would not.
+                            -->
                             <!--
                                 Disabled has to drop the colour entirely. A greyed-out green
                                 button still reads as "press me", and this one is disabled

@@ -75,7 +75,6 @@
                     <Button DockPanel.Dock="Right" Content="Browse..." Margin="8,0,0,0"
                             Click="BrowseRemote_Click" />
                     <ComboBox IsEditable="True"
-                              ToolTipService.ShowDuration="60000"
                               Text="{Binding RemotePath, UpdateSourceTrigger=PropertyChanged}"
                               ItemsSource="{Binding RecentRemotePaths}" />
                 </DockPanel>

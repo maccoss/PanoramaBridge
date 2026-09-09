@@ -67,6 +67,8 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220" />
                             <ColumnDefinition Width="90" />
+                            <!-- Empty, and kept: it stretches the row so the whole width is a
+                                 hover target for the tooltip, not just the label and the box. -->
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}"
@@ -79,6 +81,8 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220" />
                             <ColumnDefinition Width="90" />
+                            <!-- Empty, and kept: it stretches the row so the whole width is a
+                                 hover target for the tooltip, not just the label and the box. -->
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}"
@@ -96,6 +100,8 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220" />
                             <ColumnDefinition Width="90" />
+                            <!-- Empty, and kept: it stretches the row so the whole width is a
+                                 hover target for the tooltip, not just the label and the box. -->
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}"
@@ -108,6 +114,8 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220" />
                             <ColumnDefinition Width="90" />
+                            <!-- Empty, and kept: it stretches the row so the whole width is a
+                                 hover target for the tooltip, not just the label and the box. -->
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}"
@@ -121,6 +129,14 @@
                       ToolTip="Changing this decides the files already being held, not just the next one — but it is read when monitoring starts, so save it and then stop and start monitoring for it to reach files that are already held.&#10;&#10;It only applies to a file nobody can account for: editing a file that PanoramaBridge uploaded itself is treated as a new version and re-sent without asking. A file held because it is damaged stays held whichever option you choose, until the file itself is replaced.">
                 <StackPanel>
                     <!--
+                        The options deliberately carry no tooltips of their own. The innermost
+                        tooltip is the one shown, so giving each option a short description hid
+                        the group's text behind the group header — and the sentence that matters
+                        most is in there: that changing this reaches files already held only
+                        after monitoring is stopped and started. That is what the pointer needs
+                        to find when it is on the option being chosen.
+                    -->
+                    <!--
                         Not "Ask me". Nothing asks: there is no prompt and no per-file button, so
                         the label promised an interaction that never arrives and left people
                         waiting for a window that does not exist. It holds the file, which is a
@@ -128,16 +144,13 @@
                     -->
                     <RadioButton Margin="{StaticResource RowMargin}" GroupName="Conflict"
                                  Content="Hold it and show it under Needs attention"
-                                 IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Ask}"
-                                 ToolTip="Nothing is sent and nothing is overwritten. The file appears under Needs attention for you to deal with." />
+                                 IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Ask}" />
                     <RadioButton Margin="{StaticResource RowMargin}" GroupName="Conflict"
                                  Content="Leave the copy on the server alone"
-                                 IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Skip}"
-                                 ToolTip="Keeps what is already on the server and stops offering the local file." />
+                                 IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Skip}" />
                     <RadioButton GroupName="Conflict"
                                  Content="Replace the copy on the server"
-                                 IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Overwrite}"
-                                 ToolTip="Uploads the local file over the one on the server." />
+                                 IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Overwrite}" />
                 </StackPanel>
             </GroupBox>
 
