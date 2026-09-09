@@ -44,7 +44,7 @@ public sealed class CommandOptionsTests
     {
         Parse("--exclude", ".skyd,.blib").ExcludedExtensions.ShouldBe([".skyd", ".blib"]);
 
-        // An empty argument is how watch reproduces the behaviour before .skyd was excluded,
+        // An empty argument is how watch reproduces the behavior before .skyd was excluded,
         // which is what makes the fix checkable against a real folder rather than only in tests.
         Parse("--exclude", "").ExcludedExtensions.ShouldBeEmpty();
     }
@@ -161,7 +161,7 @@ public sealed class CommandOptionsTests
     }
 
     [Fact]
-    public void Extensions_are_normalised_the_way_the_settings_screen_normalises_them()
+    public void Extensions_are_normalized_the_way_the_settings_screen_normalizes_them()
     {
         Parse("--ext", "RAW; mzML  .d").Extensions.ShouldBe([".raw", ".mzml", ".d"]);
     }

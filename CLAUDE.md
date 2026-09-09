@@ -6,10 +6,10 @@ Panorama (LabKey) server over WebDAV. It is a Windows desktop application writte
 
 > **Start here:** [`docs/DOTNET_PORT_HANDOFF.md`](docs/DOTNET_PORT_HANDOFF.md) is the current
 > state of the work — what is done, what is next, decisions already settled, verified server
-> behaviour, and the traps that cost real time to learn. Read it before touching `src/`.
+> behavior, and the traps that cost real time to learn. Read it before touching `src/`.
 
 A Python/PyQt6 implementation preceded this one. It was never put into production and is not a
-reference: **do not benchmark against it, and do not treat its behaviour as a specification.**
+reference: **do not benchmark against it, and do not treat its behavior as a specification.**
 Agreement with it proves nothing and disagreement is not evidence of a regression. It was
 removed from the repository after v26.1.0 shipped and survives only in git history, under the
 `v0.1.9rc4` tag. Do not restore any part of it.
@@ -27,7 +27,7 @@ removed from the repository after v26.1.0 shipped and survives only in git histo
 | Velopack (`vpk`) | Installer, automatic updates, delta packages |
 | xUnit, Shouldly | Tests |
 
-Do **not** add FluentAssertions 8 or later — its licence changed to paid for commercial use.
+Do **not** add FluentAssertions 8 or later — its license changed to paid for commercial use.
 
 ---
 
@@ -56,7 +56,7 @@ as `FileShare.Read` so it never locks another reader out of an instrument's file
 what it cannot, and whose work the file layout comes from.
 
 `Core` must stay free of UI types. That is why the progress aggregator and the readiness gate live
-there and not in view models: their behaviour has to be testable without a dispatcher.
+there and not in view models: their behavior has to be testable without a dispatcher.
 
 ---
 
@@ -105,7 +105,7 @@ credential is involved. See §7 of the handoff for the numbers.
 CalVer, `YY.feature.patch` — `26.1.0` is the first feature release of 2026. Matches the
 convention used by `skyline-prism`.
 
-1. Finalise `release-notes/RELEASE_NOTES_next.md`, rename it to `RELEASE_NOTES_v{version}.md`,
+1. Finalize `release-notes/RELEASE_NOTES_next.md`, rename it to `RELEASE_NOTES_v{version}.md`,
    update its heading, and create a fresh empty draft.
 2. Bump `<Version>` in `Directory.Build.props`. It is the single source of truth.
 3. Commit, merge to `main`.
@@ -207,7 +207,7 @@ a fix for monitoring stopping silently on a share hiccup — and the notes then 
 reconstructed from `git log`, which is slower and loses the detail that made each fix worth
 describing. The rule was in a file nobody opens on the way to fixing a bug; this is that file.
 
-**User-visible** means behaviour, a message someone reads, a setting, or performance they would
+**User-visible** means behavior, a message someone reads, a setting, or performance they would
 notice. Refactors, comments, test-only changes and documentation get no entry — say so in a
 clause of the commit message instead, so the omission reads as a decision rather than an
 oversight.

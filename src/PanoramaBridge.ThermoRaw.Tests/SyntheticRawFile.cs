@@ -27,7 +27,7 @@ internal sealed class SyntheticRawFile
     public int FormatVersion { get; init; } = 66;
 
     /// <summary>Whether to write an acquisition-end timestamp.</summary>
-    public bool Finalised { get; init; } = true;
+    public bool Finalized { get; init; } = true;
 
     /// <summary>Scans the run header claims, which sets how long the scan index must be.</summary>
     public uint ScanCount { get; init; } = 10;
@@ -77,7 +77,7 @@ internal sealed class SyntheticRawFile
         // A plausible FILETIME; only zero versus non-zero is read.
         BinaryPrimitives.WriteUInt64LittleEndian(header.AsSpan(0x28), 133_000_000_000_000_000UL);
 
-        if (Finalised)
+        if (Finalized)
         {
             BinaryPrimitives.WriteUInt64LittleEndian(header.AsSpan(0x98), 133_000_000_100_000_000UL);
         }

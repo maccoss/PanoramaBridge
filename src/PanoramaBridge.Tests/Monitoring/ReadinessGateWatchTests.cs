@@ -130,7 +130,7 @@ public sealed class ReadinessGateWatchTests : IDisposable
     [Fact]
     public async Task A_file_held_open_is_looked_at_again_and_released_as_soon_as_it_is_let_go()
     {
-        // The behaviour a long deferral broke, and the reason there is no longer one. Nothing
+        // The behavior a long deferral broke, and the reason there is no longer one. Nothing
         // announces that a handle has been closed -- there is no notification for it and the file
         // does not change -- so the only way to find out is to look. A gate that stops looking
         // leaves the file sitting there until the periodic folder check comes round.

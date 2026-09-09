@@ -64,7 +64,7 @@ A portable `.zip` is published as well, for machines where installing is not an 
 - **Keeps watching when you close the window.** Closing leaves it running in the notification
   area, so monitoring is not something you can end by tidying your taskbar. Click the icon to
   bring the window back -- or just start PanoramaBridge again, which does the same thing rather
-  than opening a second copy. Exit on the icon's menu stops it. Turn the whole behaviour off in
+  than opening a second copy. Exit on the icon's menu stops it. Turn the whole behavior off in
   Remote Settings if you would rather closing meant closing.
 
 `pbctl`, a command-line harness, ships alongside for scripted transfers and for measuring what

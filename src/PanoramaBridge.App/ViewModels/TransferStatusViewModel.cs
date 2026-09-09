@@ -93,7 +93,7 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
     /// <summary>Rows bound to the grid. Only ever mutated on the UI thread.</summary>
     public ObservableCollection<TransferRowViewModel> Rows { get; } = [];
 
-    /// <summary>One line summarising everything in flight, for the status bar.</summary>
+    /// <summary>One line summarizing everything in flight, for the status bar.</summary>
     [ObservableProperty]
     private string _summary = "Idle";
 

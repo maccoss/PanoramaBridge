@@ -660,7 +660,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         if (from < 4 && !ColumnExists(command, "uploads", "conflict_kind"))
         {
             // Existing rows take Unknown. A conflict recorded by an older build therefore offers
-            // every choice, which is the pre-existing behaviour rather than a new risk: those
+            // every choice, which is the pre-existing behavior rather than a new risk: those
             // rows were held before any of this existed.
             command.CommandText =
                 "ALTER TABLE uploads ADD COLUMN conflict_kind INTEGER NOT NULL DEFAULT 0;";

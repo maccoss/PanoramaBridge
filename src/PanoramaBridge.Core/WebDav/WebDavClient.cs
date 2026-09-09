@@ -12,7 +12,7 @@ namespace PanoramaBridge.Core.WebDav;
 /// WebDAV client for Panorama.
 /// </summary>
 /// <remarks>
-/// Written against verified server behaviour rather than the WebDAV specification, because the
+/// Written against verified server behavior rather than the WebDAV specification, because the
 /// two differ in ways that matter: MKCOL is single-level, PUT answers 201 for a replacement as
 /// well as a creation, and <c>Content-Range</c> on PUT is not implemented at all, so there is no
 /// partial or resumable upload to fall back on. Uploads are therefore one streaming PUT per

@@ -119,7 +119,7 @@ internal sealed record CommandOptions
 
                 case "--exclude":
                     // An empty argument is how a caller asks for no exclusions at all, which is
-                    // the behaviour before .skyd was excluded. ParseExtensions returns an empty
+                    // the behavior before .skyd was excluded. ParseExtensions returns an empty
                     // list for it rather than treating it as a mistake.
                     if (!TryList(args, ref i, ".skyd", out excluded, out problem))
                     {

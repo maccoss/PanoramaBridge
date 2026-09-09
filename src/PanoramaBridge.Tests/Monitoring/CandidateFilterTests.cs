@@ -115,7 +115,7 @@ public sealed class CandidateFilterTests
         // walk reaches .raw and took it -- so a cache that can run to gigabytes, rewritten every
         // time AutoQC re-imports, was uploaded as though it were an acquisition.
         //
-        // Constructed with no exclusion list, so this is the out-of-the-box behaviour rather
+        // Constructed with no exclusion list, so this is the out-of-the-box behavior rather
         // than something a user has to know to configure.
         new CandidateFilter([".raw"]).Accepts(name).ShouldBe(expected);
     }
@@ -171,7 +171,7 @@ public sealed class CandidateFilterTests
     public void An_empty_exclusion_list_is_respected()
     {
         // Clearing the box means excluding nothing, not falling back to the defaults. A user who
-        // wants the old behaviour has to be able to get it.
+        // wants the old behavior has to be able to get it.
         new CandidateFilter([".raw"], []).Accepts("run.raw.skyd").ShouldBeTrue();
     }
 

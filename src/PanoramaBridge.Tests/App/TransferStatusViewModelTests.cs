@@ -62,7 +62,7 @@ public sealed class TransferStatusViewModelTests : IDisposable
     [Fact]
     public void A_file_moves_down_the_grid_as_it_finishes()
     {
-        // The behaviour the ordering exists for: watch the top of the list and you see what is
+        // The behavior the ordering exists for: watch the top of the list and you see what is
         // happening now; a file leaves that block at the moment it is verified.
         Report("first.raw", TransferState.Uploading);
         Report("second.raw", TransferState.Uploading);

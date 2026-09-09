@@ -129,11 +129,11 @@ public static class ThermoRawValidator
                 ? "the acquisition-end timestamp is populated"
                 : "the acquisition-end timestamp is absent");
 
-            if (!ThermoRawHeader.RecognisedVersions.Contains(header.FormatVersion))
+            if (!ThermoRawHeader.RecognizedVersions.Contains(header.FormatVersion))
             {
                 return Unchecked(
                     path, header, size, evidence,
-                    ThermoRawUnknownReason.UnrecognisedFormatVersion,
+                    ThermoRawUnknownReason.UnrecognizedFormatVersion,
                     "this revision is not one whose layout is known here");
             }
 
@@ -195,7 +195,7 @@ public static class ThermoRawValidator
             if (!header.AcquisitionFinished)
             {
                 return new ThermoRawResult(
-                    path, ThermoRawVerdict.NotFinalised, ThermoRawUnknownReason.None,
+                    path, ThermoRawVerdict.NotFinalized, ThermoRawUnknownReason.None,
                     header.FormatVersion, size, structure.RequiredBytes, false, evidence);
             }
 

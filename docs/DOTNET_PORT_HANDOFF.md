@@ -19,7 +19,7 @@ decided, and what cost real time to learn.
 | 2 — Transfer engine and upload ledger | **Done.** Measured against panoramaweb.org. |
 | 3 — WPF shell | **Done.** Four tabs, driven end to end via UI Automation. |
 | Stability gate | **Done, pulled forward from Phase 4** — it is the highest-risk correctness property. |
-| Resource behaviour on an instrument PC | **Done, measured.** |
+| Resource behavior on an instrument PC | **Done, measured.** |
 | SMB share monitoring | **Verified** against a live file server. |
 | 4 — Continuous monitoring | **Done, measured.** See §7 for what it is and §8 for what was left. |
 | 5 — Companion files | **Done.** Sciex `.wiff` companions travel with their primary file. See §7a. |
@@ -96,7 +96,7 @@ pbctl watch <dir> /_webdav/unused/ --ext .no-such-extension --every 1
 ### Screenshotting the app
 
 A plain screen capture returns a **blank white client area** while the window is perfectly
-healthy — a desktop-compositor artefact in this environment. Use `PrintWindow` with
+healthy — a desktop-compositor artifact in this environment. Use `PrintWindow` with
 `PW_RENDERFULLCONTENT` (2), which asks the window to draw itself. UI Automation reports the full
 element tree either way, so use that to confirm the UI exists before believing a blank image.
 
@@ -122,7 +122,7 @@ on Linux, and it ships as its own binary with every release. Keep it dependency-
 included.
 
 `Core` is deliberately UI-free, which is why the progress aggregator and the readiness gate live
-there rather than in the view models: their behaviour is testable without a dispatcher.
+there rather than in the view models: their behavior is testable without a dispatcher.
 
 The test project targets **`net8.0-windows` with `UseWPF`**, so it can reference the shell and
 the harness and test them directly. That makes the suite Windows-only, which it already was in
@@ -280,7 +280,7 @@ not rediscover them the hard way.
   out is to look. What the long wait bought was two file opens per thirty seconds.
 
   The setting was removed rather than reinterpreted — a setting that does nothing is exactly what
-  this codebase criticises the Python version for. A file in use is now re-examined on the gate's
+  this codebase criticizes the Python version for. A file in use is now re-examined on the gate's
   ordinary backoff, up to `LockedFileRetryIntervalSeconds`.
 
   The general lesson is worth more than the specific fix: **a component that stops observing
@@ -547,7 +547,7 @@ one minute so several sweeps fit in a run:
 23:05:44  Swept ...: 1 file(s) examined, 0 offered, 1 already settled, in 0 ms
 ```
 
-The last three lines are the steady state: the sweep keeps running, finds the file, recognises it
+The last three lines are the steady state: the sweep keeps running, finds the file, recognizes it
 from the ledger, and asks the server nothing at all.
 
 ---
@@ -577,7 +577,7 @@ So the walk now stops at an extension in a user-editable exclusion list, default
 Two details are load-bearing: it stops **mid-walk** rather than inspecting only the last
 extension, or `run.raw.skyd.gz` walks straight past `.skyd` to `.raw`; and a **match is looked
 for before an exclusion**, so the list can only narrow the walk and never veto an extension
-somebody typed into the transfer box. `pbctl watch --exclude ""` reproduces the old behaviour
+somebody typed into the transfer box. `pbctl watch --exclude ""` reproduces the old behavior
 against a real folder, which is how the difference was confirmed outside the tests.
 
 **Nothing safety-critical goes in a list a user can empty.** `.tmp` was in that default for one

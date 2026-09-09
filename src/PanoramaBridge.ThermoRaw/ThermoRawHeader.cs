@@ -39,14 +39,14 @@ public sealed record ThermoRawHeader(
     /// truncation on a perfectly good file -- which, wired to a transfer gate, stops an
     /// instrument uploading.
     /// </remarks>
-    public static readonly IReadOnlySet<int> RecognisedVersions =
+    public static readonly IReadOnlySet<int> RecognizedVersions =
         new HashSet<int> { 8, 47, 57, 60, 62, 63, 64, 66 };
 
     /// <summary>
     /// Revisions whose structural layout has been confirmed against real files.
     /// </summary>
     /// <remarks>
-    /// Version 8 is recognised but not confirmed: it is old enough that no current instrument
+    /// Version 8 is recognized but not confirmed: it is old enough that no current instrument
     /// writes it, so nothing here has been checked against one.
     /// </remarks>
     public static readonly IReadOnlySet<int> ConfirmedVersions =
@@ -56,7 +56,7 @@ public sealed record ThermoRawHeader(
     /// Whether the run was closed out.
     /// </summary>
     /// <remarks>
-    /// The acquisition software writes this when it finalises the file, so zero means the run
+    /// The acquisition software writes this when it finalizes the file, so zero means the run
     /// never finished. It sits in the header at the <em>front</em> of the file, which is why it
     /// says nothing about truncation: a file copied halfway still carries a populated one.
     /// </remarks>

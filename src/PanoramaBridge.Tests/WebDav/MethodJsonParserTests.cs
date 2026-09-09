@@ -83,7 +83,7 @@ public sealed class MethodJsonParserTests
     [Fact]
     public void A_read_only_folder_reports_that_it_cannot_be_uploaded_to()
     {
-        // This is what lets the remote browser grey out a folder before the user picks it,
+        // This is what lets the remote browser gray out a folder before the user picks it,
         // rather than surfacing a 403 at the end of a long transfer.
         var folder = MethodJsonParser.Parse(PublicListing, Parent)[0];
 

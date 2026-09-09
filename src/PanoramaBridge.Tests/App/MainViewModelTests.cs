@@ -15,7 +15,7 @@ namespace PanoramaBridge.Tests.App;
 /// The shell: its command bar, and its lifetime.
 /// </summary>
 /// <remarks>
-/// No window is created. Everything here is view-model state, which is where the behaviour
+/// No window is created. Everything here is view-model state, which is where the behavior
 /// actually lives -- the XAML only binds to it. The dispatcher hops are written to run inline
 /// when there is no Application, so the same code path works in a test.
 /// </remarks>
