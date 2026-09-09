@@ -12,7 +12,7 @@ namespace PanoramaBridge.Tests.Monitoring;
 /// rather than on a fake clock, because the thing being verified is that a concurrent writer and
 /// the gate interleave correctly -- which a fake clock would paper over.
 /// </summary>
-public sealed class ReadinessGateTests : IAsyncDisposable
+public sealed class ReadinessGateTests : IAsyncLifetime
 {
     private static readonly RemotePath Destination =
         RemotePath.Parse("/_webdav/MacCoss/maccoss/@files/uploads/");
@@ -310,7 +310,11 @@ public sealed class ReadinessGateTests : IAsyncDisposable
             cancellationToken: cts.Token));
     }
 
-    public async ValueTask DisposeAsync()
+    // IAsyncLifetime, not IAsyncDisposable: xUnit v2 never calls IAsyncDisposable on a test
+    // class, so this teardown silently did not run at all.
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         await _store.DisposeAsync();
 

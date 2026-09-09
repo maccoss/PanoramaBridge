@@ -10,7 +10,7 @@ namespace PanoramaBridge.Tests.Transfer;
 /// assert not only the right answer but what it cost to reach -- the point of the design is that
 /// the common case is free.
 /// </summary>
-public sealed class UploadDecisionServiceTests : IAsyncDisposable
+public sealed class UploadDecisionServiceTests : IAsyncLifetime
 {
     private static readonly RemotePath Destination =
         RemotePath.Parse("/_webdav/MacCoss/maccoss/@files/uploads/");
@@ -478,7 +478,11 @@ public sealed class UploadDecisionServiceTests : IAsyncDisposable
         decision.ImpliedVerification.ShouldBe(VerifyMethod.None);
     }
 
-    public async ValueTask DisposeAsync()
+    // IAsyncLifetime, not IAsyncDisposable: xUnit v2 never calls IAsyncDisposable on a test
+    // class, so this teardown silently did not run at all.
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         await _store.DisposeAsync();
         if (Directory.Exists(_directory))

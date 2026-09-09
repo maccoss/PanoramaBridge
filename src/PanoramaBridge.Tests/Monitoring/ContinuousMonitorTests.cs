@@ -10,7 +10,7 @@ namespace PanoramaBridge.Tests.Monitoring;
 /// Monitoring end to end: a file arriving in a watched folder, through the sweep or the watcher,
 /// through the readiness gate, into the transfer engine and onto the server.
 /// </summary>
-public sealed class ContinuousMonitorTests : IAsyncDisposable
+public sealed class ContinuousMonitorTests : IAsyncLifetime
 {
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(20);
 
@@ -354,7 +354,11 @@ public sealed class ContinuousMonitorTests : IAsyncDisposable
         });
     }
 
-    public async ValueTask DisposeAsync()
+    // IAsyncLifetime, not IAsyncDisposable: xUnit v2 never calls IAsyncDisposable on a test
+    // class, so this teardown silently did not run at all.
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         await _stop.CancelAsync();
         _stop.Dispose();

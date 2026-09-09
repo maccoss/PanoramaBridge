@@ -6,7 +6,7 @@ using PanoramaBridge.Tests.TestDoubles;
 
 namespace PanoramaBridge.Tests.Transfer;
 
-public sealed class TransferCoordinatorTests : IAsyncDisposable
+public sealed class TransferCoordinatorTests : IAsyncLifetime
 {
     private static readonly RemotePath Destination =
         RemotePath.Parse("/_webdav/MacCoss/maccoss/@files/uploads/");
@@ -1247,7 +1247,11 @@ public sealed class TransferCoordinatorTests : IAsyncDisposable
         row.LastError.ShouldNotContain("Parameter", Case.Insensitive);
     }
 
-    public async ValueTask DisposeAsync()
+    // IAsyncLifetime, not IAsyncDisposable: xUnit v2 never calls IAsyncDisposable on a test
+    // class, so this teardown silently did not run at all.
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         await _store.DisposeAsync();
 

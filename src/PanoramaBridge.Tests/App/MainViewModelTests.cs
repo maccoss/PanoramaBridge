@@ -19,7 +19,7 @@ namespace PanoramaBridge.Tests.App;
 /// actually lives -- the XAML only binds to it. The dispatcher hops are written to run inline
 /// when there is no Application, so the same code path works in a test.
 /// </remarks>
-public sealed class MainViewModelTests : IAsyncDisposable
+public sealed class MainViewModelTests : IAsyncLifetime
 {
     private sealed class NoCredentials : ICredentialStore
     {
@@ -239,7 +239,11 @@ public sealed class MainViewModelTests : IAsyncDisposable
         shell.ToggleMonitoringCommand.CanExecute(null).ShouldBeTrue();
     }
 
-    public async ValueTask DisposeAsync()
+    // IAsyncLifetime, not IAsyncDisposable: xUnit v2 never calls IAsyncDisposable on a test
+    // class, so this teardown silently did not run at all.
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         if (_transfers is not null)
         {
