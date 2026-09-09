@@ -95,9 +95,9 @@
         </Style>
 
         <!--
-            The monitoring button, coloured by what pressing it will do: green to start, red to
+            The monitoring button, colored by what pressing it will do: green to start, red to
             stop. Both are dark enough for white text (5.4:1 and 6.7:1, so AA at any size), and
-            the colour only repeats what the label already says, so nothing depends on being able
+            the color only repeats what the label already says, so nothing depends on being able
             to tell them apart.
         -->
         <SolidColorBrush x:Key="StartGreen" Color="#1F7A3F" />
@@ -120,11 +120,11 @@
                         A template is needed, not just a Background setter. The default Windows
                         button template swaps in its own theme brush on hover and while pressed,
                         so a plain Background is dropped the moment the pointer crosses the
-                        button and it flickers back to grey.
+                        button and it flickers back to gray.
 
-                        Hover and pressed are a black wash over whichever colour is underneath,
+                        Hover and pressed are a black wash over whichever color is underneath,
                         rather than six more brushes, so the two states stay in step by
-                        construction: adding a third colour later needs no new trigger.
+                        construction: adding a third color later needs no new trigger.
                     -->
                     <ControlTemplate TargetType="Button">
                         <Grid>
@@ -150,11 +150,11 @@
                                 No focus trigger here on purpose. Replacing the template does not
                                 replace FocusVisualStyle, so Windows still draws its own focus
                                 rectangle; adding a border of our own drew a second one over it.
-                                The platform's is also the one that stays visible whatever colour
+                                The platform's is also the one that stays visible whatever color
                                 the button currently is, which a fixed white border would not.
                             -->
                             <!--
-                                Disabled has to drop the colour entirely. A greyed-out green
+                                Disabled has to drop the color entirely. A grayed-out green
                                 button still reads as "press me", and this one is disabled
                                 precisely when starting would fail.
                             -->
@@ -168,7 +168,7 @@
             </Setter>
             <Style.Triggers>
                 <!--
-                    Bound to the same property as the label, so the colour and the words cannot
+                    Bound to the same property as the label, so the color and the words cannot
                     disagree about which state the application is in.
                 -->
                 <DataTrigger Binding="{Binding IsMonitoring}" Value="True">

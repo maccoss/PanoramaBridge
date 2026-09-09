@@ -9,7 +9,7 @@
              d:DesignHeight="600" d:DesignWidth="900">
 
     <!--
-        The explanations are tooltips rather than grey paragraphs under every control. There was
+        The explanations are tooltips rather than gray paragraphs under every control. There was
         more explanation on this tab than there were settings, which buried the settings; the
         text is worth keeping and worth reading once, but not worth re-reading on every visit.
 
