@@ -22,12 +22,15 @@ namespace PanoramaBridge.Tests.Monitoring;
 /// one, for example a UNC path or a mapped drive. Everything created is removed afterwards.
 /// </para>
 /// </remarks>
-public sealed class SmbMonitoringTests : IAsyncDisposable
+public sealed class SmbMonitoringTests : IAsyncLifetime
 {
     private const string ShareVariable = "PANORAMABRIDGE_SMB_PATH";
 
     private static readonly RemotePath Destination =
         RemotePath.Parse("/_webdav/MacCoss/maccoss/@files/uploads/");
+
+    /// <summary>0 until the stale sweep has run, so it happens once and not once per test.</summary>
+    private static int _swept;
 
     private readonly string? _root;
     private readonly SqliteStateStore _store = SqliteStateStore.InMemory();
@@ -41,6 +44,8 @@ public sealed class SmbMonitoringTests : IAsyncDisposable
         {
             return;
         }
+
+        SweepStaleScratchFolders(share);
 
         _root = Path.Combine(share, "pb-smb-tests-" + Guid.NewGuid().ToString("n")[..8]);
         Directory.CreateDirectory(_root);
@@ -458,21 +463,104 @@ public sealed class SmbMonitoringTests : IAsyncDisposable
             + $"{second.Elapsed.TotalMilliseconds:F0} ms warm");
     }
 
-    public async ValueTask DisposeAsync()
+    // IAsyncLifetime, not IAsyncDisposable: xUnit v2 never calls IAsyncDisposable on a test
+    // class, so this teardown silently did not run at all.
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         await _store.DisposeAsync();
 
-        if (_root is not null && Directory.Exists(_root))
+        if (_root is null)
         {
+            return;
+        }
+
+        // The retry is belt and braces, not the fix. The reason ten scratch folders were left on
+        // a shared drive -- one of them holding 25 files -- was that this method never ran: the
+        // class declared IAsyncDisposable, which xUnit v2 does not call on a test class. It is
+        // kept because a share genuinely can hold a handle for a moment after a test closes it,
+        // and because the cost of finding out the hard way is litter on somebody else's drive.
+        for (var attempt = 0; ; attempt++)
+        {
+            if (!Directory.Exists(_root))
+            {
+                return;
+            }
+
             try
             {
                 Directory.Delete(_root, recursive: true);
+                return;
             }
-            catch (IOException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                // A share can hold a handle briefly after a test closes it; leaving one empty
-                // scratch folder behind is better than failing the run over cleanup.
+                // UnauthorizedAccessException as well as IOException: a file still open for
+                // writing on a share surfaces as the former, and catching only the latter meant
+                // those runs threw out of teardown instead of retrying.
+                if (attempt == 4)
+                {
+                    // Still better than failing the run over cleanup -- but say so, because
+                    // silence is what let this go unnoticed. The next run sweeps it up.
+                    Console.WriteLine(
+                        $"SMB cleanup: could not remove {_root} after {attempt + 1} attempts "
+                        + $"({ex.GetType().Name}: {ex.Message}). "
+                        + "A later run will sweep it.");
+                    return;
+                }
             }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(100 * (1 << attempt)));
+        }
+    }
+
+    /// <summary>
+    /// Removes scratch folders a previous run could not, so they cannot accumulate.
+    /// </summary>
+    /// <remarks>
+    /// This suite runs against a real shared drive that other people use, so litter here is
+    /// somebody else's problem as well as ours. Age-gated rather than deleting every sibling,
+    /// because xUnit runs test classes in parallel and a folder minutes old may belong to a run
+    /// that is still going -- including another machine pointed at the same share. Once per
+    /// process, not once per test: the constructor runs for each of them.
+    /// </remarks>
+    private static void SweepStaleScratchFolders(string share)
+    {
+        if (Interlocked.Exchange(ref _swept, 1) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var cutoff = DateTime.UtcNow - TimeSpan.FromHours(1);
+
+            foreach (var stale in Directory
+                .EnumerateDirectories(share, "pb-smb-tests-*")
+                .Where(d => Directory.GetLastWriteTimeUtc(d) < cutoff))
+            {
+                try
+                {
+                    Directory.Delete(stale, recursive: true);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // Someone else's, or still held. Not worth failing a run over -- but said
+                    // out loud, because a folder this old failing to delete is the shape of the
+                    // problem this sweep exists to clear, and swallowing it silently is how
+                    // that went unnoticed in the first place.
+                    Console.WriteLine(
+                        $"SMB sweep: left {Path.GetFileName(stale)} alone "
+                        + $"({ex.GetType().Name}: {ex.Message}).");
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The share went away between the check and the walk. The tests themselves will
+            // report that far more clearly than a sweep can, so this is a note and not a
+            // failure.
+            Console.WriteLine($"SMB sweep: skipped ({ex.GetType().Name}: {ex.Message}).");
         }
     }
 }

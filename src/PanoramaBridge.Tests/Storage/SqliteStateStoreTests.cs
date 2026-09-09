@@ -3,7 +3,7 @@ using PanoramaBridge.Core.Storage;
 namespace PanoramaBridge.Tests.Storage;
 
 /// <summary>Contract tests for the update-only ledger transitions.</summary>
-public sealed class SqliteStateStoreTests : IAsyncDisposable
+public sealed class SqliteStateStoreTests : IAsyncLifetime
 {
     private readonly SqliteStateStore _store = SqliteStateStore.InMemory();
 
@@ -54,7 +54,11 @@ public sealed class SqliteStateStoreTests : IAsyncDisposable
         (await _store.GetAsync(@"C:\data\RUN.raw"))!.LocalPath.ShouldBe(@"C:\data\RUN.raw");
     }
 
-    public ValueTask DisposeAsync() => _store.DisposeAsync();
+    // IAsyncLifetime, not IAsyncDisposable: xUnit v2 never calls IAsyncDisposable on a test
+    // class, so this teardown silently did not run at all.
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public Task DisposeAsync() => _store.DisposeAsync().AsTask();
     [Fact]
     public void The_withdrawn_state_value_is_still_free()
     {

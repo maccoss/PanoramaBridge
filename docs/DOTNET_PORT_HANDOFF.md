@@ -433,7 +433,7 @@ Transferring 128 MB costs 6.9% of one core. Those numbers are from a **32-core**
 
 ### Test-infrastructure fidelity
 
-Two of these mattered as much as product bugs:
+Three of these mattered as much as product bugs:
 
 - **A stub `HttpMessageHandler` that answers without reading the request body** leaves streaming
   and hashing wrappers untouched — an upload test passes having sent and hashed nothing. Drain the
@@ -441,6 +441,22 @@ Two of these mattered as much as product bugs:
 - **A fake server holding files in a plain `Dictionary`** loses entries under four concurrent
   workers, which surfaces as a verification failure rather than the data race it is. A fake that
   cannot survive concurrency cannot test concurrency.
+- **A test class must implement `IAsyncLifetime`, never `IAsyncDisposable`, for async teardown.**
+  xUnit v2 — which is what this project uses — does not call `IAsyncDisposable` on a test class.
+  It calls `IDisposable.Dispose` and `IAsyncLifetime.DisposeAsync`, and nothing else. A class
+  declaring `IAsyncDisposable` compiles, reads correctly, and its teardown simply never runs.
+
+  Ten classes here had it, and it was silent for a long time because the litter went to
+  `%TEMP%`, where nobody looks. One full run left **132 stale directories** behind; 643 had
+  accumulated on the development machine. It only became visible when the opt-in SMB suite was
+  run against a real share and left ten scratch folders on a drive other people use — one of
+  them holding 25 files — while both CLAUDE.md and §10 of this document promised the tests
+  cleaned up after themselves.
+
+  The lesson beyond the interface: a teardown that silently does not run looks exactly like a
+  teardown that runs and succeeds. If cleanup matters, assert on it from outside — count what is
+  left in the target directory after a run, as the fix for this did — rather than trusting that
+  the method was called.
 
 ---
 

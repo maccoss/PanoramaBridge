@@ -11,7 +11,7 @@ namespace PanoramaBridge.Tests.App;
 /// after a rebuild. What matters most is that it never overstates: a row saying "Verified" has to
 /// mean the server's own hash was compared, and nothing weaker may look the same.
 /// </remarks>
-public sealed class UploadsViewModelTests : IAsyncDisposable
+public sealed class UploadsViewModelTests : IAsyncLifetime
 {
     private readonly SqliteStateStore _store = SqliteStateStore.InMemory();
 
@@ -147,7 +147,11 @@ public sealed class UploadsViewModelTests : IAsyncDisposable
         view.Summary.ShouldContain("4");
     }
 
-    public ValueTask DisposeAsync() => _store.DisposeAsync();
+    // IAsyncLifetime, not IAsyncDisposable: xUnit v2 never calls IAsyncDisposable on a test
+    // class, so this teardown silently did not run at all.
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public Task DisposeAsync() => _store.DisposeAsync().AsTask();
     [Fact]
     public void A_held_row_does_not_name_an_action_the_window_does_not_offer()
     {

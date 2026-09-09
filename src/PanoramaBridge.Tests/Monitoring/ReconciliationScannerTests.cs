@@ -15,7 +15,7 @@ namespace PanoramaBridge.Tests.Monitoring;
 /// whole tree through the readiness gate every quarter of an hour, opening every file on the disk
 /// an instrument is writing to.
 /// </remarks>
-public sealed class ReconciliationScannerTests : IAsyncDisposable
+public sealed class ReconciliationScannerTests : IAsyncLifetime
 {
     private static readonly RemotePath Destination =
         RemotePath.Parse("/_webdav/MacCoss/maccoss/@files/uploads/");
@@ -431,7 +431,11 @@ public sealed class ReconciliationScannerTests : IAsyncDisposable
         _store.BatchedGets.ShouldBe(2, "batches of five hundred, so two statements for 501 files");
     }
 
-    public async ValueTask DisposeAsync()
+    // IAsyncLifetime, not IAsyncDisposable: xUnit v2 never calls IAsyncDisposable on a test
+    // class, so this teardown silently did not run at all.
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         await _store.DisposeAsync();
 

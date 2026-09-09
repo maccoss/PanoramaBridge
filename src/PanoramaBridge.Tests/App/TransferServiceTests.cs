@@ -16,7 +16,7 @@ namespace PanoramaBridge.Tests.App;
 /// have actually gone wrong: a run left holding a cancellation source, a container disposing a
 /// service twice, a monitor that stopped without saying so.
 /// </remarks>
-public sealed class TransferServiceTests : IAsyncDisposable
+public sealed class TransferServiceTests : IAsyncLifetime
 {
     private sealed class NoCredentials : ICredentialStore
     {
@@ -302,7 +302,11 @@ public sealed class TransferServiceTests : IAsyncDisposable
         check.Summary.ShouldContain("Local Monitoring");
     }
 
-    public async ValueTask DisposeAsync()
+    // IAsyncLifetime, not IAsyncDisposable: xUnit v2 never calls IAsyncDisposable on a test
+    // class, so this teardown silently did not run at all.
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         await _store.DisposeAsync();
 
