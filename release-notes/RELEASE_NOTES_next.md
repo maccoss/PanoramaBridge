@@ -22,6 +22,11 @@ time and update the heading; see `README.md` in this directory for the process.
 - **The message about a conflicting file on the server reads the same way.** It compared two raw
   byte counts; it now uses the same units as everything else.
 
+- **Every byte count in the window now comes from one place.** The transfer lines, the Uploads
+  table and the command-line tool each had their own copy of the rounding rule, which is how the
+  same file can end up described two ways on one screen. The only visible difference: a transfer
+  slower than a kilobyte a second reads "512 B/s" rather than "512.0 B/s".
+
 ## Performance
 
 ## Breaking Changes

@@ -5,9 +5,17 @@ namespace PanoramaBridge.Core.Infrastructure;
 /// </summary>
 /// <remarks>
 /// <para>
-/// One implementation, because there were three: the file progress line, the overall progress
-/// line and <c>pbctl</c> each carried a private copy of the same loop. Three copies of a display
-/// rule is three chances for the same number to be written two ways in one window.
+/// One implementation, because there were five. Four rendered a size — the file progress line,
+/// the overall progress line, the uploads table and <c>pbctl</c> — and a fifth rendered a rate on
+/// a transfer row. Copies of a display rule are chances for the same number to be written two
+/// ways in one window, and they had already begun to drift: the rate's copy stopped at GB where
+/// the others went to TB, and wrote a sub-kilobyte value as <c>512.0 B</c> where the others wrote
+/// <c>512 B</c>.
+/// </para>
+/// <para>
+/// The count in this paragraph was wrong when it was first written — it said three, because a
+/// search for the duplicates found only the ones that were easy to find. If another appears,
+/// route it here rather than adding a sixth.
 /// </para>
 /// <para>
 /// Binary units, matching what Windows shows in Explorer for the same file. A scientist comparing
