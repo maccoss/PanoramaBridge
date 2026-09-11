@@ -1,3 +1,5 @@
+using PanoramaBridge.Core.Infrastructure;
+
 namespace PanoramaBridge.Core.Monitoring;
 
 /// <summary>Why a file is or is not ready to be uploaded.</summary>
@@ -61,11 +63,32 @@ public readonly record struct FileReadiness(ReadinessReason Reason, long Length,
             $"'{DisplayName(path)}' is open in another program. This is normal while an "
             + "instrument is acquiring or a copy is still running.");
 
+    /// <summary>The file changed size since the last look.</summary>
+    /// <remarks>
+    /// The size now, and how much it moved — not the two raw byte counts it used to show. Two
+    /// reasons, and the second is why this is not simply the old sentence in bigger units:
+    /// <list type="bullet">
+    /// <item>
+    /// "8,412,336,128 to 8,415,481,856 bytes" is not a number anyone reads. It is the size of an
+    /// acquisition, and nobody counts digits to find out it is eight gigabytes.
+    /// </item>
+    /// <item>
+    /// Rounding both ends would destroy the message. An acquisition growing by a few megabytes
+    /// renders as "8.4 GB to 8.4 GB" — a sentence saying a file is still being written, next to
+    /// two identical numbers saying it is not. The difference has to be stated outright, because
+    /// it is the part that cannot survive being rounded.
+    /// </item>
+    /// </list>
+    /// Direction is said rather than assumed. The tracker calls this whenever the size
+    /// <em>changed</em>, and a file being replaced or rewritten can shrink.
+    /// </remarks>
     public static FileReadiness Growing(long from, long to) =>
         new(
             ReadinessReason.Growing,
             to,
-            $"Still being written ({from:N0} to {to:N0} bytes since the last check).");
+            $"Still being written ({ByteSize.Describe(to)}, "
+            + $"{(to >= from ? "up" : "down")} {ByteSize.Describe(Math.Abs(to - from))} "
+            + "since the last check).");
 
     public static FileReadiness Settling(long length, TimeSpan quietFor, TimeSpan required) =>
         new(

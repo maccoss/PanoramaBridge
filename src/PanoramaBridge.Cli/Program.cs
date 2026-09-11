@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using PanoramaBridge.Core.Infrastructure;
 using PanoramaBridge.Core.Monitoring;
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Core.Transfer;
@@ -602,20 +603,14 @@ internal static class Program
             : RemotePath.Parse(configured);
     }
 
-    internal static string FormatBytes(long bytes)
-    {
-        string[] units = ["B", "KB", "MB", "GB", "TB"];
-        double value = bytes;
-        var unit = 0;
-
-        while (value >= 1024 && unit < units.Length - 1)
-        {
-            value /= 1024;
-            unit++;
-        }
-
-        return unit == 0 ? $"{bytes} B" : $"{value:F1} {units[unit]}";
-    }
+    /// <summary>
+    /// Byte counts for the console, shared with the window so the two cannot disagree.
+    /// </summary>
+    /// <remarks>
+    /// Kept as a method rather than inlining ByteSize at each call site because its tests name
+    /// it, and because every size pbctl prints should go through one place.
+    /// </remarks>
+    internal static string FormatBytes(long bytes) => ByteSize.Describe(bytes);
 
     private static void PrintUsage() => Console.WriteLine(
         """
