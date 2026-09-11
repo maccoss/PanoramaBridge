@@ -141,7 +141,7 @@ public sealed partial class TransferRowViewModel : ObservableObject
             : string.Empty;
 
         Eta = progress.State == TransferState.Uploading && progress.Eta is { } eta
-            ? FormatEta(eta)
+            ? Duration.Describe(eta)
             : string.Empty;
 
         // Only claim a verification standing once there is something to claim.
@@ -184,10 +184,4 @@ public sealed partial class TransferRowViewModel : ObservableObject
     /// </remarks>
     private static string FormatRate(double bytesPerSecond) =>
         $"{ByteSize.Describe(bytesPerSecond)}/s";
-
-    private static string FormatEta(TimeSpan eta) => eta.TotalHours >= 1
-        ? $"{(int)eta.TotalHours}h {eta.Minutes}m"
-        : eta.TotalMinutes >= 1
-            ? $"{(int)eta.TotalMinutes}m {eta.Seconds}s"
-            : $"{Math.Max(1, (int)eta.TotalSeconds)}s";
 }

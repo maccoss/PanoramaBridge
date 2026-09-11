@@ -22,10 +22,19 @@ time and update the heading; see `README.md` in this directory for the process.
 - **The message about a conflicting file on the server reads the same way.** It compared two raw
   byte counts; it now uses the same units as everything else.
 
-- **Every byte count in the window now comes from one place.** The transfer lines, the Uploads
-  table and the command-line tool each had their own copy of the rounding rule, which is how the
-  same file can end up described two ways on one screen. The only visible difference: a transfer
-  slower than a kilobyte a second reads "512 B/s" rather than "512.0 B/s".
+- **Every byte count and every time-remaining in the window now comes from one place.** The
+  transfer lines, the Uploads table and the command-line tool each had their own copy of the
+  rounding rule, which is how the same file ends up described two ways on one screen. Two of them
+  had already diverged, so this fixes real disagreements rather than only preventing future ones:
+
+  - A size just short of the next unit showed a figure that should not exist — a file one byte
+    under a gigabyte read **"1024.0 MB"** instead of **"1.0 GB"**.
+  - The overall progress line said **"3m left"** where the row for the same transfer said
+    **"3m 20s left"**. Both now say "3m 20s left".
+  - A transfer slower than a kilobyte a second reads "512 B/s" rather than "512.0 B/s".
+
+  Sizes are also written the same way on every machine now, rather than following the computer's
+  regional settings — so a figure pasted into a support request matches what the sender saw.
 
 ## Performance
 

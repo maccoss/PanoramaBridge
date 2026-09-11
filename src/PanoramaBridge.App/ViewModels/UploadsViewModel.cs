@@ -82,7 +82,6 @@ public sealed class UploadRowViewModel
 
     public bool NeedsAttention =>
         Record.State is TransferState.Failed or TransferState.Conflict or TransferState.Superseded;
-
 }
 
 /// <summary>Which rows the audit view is showing.</summary>

@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace PanoramaBridge.Core.Infrastructure;
 
 /// <summary>
@@ -42,22 +44,58 @@ public static class ByteSize
     /// </remarks>
     public static string Describe(double bytes)
     {
+        // Every caller that computes a rate already turns "no measurable elapsed time" into zero,
+        // so zero is this application's established value for "no rate". Mapping a non-finite one
+        // to the same thing keeps a division somebody forgets to guard from putting "NaN B/s" on
+        // screen, where nothing would fail and nobody would report it.
+        if (!double.IsFinite(bytes))
+        {
+            bytes = 0;
+        }
+
         var magnitude = Math.Abs(bytes);
         var unit = 0;
 
-        while (magnitude >= 1024 && unit < Units.Length - 1)
+        // The comparison is against what will be PRINTED, not what is held. 1,048,575 bytes is
+        // 1023.999 KB, which prints as "1024.0 KB" — a figure no unit scale should ever show, and
+        // what this loop produced while it compared the unrounded value. Stepping on the rounded
+        // one is what keeps the printed number below 1024.
+        while (unit < Units.Length - 1 && Rounded(magnitude, unit) >= 1024)
         {
             magnitude /= 1024;
             unit++;
         }
 
-        var sign = bytes < 0 ? "-" : string.Empty;
+        var rounded = Rounded(magnitude, unit);
+
+        // Only sign a number that is not zero. A small negative difference would otherwise read
+        // "-0 B", which says less than "0 B" does.
+        var sign = bytes < 0 && rounded != 0 ? "-" : string.Empty;
 
         return unit == 0
-            ? $"{sign}{magnitude:F0} B"
-            : $"{sign}{magnitude:F1} {Units[unit]}";
+            ? $"{sign}{magnitude.ToString("F0", Culture)} B"
+            : $"{sign}{magnitude.ToString("F1", Culture)} {Units[unit]}";
     }
 
     /// <summary>Renders a byte count.</summary>
     public static string Describe(long bytes) => Describe((double)bytes);
+
+    /// <summary>
+    /// Invariant, deliberately, rather than the machine's locale.
+    /// </summary>
+    /// <remarks>
+    /// Every string around these numbers is English and none of it is localized, so a German
+    /// machine would otherwise render "Still being written (1,5 KB" — one comma decimal inside an
+    /// English sentence. It also keeps the figure stable between the window, the console and the
+    /// log, which matters when somebody pastes a line of it into a support request.
+    /// <para>
+    /// Dates are the opposite case and are formatted with the current culture, because date order
+    /// genuinely differs by country and is read rather than compared.
+    /// </para>
+    /// </remarks>
+    private static CultureInfo Culture => CultureInfo.InvariantCulture;
+
+    /// <summary>The value as it will be printed at this unit.</summary>
+    private static double Rounded(double magnitude, int unit) =>
+        Math.Round(magnitude, unit == 0 ? 0 : 1, MidpointRounding.AwayFromZero);
 }

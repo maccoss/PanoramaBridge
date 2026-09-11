@@ -55,18 +55,11 @@ public readonly record struct TransferTotals(
 
         if (Eta is { } eta)
         {
-            parts.Add($"{DescribeEta(eta)} left");
+            parts.Add($"{Duration.Describe(eta)} left");
         }
 
         return string.Join(" - ", parts);
     }
-
-    private static string DescribeEta(TimeSpan eta) => eta.TotalHours >= 1
-        ? $"{(int)eta.TotalHours}h {eta.Minutes}m"
-        : eta.TotalMinutes >= 1
-            ? $"{(int)eta.TotalMinutes}m"
-            : $"{Math.Max(1, (int)eta.TotalSeconds)}s";
-
 }
 
 /// <summary>

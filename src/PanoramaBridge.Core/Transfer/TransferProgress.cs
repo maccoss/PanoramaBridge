@@ -61,7 +61,7 @@ public sealed record TransferProgress(
         if (State is TransferState.Uploading && TotalBytes > 0)
         {
             var rate = BytesPerSecond > 0 ? $" - {ByteSize.Describe(BytesPerSecond)}/s" : string.Empty;
-            var eta = Eta is { } remaining ? $" - {DescribeEta(remaining)} left" : string.Empty;
+            var eta = Eta is { } remaining ? $" - {Duration.Describe(remaining)} left" : string.Empty;
             return $"{Phase} {Fraction:P0} of {ByteSize.Describe(TotalBytes)}{rate}{eta}";
         }
 
@@ -75,13 +75,6 @@ public sealed record TransferProgress(
         VerifyMethod.SizeOnly => "Uploaded - size only",
         _ => "Uploaded - not verified",
     };
-
-    private static string DescribeEta(TimeSpan eta) => eta.TotalHours >= 1
-        ? $"{(int)eta.TotalHours}h {eta.Minutes}m"
-        : eta.TotalMinutes >= 1
-            ? $"{(int)eta.TotalMinutes}m"
-            : $"{Math.Max(1, (int)eta.TotalSeconds)}s";
-
 }
 
 /// <summary>Totals across a run.</summary>
