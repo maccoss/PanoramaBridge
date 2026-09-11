@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PanoramaBridge.Core.Hashing;
+using PanoramaBridge.Core.Infrastructure;
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Core.WebDav;
 
@@ -150,8 +151,8 @@ public sealed class UploadDecisionService
             return Resolve(
                 policy,
                 DecisionTier.RemoteSnapshot,
-                $"A different file is already there ({remote.Length:N0} bytes on the server, "
-                + $"{stamp.Length:N0} locally).");
+                $"A different file is already there ({ByteSize.Describe(remote.Length)} on the "
+                + $"server, {ByteSize.Describe(stamp.Length)} locally).");
         }
 
         if (remoteHash is null)

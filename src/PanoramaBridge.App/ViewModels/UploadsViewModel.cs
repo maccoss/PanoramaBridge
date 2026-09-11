@@ -5,6 +5,7 @@ using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
+using PanoramaBridge.Core.Infrastructure;
 using PanoramaBridge.Core.Storage;
 
 namespace PanoramaBridge.App.ViewModels;
@@ -72,7 +73,7 @@ public sealed class UploadRowViewModel
     /// <summary>True when the row can be relied on: hash-checked and unchanged since.</summary>
     public bool IsTrustworthy => Record.VerifyMethod == VerifyMethod.ServerMd5;
 
-    public string Size => FormatBytes(Record.Length);
+    public string Size => ByteSize.Describe(Record.Length);
 
     public string VerifiedAt => Record.VerifiedUtc?.ToLocalTime()
         .ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture) ?? string.Empty;
@@ -81,21 +82,6 @@ public sealed class UploadRowViewModel
 
     public bool NeedsAttention =>
         Record.State is TransferState.Failed or TransferState.Conflict or TransferState.Superseded;
-
-    private static string FormatBytes(long bytes)
-    {
-        string[] units = ["B", "KB", "MB", "GB", "TB"];
-        double value = bytes;
-        var unit = 0;
-
-        while (value >= 1024 && unit < units.Length - 1)
-        {
-            value /= 1024;
-            unit++;
-        }
-
-        return unit == 0 ? $"{bytes} B" : $"{value:F1} {units[unit]}";
-    }
 }
 
 /// <summary>Which rows the audit view is showing.</summary>

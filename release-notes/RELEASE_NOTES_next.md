@@ -7,6 +7,35 @@ time and update the heading; see `README.md` in this directory for the process.
 
 ## Bug Fixes
 
+- **A file being watched now reports its size in KB, MB or GB rather than raw bytes.** While
+  PanoramaBridge waits for a file to stop changing, it says how big it is and how much it grew.
+  That used to read *"Still being written (9,437,184 to 12,582,912 bytes since the last check)"*,
+  which is two numbers nobody can read at a glance and, on a real acquisition, two nine-digit ones.
+
+  It now reads *"Still being written (12.0 MB, up 3.0 MB since the last check)"*. The change is
+  stated outright rather than left for you to subtract — on a large file both ends would round to
+  the same figure, so a growing acquisition would otherwise appear stuck at the same size. A file
+  that shrinks says "down" instead.
+
+  Sizes are the same units Windows Explorer uses, so a file listing and this window agree.
+
+- **The message about a conflicting file on the server reads the same way.** It compared two raw
+  byte counts; it now uses the same units as everything else.
+
+- **Every byte count and every time-remaining in the window now comes from one place.** The
+  transfer lines, the Uploads table and the command-line tool each had their own copy of the
+  rounding rule, which is how the same file ends up described two ways on one screen. Two of them
+  had already diverged, so this fixes real disagreements rather than only preventing future ones:
+
+  - A size just short of the next unit showed a figure that should not exist — a file one byte
+    under a gigabyte read **"1024.0 MB"** instead of **"1.0 GB"**.
+  - The overall progress line said **"3m left"** where the row for the same transfer said
+    **"3m 20s left"**. Both now say "3m 20s left".
+  - A transfer slower than a kilobyte a second reads "512 B/s" rather than "512.0 B/s".
+
+  Sizes are also written the same way on every machine now, rather than following the computer's
+  regional settings — so a figure pasted into a support request matches what the sender saw.
+
 ## Performance
 
 ## Breaking Changes

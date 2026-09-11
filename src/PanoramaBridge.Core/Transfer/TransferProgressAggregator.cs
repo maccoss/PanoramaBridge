@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using PanoramaBridge.Core.Infrastructure;
 using PanoramaBridge.Core.Storage;
 
 namespace PanoramaBridge.Core.Transfer;
@@ -49,35 +50,15 @@ public readonly record struct TransferTotals(
 
         if (BytesPerSecond > 0)
         {
-            parts.Add($"{Format(BytesPerSecond)}/s");
+            parts.Add($"{ByteSize.Describe(BytesPerSecond)}/s");
         }
 
         if (Eta is { } eta)
         {
-            parts.Add($"{DescribeEta(eta)} left");
+            parts.Add($"{Duration.Describe(eta)} left");
         }
 
         return string.Join(" - ", parts);
-    }
-
-    private static string DescribeEta(TimeSpan eta) => eta.TotalHours >= 1
-        ? $"{(int)eta.TotalHours}h {eta.Minutes}m"
-        : eta.TotalMinutes >= 1
-            ? $"{(int)eta.TotalMinutes}m"
-            : $"{Math.Max(1, (int)eta.TotalSeconds)}s";
-
-    private static string Format(double bytes)
-    {
-        string[] units = ["B", "KB", "MB", "GB", "TB"];
-        var unit = 0;
-
-        while (bytes >= 1024 && unit < units.Length - 1)
-        {
-            bytes /= 1024;
-            unit++;
-        }
-
-        return unit == 0 ? $"{bytes:F0} B" : $"{bytes:F1} {units[unit]}";
     }
 }
 

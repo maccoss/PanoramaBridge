@@ -1,5 +1,6 @@
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
+using PanoramaBridge.Core.Infrastructure;
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Core.Transfer;
 
@@ -140,7 +141,7 @@ public sealed partial class TransferRowViewModel : ObservableObject
             : string.Empty;
 
         Eta = progress.State == TransferState.Uploading && progress.Eta is { } eta
-            ? FormatEta(eta)
+            ? Duration.Describe(eta)
             : string.Empty;
 
         // Only claim a verification standing once there is something to claim.
@@ -172,23 +173,15 @@ public sealed partial class TransferRowViewModel : ObservableObject
         _ => state.ToString(),
     };
 
-    private static string FormatRate(double bytesPerSecond)
-    {
-        string[] units = ["B", "KB", "MB", "GB"];
-        var unit = 0;
-
-        while (bytesPerSecond >= 1024 && unit < units.Length - 1)
-        {
-            bytesPerSecond /= 1024;
-            unit++;
-        }
-
-        return $"{bytesPerSecond:F1} {units[unit]}/s";
-    }
-
-    private static string FormatEta(TimeSpan eta) => eta.TotalHours >= 1
-        ? $"{(int)eta.TotalHours}h {eta.Minutes}m"
-        : eta.TotalMinutes >= 1
-            ? $"{(int)eta.TotalMinutes}m {eta.Seconds}s"
-            : $"{Math.Max(1, (int)eta.TotalSeconds)}s";
+    /// <summary>
+    /// A throughput, which is a size with "/s" after it.
+    /// </summary>
+    /// <remarks>
+    /// Through ByteSize like every other size, so a rate and a size cannot round differently in
+    /// the same window. This drops one difference the private copy had: a sub-kilobyte rate used
+    /// to read "512.0 B/s" and now reads "512 B/s", matching how every other byte count here is
+    /// written.
+    /// </remarks>
+    private static string FormatRate(double bytesPerSecond) =>
+        $"{ByteSize.Describe(bytesPerSecond)}/s";
 }

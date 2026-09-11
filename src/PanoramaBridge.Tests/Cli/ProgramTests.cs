@@ -62,15 +62,10 @@ public sealed class ProgramTests : IDisposable
             .ShouldContain(PathVariable);
     }
 
-    [Theory]
-    [InlineData(0, "0 B")]
-    [InlineData(512, "512 B")]
-    [InlineData(1024, "1.0 KB")]
-    [InlineData(1536, "1.5 KB")]
-    [InlineData(1048576, "1.0 MB")]
-    [InlineData(7_323_298_011, "6.8 GB")]
-    public void Sizes_are_reported_in_units_a_person_reads(long bytes, string expected) =>
-        Program.FormatBytes(bytes).ShouldBe(expected);
+    // The size-formatting theory that was here duplicated ByteSizeTests case for case, and
+    // FormatBytes is now a one-line delegate. SizeDisplayAgreementTests covers it more strongly:
+    // it runs the same inputs through pbctl AND asserts the console and the window agree, which
+    // a copy of the expectations could not do.
 
     /// <inheritdoc />
     public void Dispose() => SetPath(_original);
