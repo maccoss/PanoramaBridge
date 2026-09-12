@@ -1,4 +1,5 @@
 using System.Collections.Specialized;
+using PanoramaBridge.App.Services;
 using PanoramaBridge.App.ViewModels;
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Tests.TestDoubles;
@@ -41,7 +42,12 @@ public sealed class ConfigurationsViewModelTests
     };
 
     private static (SettingsViewModel Settings, ConfigurationsViewModel List) New(
-        params MonitoringConfiguration[] configurations)
+        params MonitoringConfiguration[] configurations) =>
+        New(run: null, configurations);
+
+    private static (SettingsViewModel Settings, ConfigurationsViewModel List) New(
+        IConfigurationRunControl? run,
+        MonitoringConfiguration[] configurations)
     {
         var settings = new SettingsViewModel(
             new InMemorySettingsStore(),
@@ -49,7 +55,7 @@ public sealed class ConfigurationsViewModelTests
                 ? new AppSettings()
                 : new AppSettings { Configurations = configurations });
 
-        return (settings, new ConfigurationsViewModel(settings));
+        return (settings, new ConfigurationsViewModel(settings, run));
     }
 
     [Fact]
@@ -117,12 +123,11 @@ public sealed class ConfigurationsViewModelTests
     {
         // The distinction only helps if a complete configuration somebody turned off -- an
         // instrument away for service -- still says so rather than claiming to need setting up.
-        var (_, list) = New(
-            Watching("Away for service", Path.GetTempPath()) with { Enabled = false });
+        var (_, list) = New(Watching("Away for service", Path.GetTempPath()));
 
         await list.StatusesChecked;
 
-        list.Rows[0].Status.ShouldBe("Off");
+        list.Rows[0].Status.ShouldBe("Ready", "complete and not running is ready to be run");
     }
 
     [Fact]
@@ -304,19 +309,72 @@ public sealed class ConfigurationsViewModelTests
     }
 
     [Fact]
-    public async Task Ticking_a_row_turns_that_configuration_on_without_disturbing_the_others()
+    public async Task The_run_button_starts_one_configuration_and_leaves_the_others_alone()
     {
-        var (settings, list) = New(
-            Watching("Lumos", @"D:\Data\Lumos") with { Enabled = false },
-            Watching("Exploris", @"D:\Data\Exploris"));
+        var started = new List<string>();
 
-        list.Rows[0].Enabled = true;
+        var (_, list) = New(
+            run: new RecordingRun(started),
+            configurations:
+            [
+                Watching("Lumos", Path.GetTempPath()),
+                Watching("Exploris", Path.GetTempPath()),
+            ]);
 
-        // The tick writes through the settings, which is asynchronous.
-        await Task.Yield();
+        await list.Rows[0].ToggleRunCommand.ExecuteAsync(null);
 
-        settings.Configurations[0].Enabled.ShouldBeTrue();
-        settings.Configurations[1].Enabled.ShouldBeTrue("the one beside it is untouched");
+        started.ShouldBe(["Lumos"]);
+        list.Rows[0].Running.ShouldBeTrue();
+        list.Rows[0].RunButtonText.ShouldBe("Stop");
+        list.Rows[1].Running.ShouldBeFalse("the one beside it is untouched");
+        list.Rows[1].RunButtonText.ShouldBe("Run");
+    }
+
+    [Fact]
+    public async Task A_configuration_that_will_not_start_says_why_and_the_button_goes_back()
+    {
+        // A button reading Stop for something that never started is the same defect as a tick
+        // that was never saved.
+        var (_, list) = New(
+            run: new RefusingRun("no credential is available"),
+            configurations: [Watching("Lumos", Path.GetTempPath())]);
+
+        await list.Rows[0].ToggleRunCommand.ExecuteAsync(null);
+
+        list.Rows[0].Running.ShouldBeFalse();
+        list.Rows[0].RunButtonText.ShouldBe("Run");
+        list.Problem.ShouldContain("no credential is available");
+    }
+
+    private sealed class RecordingRun(List<string> started) : IConfigurationRunControl
+    {
+        private readonly HashSet<string> _running = new(StringComparer.Ordinal);
+
+        public bool IsRunning(MonitoringConfiguration configuration) =>
+            _running.Contains(configuration.DisplayName);
+
+        public Task StartAsync(MonitoringConfiguration configuration)
+        {
+            started.Add(configuration.DisplayName);
+            _running.Add(configuration.DisplayName);
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(MonitoringConfiguration configuration)
+        {
+            _running.Remove(configuration.DisplayName);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RefusingRun(string reason) : IConfigurationRunControl
+    {
+        public bool IsRunning(MonitoringConfiguration configuration) => false;
+
+        public Task StartAsync(MonitoringConfiguration configuration) =>
+            throw new InvalidOperationException(reason);
+
+        public Task StopAsync(MonitoringConfiguration configuration) => Task.CompletedTask;
     }
 
     [Fact]
@@ -395,14 +453,27 @@ public sealed class ConfigurationsViewModelTests
     }
 
     [Fact]
-    public void A_configuration_that_is_switched_off_reads_as_off_rather_than_as_broken()
+    public async Task A_folder_that_is_not_there_needs_attention_rather_than_setting_up()
     {
-        // An instrument away for service. Nothing is wrong with it and nothing needs fixing, so
-        // marking it red would train people to ignore the column.
-        var (_, list) = New(
-            Watching("Away for service", @"X:\not\here") with { Enabled = false });
+        // An instrument whose share is unplugged has been set up; something is wrong with it.
+        // Saying "Not set up" would send somebody to fill in boxes that are already filled in.
+        var (_, list) = New(Watching("Away for service", @"X:\not\here"));
 
-        list.Rows[0].Status.ShouldBe("Off");
+        await list.StatusesChecked;
+
+        list.Rows[0].Status.ShouldBe("Needs attention");
+    }
+
+    [Fact]
+    public async Task A_complete_configuration_that_is_not_running_reads_as_ready()
+    {
+        // Not "Off". Nothing is wrong with it and nothing is waiting on anybody: it is ready to
+        // be run, and the Run button beside it is how.
+        var (_, list) = New(Watching("Lumos", Path.GetTempPath()));
+
+        await list.StatusesChecked;
+
+        list.Rows[0].Status.ShouldBe("Ready");
     }
 
     [Fact]
@@ -429,14 +500,13 @@ public sealed class ConfigurationsViewModelTests
     public async Task The_summary_says_how_many_will_actually_run()
     {
         var (_, list) = New(
-            Watching("Lumos", @"D:\Data\Lumos"),
-            Watching("Exploris", @"D:\Data\Exploris") with { Enabled = false });
+            Watching("Lumos", Path.GetTempPath()),
+            Watching("Exploris", Path.GetTempPath()));
 
-        list.Summary.ShouldBe("2 configurations, 1 on.");
+        list.Summary.ShouldBe("2 configurations, none running.");
 
         await list.AddCommand.ExecuteAsync(null);
 
-        // Still one on: a configuration added is one nobody has filled in yet.
-        list.Summary.ShouldBe("3 configurations, 1 on.");
+        list.Summary.ShouldBe("3 configurations, none running.");
     }
 }

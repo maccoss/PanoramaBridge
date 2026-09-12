@@ -275,8 +275,23 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>Whether anything has been edited since the last save.</summary>
     public bool HasUnsavedChanges => ToSettings() != _saved;
 
-    /// <summary>Problems that would prevent a transfer, or empty when the settings are usable.</summary>
-    public IReadOnlyList<string> Problems => ToSettings().Validate();
+    /// <summary>
+    /// Problems with the configuration these tabs are showing, plus any with the file as a whole.
+    /// </summary>
+    /// <remarks>
+    /// The configuration first, because it is what the person is looking at. Asking the whole
+    /// settings record instead would report a fault in a configuration on another row, which
+    /// reads as the boxes in front of you being wrong.
+    /// </remarks>
+    public IReadOnlyList<string> Problems
+    {
+        get
+        {
+            var settings = ToSettings();
+
+            return [.. ConfigurationIn(settings).Validate(), .. settings.Validate()];
+        }
+    }
 
     /// <summary>The configuration being edited, as saved.</summary>
     /// <remarks>

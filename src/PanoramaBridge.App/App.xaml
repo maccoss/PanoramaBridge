@@ -177,6 +177,26 @@
             </Style.Triggers>
         </Style>
 
+        <!--
+            The per-row run control. Same colours and the same reasoning as the toolbar button it
+            replaces: green for the thing that will start something, red for the thing that will
+            stop it, and the colour bound to the same property as the word so the two cannot
+            disagree about which state a configuration is in.
+        -->
+        <Style x:Key="RowRunButton" TargetType="Button" BasedOn="{StaticResource MonitoringButton}">
+            <Setter Property="MinWidth" Value="64" />
+            <Setter Property="Margin" Value="2,1" />
+            <Setter Property="Padding" Value="6,1" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Running}" Value="True">
+                    <Setter Property="Background" Value="{StaticResource StopRed}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Running}" Value="False">
+                    <Setter Property="Background" Value="{StaticResource StartGreen}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <Style TargetType="CheckBox">
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="ToolTipService.ShowDuration" Value="60000" />

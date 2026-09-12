@@ -265,7 +265,9 @@ public sealed class SettingsUpgradeToConfigurationsTests : IDisposable
 
         settings.OnlyConfiguration().Extensions.ShouldBeEmpty();
         settings.OnlyConfiguration().ExcludedExtensions.ShouldBeEmpty();
-        settings.Validate().ShouldContain(p => p.Contains("at least one file extension"));
+        settings.OnlyConfiguration()
+            .Validate()
+            .ShouldContain(p => p.Contains("at least one file extension"));
     }
 
     [Fact]

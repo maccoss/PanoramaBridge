@@ -52,7 +52,19 @@ public sealed record MonitoringConfiguration
     /// </remarks>
     public string Name { get; init; } = string.Empty;
 
-    /// <summary>Whether this configuration runs when monitoring starts.</summary>
+    /// <summary>
+    /// Retired. Kept so a settings file written before the Run button can still be read.
+    /// </summary>
+    /// <remarks>
+    /// It used to mean "include this when monitoring starts", back when starting was one action
+    /// over the whole set. Each configuration now has its own Run button and nothing starts by
+    /// itself, so there is no moment at which this could be consulted. Nothing reads it.
+    /// <para>
+    /// Left on the record rather than removed so that a file written by either build is readable
+    /// by the other: an older build still finds the flag where it expects it, and this one ignores
+    /// it. <see cref="Transfer.ConflictPolicy.Rename"/> is kept for the same reason.
+    /// </para>
+    /// </remarks>
     public bool Enabled { get; init; } = true;
 
     /// <summary>What to call this in a list or a message when it has no name yet.</summary>

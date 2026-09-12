@@ -159,10 +159,19 @@ public sealed record AppSettings
     [JsonPropertyName("$version")]
     public int Version { get; init; } = CurrentVersion;
 
-    /// <summary>The configurations that run when monitoring starts.</summary>
+    /// <summary>
+    /// The configurations that are complete enough to run.
+    /// </summary>
+    /// <remarks>
+    /// Not a stored flag any more. Each configuration has its own Run button and nothing starts
+    /// by itself, so what matters about one is whether it could work rather than whether somebody
+    /// ticked it. A half-filled configuration is simply skipped by anything that acts on all of
+    /// them, instead of making the whole set refuse -- which is what a single invalid one used to
+    /// do.
+    /// </remarks>
     [JsonIgnore]
-    public IEnumerable<MonitoringConfiguration> EnabledConfigurations =>
-        Configurations.Where(c => c.Enabled);
+    public IEnumerable<MonitoringConfiguration> UsableConfigurations =>
+        Configurations.Where(c => c.Validate().Count == 0);
 
     /// <summary>
     /// Value equality, including the list members.
@@ -297,29 +306,19 @@ public sealed record AppSettings
     /// Problems that would stop a transfer, phrased for the person who has to fix them.
     /// </summary>
     /// <remarks>
-    /// Only enabled configurations are checked. A configuration someone switched off because its
-    /// instrument is away for service must not stop the others starting -- which is most of the
-    /// point of being able to switch one off.
+    /// Only what is true of the whole file. Whether any one configuration can run is that
+    /// configuration's own question, asked by <see cref="MonitoringConfiguration.Validate"/> when
+    /// its Run button is pressed -- because a configuration nobody has filled in yet must not be
+    /// able to stop the others, and as a whole-settings check it could.
     /// </remarks>
     public IReadOnlyList<string> Validate()
     {
         var problems = new List<string>();
-        var enabled = EnabledConfigurations.ToArray();
 
-        if (enabled.Length == 0)
+        if (Configurations.Count == 0)
         {
-            problems.Add(Configurations.Count == 0
-                ? "Add a configuration: a folder to monitor and a Panorama folder to send it to."
-                : "Every configuration is turned off. Tick one to start transferring.");
-        }
-
-        // Labelled only when there is more than one, so the single-configuration case reads
-        // exactly as it always has: "Choose a directory to monitor on the Local Monitoring tab."
-        var label = enabled.Length > 1;
-
-        foreach (var configuration in enabled)
-        {
-            problems.AddRange(configuration.Validate(label ? configuration.DisplayName : null));
+            problems.Add(
+                "Add a configuration: a folder to monitor and a Panorama folder to send it to.");
         }
 
         if (MaxConcurrentTransfers is < 1 or > 8)

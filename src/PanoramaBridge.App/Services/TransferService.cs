@@ -224,13 +224,16 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     {
         ArgumentNullException.ThrowIfNull(settings);
 
-        var problems = settings.Validate();
-        if (problems.Count > 0)
+        var configuration = edited ?? EditedConfiguration(settings) ?? new MonitoringConfiguration();
+
+        // This configuration and then the file as a whole. Asking the settings first would report
+        // a fault on some other row while the person is looking at this one.
+        var problems = (string[])[.. configuration.Validate(), .. settings.Validate()];
+
+        if (problems.Length > 0)
         {
             return new ConnectionCheck(false, problems[0]);
         }
-
-        var configuration = edited ?? EditedConfiguration(settings) ?? new MonitoringConfiguration();
 
         try
         {
@@ -349,7 +352,10 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             throw new InvalidOperationException(problems[0]);
         }
 
-        var configurations = settings.EnabledConfigurations.ToArray();
+        // What could actually transfer. A configuration nobody has filled in is skipped
+            // rather than taking the whole scan down with it, the same way it no longer stops the
+            // others being started.
+            var configurations = settings.UsableConfigurations.ToArray();
 
         // One budget for the whole scan, so pressing Upload now with five configurations moves as
         // many files at once as the slider says rather than five times as many.
@@ -450,96 +456,141 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// The configuration the settings tabs are showing, so the typed secret reaches the
     /// credential slot it was typed for. See <see cref="SecretFor"/>.
     /// </param>
-    public async Task StartMonitoringAsync(
+    public async Task StartConfigurationAsync(
         AppSettings settings,
+        MonitoringConfiguration configuration,
         string? secret,
         MonitoringConfiguration? edited = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
-
-        if (IsMonitoring)
-        {
-            return;
-        }
+        ArgumentNullException.ThrowIfNull(configuration);
 
         if (IsRunning)
         {
             throw new InvalidOperationException(
-                "A scan is already running. Wait for it to finish before starting monitoring.");
+                "A scan is already running. Wait for it to finish before starting a configuration.");
         }
 
-        // IsMonitoring is false once every runner has given up, but the runners themselves are
-        // still here holding a connection, an engine and a monitor each. Starting again without
-        // winding them down would simply drop them, leaking an HttpClient and a set of worker
-        // tasks per configuration, every time somebody pressed the button after a failure.
-        if (_monitoring is not null)
+        if (RunnerFor(configuration) is not null)
         {
-            await StopMonitoringAsync().ConfigureAwait(false);
+            return;
         }
 
-        var problems = settings.Validate();
+        // This configuration only. Starting is per configuration now, so one that is not set up
+        // yet is its own problem and not everybody else's -- which is what the whole-settings
+        // check made it, by refusing on the first fault it found anywhere.
+        var problems = configuration.Validate();
+
         if (problems.Count > 0)
         {
             throw new InvalidOperationException(problems[0]);
         }
 
-        var monitoring = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var budget = new TransferBudget(settings.MaxConcurrentTransfers);
-        var started = new List<ConfigurationRunner>();
+        if (settings.MaxConcurrentTransfers is < 1 or > 8)
+        {
+            throw new InvalidOperationException("Concurrent transfers must be between 1 and 8.");
+        }
+
+        var credential = ResolveCredential(
+                configuration, SecretFor(settings, configuration, secret, edited))
+            ?? throw new InvalidOperationException(
+                $"{configuration.DisplayName}: no credential is available for "
+                + $"{configuration.ServerUrl}.");
+
+        // One cancellation source and one budget for the whole session rather than per
+        // configuration: the budget is the limit across all of them, and the source is what Stop
+        // all and shutdown pull. Both are created by whichever configuration starts first.
+        _monitoring ??= CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _budget ??= new TransferBudget(settings.MaxConcurrentTransfers);
+
+        var runner = new ConfigurationRunner(
+            configuration,
+            settings,
+            _clients.For(settings, configuration, credential),
+            _store,
+            _budget,
+            _loggerFactory);
+
+        runner.Progress += Progress.Report;
+        runner.Swept += OnSwept;
+        runner.Waiting += OnWaiting;
+        runner.Failed += OnRunnerFailed;
 
         try
         {
-            foreach (var configuration in settings.EnabledConfigurations)
-            {
-                var credential = ResolveCredential(
-                        configuration, SecretFor(settings, configuration, secret, edited))
-                    ?? throw new InvalidOperationException(
-                        $"{configuration.DisplayName}: no credential is available for "
-                        + $"{configuration.ServerUrl}.");
-
-                var runner = new ConfigurationRunner(
-                    configuration,
-                    settings,
-                    _clients.For(settings, configuration, credential),
-                    _store,
-                    budget,
-                    _loggerFactory);
-
-                runner.Progress += Progress.Report;
-                runner.Swept += OnSwept;
-                runner.Waiting += OnWaiting;
-                runner.Failed += OnRunnerFailed;
-
-                started.Add(runner);
-
-                await runner.StartAsync(monitoring.Token).ConfigureAwait(false);
-            }
+            await runner.StartAsync(_monitoring.Token).ConfigureAwait(false);
         }
         catch
         {
-            foreach (var runner in started)
-            {
-                Detach(runner);
-                await runner.DisposeAsync().ConfigureAwait(false);
-            }
-
-            monitoring.Dispose();
-            budget.Dispose();
+            Detach(runner);
+            await runner.DisposeAsync().ConfigureAwait(false);
             throw;
         }
 
-        _budget = budget;
-        _monitoring = monitoring;
-        _runners = [.. started];
+        _runners = [.. _runners, runner];
 
         _log.LogInformation(
-            "Monitoring {Count} configuration(s), {Concurrency} transfer(s) at once across all of them.",
-            started.Count,
-            budget.Capacity);
+            "{Configuration} started; {Count} running, {Concurrency} transfer(s) at once across "
+            + "all of them.",
+            configuration.DisplayName,
+            MonitoredConfigurations,
+            _budget.Capacity);
 
         RunStateChanged?.Invoke();
     }
+
+    /// <summary>Stops one configuration and waits for its engine to wind down.</summary>
+    /// <remarks>
+    /// The shared budget and cancellation source are left alone while anything else is running.
+    /// They belong to the session rather than to any one configuration, and pulling them here
+    /// would stop the others as a side effect of stopping this one.
+    /// </remarks>
+    public async Task StopConfigurationAsync(MonitoringConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        if (RunnerFor(configuration) is not { } runner)
+        {
+            return;
+        }
+
+        _runners = [.. _runners.Where(r => !ReferenceEquals(r, runner))];
+
+        Detach(runner);
+        await runner.DisposeAsync().ConfigureAwait(false);
+
+        _log.LogInformation("{Configuration} stopped.", configuration.DisplayName);
+
+        RunStateChanged?.Invoke();
+        _governor.ReleaseIdleMemory();
+    }
+
+    /// <summary>Whether this configuration is being watched right now.</summary>
+    public bool IsConfigurationRunning(MonitoringConfiguration configuration) =>
+        RunnerFor(configuration) is { IsRunning: true };
+
+    /// <summary>
+    /// The runner serving this configuration, matched on the folder and destination together.
+    /// </summary>
+    /// <remarks>
+    /// Not on the name, which is a label a person can change while it runs, and not on the record,
+    /// which is replaced by value on every edit. The pairing is what a runner actually is.
+    /// </remarks>
+    private ConfigurationRunner? RunnerFor(MonitoringConfiguration configuration) =>
+        _runners.FirstOrDefault(r =>
+            string.Equals(
+                r.Configuration.LocalDirectory,
+                configuration.LocalDirectory,
+                StringComparison.OrdinalIgnoreCase)
+            && string.Equals(
+                r.Configuration.RemotePath,
+                configuration.RemotePath,
+                StringComparison.Ordinal)
+            && string.Equals(
+                r.Configuration.ServerUrl,
+                configuration.ServerUrl,
+                StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Stops every configuration and waits for the engines to wind down.</summary>
     public async Task StopMonitoringAsync()

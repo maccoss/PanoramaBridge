@@ -77,6 +77,25 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         }
     }
 
+    /// <summary>
+    /// Starts every configuration, one at a time.
+    /// </summary>
+    /// <remarks>
+    /// Starting is per configuration now -- a Run button on each row. These tests are about what
+    /// happens once several are running, so they say so here rather than each spelling out a loop.
+    /// </remarks>
+    private static async Task StartAllAsync(
+        TransferService service,
+        AppSettings settings,
+        string? secret,
+        MonitoringConfiguration? edited = null)
+    {
+        foreach (var configuration in settings.Configurations)
+        {
+            await service.StartConfigurationAsync(settings, configuration, secret, edited);
+        }
+    }
+
     private TransferService NewService() => new(
         _store,
         _credentials,
@@ -123,7 +142,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
             ],
         };
 
-        await service.StartMonitoringAsync(settings, "an-api-key");
+        await StartAllAsync(service, settings, "an-api-key");
 
         service.IsMonitoring.ShouldBeTrue();
         service.MonitoredConfigurations.ShouldBe(3);
@@ -135,49 +154,57 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_configuration_that_is_switched_off_is_not_watched()
+    public async Task A_configuration_nobody_started_is_not_watched()
     {
+        // There is no stored on-and-off any more. A configuration is watched because somebody
+        // pressed its Run button this session, and not otherwise -- including after a restart.
         await using var service = NewService();
 
         var settings = new AppSettings
         {
-            Configurations =
-            [
-                Watching("Lumos"),
-                Watching("Away for service", enabled: false),
-            ],
+            Configurations = [Watching("Lumos"), Watching("Exploris")],
         };
 
-        await service.StartMonitoringAsync(settings, "an-api-key");
+        await service.StartConfigurationAsync(settings, settings.Configurations[0], "an-api-key");
 
         service.MonitoredConfigurations.ShouldBe(1);
+        service.IsConfigurationRunning(settings.Configurations[0]).ShouldBeTrue();
+        service.IsConfigurationRunning(settings.Configurations[1]).ShouldBeFalse();
     }
 
     [Fact]
-    public async Task A_configuration_that_will_not_start_leaves_nothing_running()
+    public async Task A_configuration_that_will_not_start_leaves_the_others_running()
     {
-        // All or nothing on purpose. Starting four of five and reporting success would leave the
-        // window saying it was monitoring while one instrument quietly filled its disk -- and
-        // with several configurations nobody can see at a glance that one folder is uncovered.
+        // The opposite of what this used to promise, and deliberately. Starting was once a single
+        // action over the whole set, so one configuration that could not start had to take the
+        // attempt down rather than leave the window claiming to watch a folder it was not. Each
+        // one now has its own button, so a failure is that row's and says so on that row.
         await using var service = NewService();
 
         var settings = new AppSettings
         {
             Configurations =
             [
-                Watching("Lumos"),
+                Watching("Lumos", account: "config-lumos"),
 
-                // No secret is typed for this one and nothing is stored for it, so resolving its
-                // credential fails after the first configuration has already started.
+                // Nothing is stored for this one and no secret is typed, so it cannot start.
                 Watching("Exploris", server: "https://other.invalid", account: "config-exploris"),
             ],
         };
 
-        await Should.ThrowAsync<InvalidOperationException>(
-            () => service.StartMonitoringAsync(settings, secret: null));
+        _credentials.Write(
+            settings.Configurations[0].ServerUrl,
+            new StoredCredential("apikey", "lumos-key"),
+            settings.Configurations[0].Account);
 
-        service.IsMonitoring.ShouldBeFalse();
-        service.MonitoredConfigurations.ShouldBe(0, "the one that did start has to be stopped again");
+        await service.StartConfigurationAsync(settings, settings.Configurations[0], secret: null);
+
+        await Should.ThrowAsync<InvalidOperationException>(
+            () => service.StartConfigurationAsync(
+                settings, settings.Configurations[1], secret: null));
+
+        service.IsMonitoring.ShouldBeTrue();
+        service.MonitoredConfigurations.ShouldBe(1, "the one that started keeps running");
     }
 
     [Fact]
@@ -193,7 +220,8 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         };
 
         var refusal = await Should.ThrowAsync<InvalidOperationException>(
-            () => service.StartMonitoringAsync(settings, secret: null));
+            () => service.StartConfigurationAsync(
+                settings, settings.Configurations[0], secret: null));
 
         refusal.Message.ShouldContain("Exploris");
         refusal.Message.ShouldContain("https://example.invalid");
@@ -216,7 +244,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
 
         var settings = new AppSettings { Configurations = [edited, other] };
 
-        await service.StartMonitoringAsync(settings, "typed-for-lumos");
+        await StartAllAsync(service, settings, "typed-for-lumos");
 
         service.MonitoredConfigurations.ShouldBe(2);
 
@@ -244,7 +272,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         var settings = new AppSettings { Configurations = [first, second] };
 
         // Typed while the tabs were showing the second one.
-        await service.StartMonitoringAsync(settings, "typed-for-exploris", edited: second);
+        await StartAllAsync(service, settings, "typed-for-exploris", edited: second);
 
         service.MonitoredConfigurations.ShouldBe(2);
 
@@ -268,7 +296,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
             Configurations = [Watching("Lumos"), Watching("Exploris")],
         };
 
-        await service.StartMonitoringAsync(settings, "an-api-key");
+        await StartAllAsync(service, settings, "an-api-key");
 
         service.MonitoredConfigurations.ShouldBe(2);
         service.IsMonitoring.ShouldBeTrue();
@@ -292,9 +320,9 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
 
         var settings = new AppSettings { Configurations = [Watching("Lumos")] };
 
-        await service.StartMonitoringAsync(settings, "an-api-key");
+        await StartAllAsync(service, settings, "an-api-key");
         await service.StopMonitoringAsync();
-        await service.StartMonitoringAsync(settings, "an-api-key");
+        await StartAllAsync(service, settings, "an-api-key");
 
         service.MonitoredConfigurations.ShouldBe(1, "one session, not two");
         service.IsMonitoring.ShouldBeTrue();
@@ -327,7 +355,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
             ],
         };
 
-        await service.StartMonitoringAsync(settings, "an-api-key");
+        await StartAllAsync(service, settings, "an-api-key");
 
         service.MonitoredConfigurations.ShouldBe(3);
         service.OpenConnections.ShouldBe(
@@ -349,7 +377,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         _credentials.Write(Server, new StoredCredential("apikey", "kyle-key"), "config-kyle");
         _credentials.Write(Server, new StoredCredential("apikey", "brian-key"), "config-brian");
 
-        await service.StartMonitoringAsync(
+        await service.StartEveryConfigurationAsync(
             new AppSettings { Configurations = [kyle, brian] }, secret: null);
 
         service.OpenConnections.ShouldBe(2);
@@ -391,7 +419,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         _credentials.Write(Server, new StoredCredential("apikey", "kyle-key"), "config-kyle");
         _credentials.Write(Server, new StoredCredential("apikey", "brian-key"), "config-brian");
 
-        await service.StartMonitoringAsync(
+        await service.StartEveryConfigurationAsync(
             new AppSettings { Configurations = [first, second] }, secret: null);
 
         service.MonitoredConfigurations.ShouldBe(2);
@@ -407,7 +435,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
 
         service.Monitor.ShouldBeNull("nothing is being watched yet");
 
-        await service.StartMonitoringAsync(
+        await service.StartEveryConfigurationAsync(
             new AppSettings { Configurations = [Watching("Lumos"), Watching("Exploris")] },
             "an-api-key");
 
@@ -426,7 +454,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         service.RequestSweep("nothing is running").ShouldBeFalse(
             "so the window knows to scan instead");
 
-        await service.StartMonitoringAsync(
+        await service.StartEveryConfigurationAsync(
             new AppSettings { Configurations = [Watching("Lumos"), Watching("Exploris")] },
             "an-api-key");
 
@@ -440,7 +468,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         // container disposes the same objects again a moment later.
         var service = NewService();
 
-        await service.StartMonitoringAsync(
+        await service.StartEveryConfigurationAsync(
             new AppSettings { Configurations = [Watching("Lumos"), Watching("Exploris")] },
             "an-api-key");
 
@@ -458,7 +486,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         // rather than skip it, and Main returning disposes it synchronously.
         var service = NewService();
 
-        await service.StartMonitoringAsync(
+        await service.StartEveryConfigurationAsync(
             new AppSettings { Configurations = [Watching("Lumos"), Watching("Exploris")] },
             "an-api-key");
 

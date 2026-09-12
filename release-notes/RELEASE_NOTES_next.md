@@ -5,6 +5,20 @@ time and update the heading; see `README.md` in this directory for the process.
 
 ## New Features
 
+- **Each configuration has its own Run button.** Press Run on a row to start that folder
+  transferring and Stop to stand it down; green means it will start, red means it will stop. This
+  replaces the On tick and the Start monitoring button, which were two switches in series for one
+  outcome -- a configuration ran only when both agreed, and neither said so. Stop all is still in
+  the toolbar for standing everything down at once.
+  - **Nothing starts by itself, including after a restart.** A configuration runs because somebody
+    pressed its Run button this session.
+  - The status column says which is which: Running; Ready for one that is complete and stopped;
+    Needs attention for one with a folder and something wrong with it; and Not set up for one
+    nobody has filled in yet.
+  - A configuration that cannot start now says so on its own row and leaves the others running. It
+    used to take the whole attempt down with it, so one folder nobody had finished setting up
+    stopped everything.
+
 ## Bug Fixes
 
 - A settings file that was briefly in use by something else -- antivirus opening it, or a backup
@@ -14,9 +28,9 @@ time and update the heading; see `README.md` in this directory for the process.
   it is. A file whose contents really are bad is still kept for inspection, as before.
 - A settings save that could not replace the file left a `settings.json.tmp` beside it, one for
   every save that lost that race.
-- On the Configurations tab, turning a configuration on or off when the settings file could not be
-  written left the tick showing a change that had not been saved. The tick now goes back and the
-  reason is shown.
+- On the Configurations tab, starting or stopping a configuration when the settings file could
+  not be written left the button showing a change that had not happened. It now goes back and the
+  reason is shown under the list.
 - **Adding a configuration blanked the destination of the one you were looking at.** The
   where-to-upload box emptied itself whenever the list of configurations was reloaded, so after
   adding one, the previous configuration showed no destination -- and the next save would have

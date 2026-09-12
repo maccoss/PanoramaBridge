@@ -156,7 +156,7 @@ public sealed class TransferServiceTests : IAsyncLifetime
 
         service.IsMonitoring.ShouldBeFalse();
 
-        await service.StartMonitoringAsync(Settings(), "an-api-key");
+        await service.StartEveryConfigurationAsync(Settings(), "an-api-key");
         service.IsMonitoring.ShouldBeTrue();
         service.Monitor.ShouldNotBeNull();
 
@@ -171,8 +171,8 @@ public sealed class TransferServiceTests : IAsyncLifetime
         // The toggle command, a restored setting and a retry can all arrive at once.
         await using var service = NewService();
 
-        await service.StartMonitoringAsync(Settings(), "an-api-key");
-        await service.StartMonitoringAsync(Settings(), "an-api-key");
+        await service.StartEveryConfigurationAsync(Settings(), "an-api-key");
+        await service.StartEveryConfigurationAsync(Settings(), "an-api-key");
 
         service.IsMonitoring.ShouldBeTrue();
 
@@ -198,7 +198,7 @@ public sealed class TransferServiceTests : IAsyncLifetime
         var changes = 0;
         service.RunStateChanged += () => Interlocked.Increment(ref changes);
 
-        await service.StartMonitoringAsync(Settings(), "an-api-key");
+        await service.StartEveryConfigurationAsync(Settings(), "an-api-key");
         await service.StopMonitoringAsync();
 
         changes.ShouldBeGreaterThanOrEqualTo(2, "once on the way up and once on the way down");
@@ -211,7 +211,7 @@ public sealed class TransferServiceTests : IAsyncLifetime
 
         service.RequestSweep("test").ShouldBeFalse("there is nothing to ask");
 
-        await service.StartMonitoringAsync(Settings(), "an-api-key");
+        await service.StartEveryConfigurationAsync(Settings(), "an-api-key");
         service.RequestSweep("test").ShouldBeTrue();
 
         await service.StopMonitoringAsync();
@@ -226,7 +226,7 @@ public sealed class TransferServiceTests : IAsyncLifetime
         // Upload now into Check now instead.
         await using var service = NewService();
 
-        await service.StartMonitoringAsync(Settings(), "an-api-key");
+        await service.StartEveryConfigurationAsync(Settings(), "an-api-key");
 
         var refusal = await Should.ThrowAsync<InvalidOperationException>(
             () => service.ScanAndUploadAsync(Settings(), "an-api-key"));
@@ -242,7 +242,7 @@ public sealed class TransferServiceTests : IAsyncLifetime
         await using var service = NewService();
 
         var refusal = await Should.ThrowAsync<InvalidOperationException>(
-            () => service.StartMonitoringAsync(Settings(), secret: null));
+            () => service.StartEveryConfigurationAsync(Settings(), secret: null));
 
         refusal.Message.ShouldContain("credential");
         service.IsMonitoring.ShouldBeFalse();
@@ -254,7 +254,7 @@ public sealed class TransferServiceTests : IAsyncLifetime
         await using var service = NewService();
 
         var refusal = await Should.ThrowAsync<InvalidOperationException>(
-            () => service.StartMonitoringAsync(
+            () => service.StartEveryConfigurationAsync(
                 Settings().Holding(Configuration() with { LocalDirectory = string.Empty }),
                 "an-api-key"));
 
@@ -269,7 +269,7 @@ public sealed class TransferServiceTests : IAsyncLifetime
         // down on the way out, and reported it as a failure to start.
         var service = NewService();
 
-        await service.StartMonitoringAsync(Settings(), "an-api-key");
+        await service.StartEveryConfigurationAsync(Settings(), "an-api-key");
 
         await service.DisposeAsync();
         await service.DisposeAsync();
@@ -284,7 +284,7 @@ public sealed class TransferServiceTests : IAsyncLifetime
         // throw rather than skip it, and Main returning disposes it synchronously.
         var service = NewService();
 
-        await service.StartMonitoringAsync(Settings(), "an-api-key");
+        await service.StartEveryConfigurationAsync(Settings(), "an-api-key");
 
         service.Dispose();
         service.Dispose();
