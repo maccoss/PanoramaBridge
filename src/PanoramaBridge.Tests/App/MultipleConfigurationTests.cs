@@ -227,6 +227,80 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task The_typed_secret_follows_the_configuration_being_edited_not_the_first_one()
+    {
+        // The password box belongs to whichever configuration the tabs are showing. Assuming it
+        // is always the first wrote one configuration's key into another's credential slot --
+        // and because a typed secret takes precedence over a stored one, the configuration it
+        // was actually typed for then signed in with somebody else's.
+        await using var service = NewService();
+
+        var first = Watching("Lumos", server: "https://lumos.invalid", account: "config-lumos");
+        var second = Watching("Exploris", server: "https://other.invalid", account: "config-exploris");
+
+        _credentials.Write(
+            first.ServerUrl, new StoredCredential("apikey", "lumos-own-key"), first.Account);
+
+        var settings = new AppSettings { Configurations = [first, second] };
+
+        // Typed while the tabs were showing the second one.
+        await service.StartMonitoringAsync(settings, "typed-for-exploris", edited: second);
+
+        service.MonitoredConfigurations.ShouldBe(2);
+
+        // Exploris used what was typed and never asked the store; Lumos was not given it and fell
+        // back to its own. Reversed, this is the defect: Lumos would have taken the typed key and
+        // Exploris would have gone looking for a credential nobody had stored.
+        _credentials.Reads.ShouldNotContain((second.ServerUrl, second.Account));
+        _credentials.Reads.ShouldContain((first.ServerUrl, first.Account));
+    }
+
+    [Fact]
+    public async Task A_configuration_that_stops_watching_stops_being_counted()
+    {
+        // A runner cancels its own linked token when its monitor dies, and cancelling a child
+        // does not cancel the parent. Counting it regardless left the window saying it was
+        // monitoring a folder nobody was looking at, with the button still offering to stop it.
+        await using var service = NewService();
+
+        var settings = new AppSettings
+        {
+            Configurations = [Watching("Lumos"), Watching("Exploris")],
+        };
+
+        await service.StartMonitoringAsync(settings, "an-api-key");
+
+        service.MonitoredConfigurations.ShouldBe(2);
+        service.IsMonitoring.ShouldBeTrue();
+
+        // Stopping every runner is what a monitor failing on each of them amounts to, as far as
+        // the service can see: each has cancelled its own token and stopped watching.
+        await service.StopMonitoringAsync();
+
+        service.MonitoredConfigurations.ShouldBe(0);
+        service.IsMonitoring.ShouldBeFalse("nothing is being watched, so nothing should say it is");
+    }
+
+    [Fact]
+    public async Task Starting_again_after_a_previous_session_does_not_leak_it()
+    {
+        // IsMonitoring goes false once every runner has given up, but the runners are still there
+        // holding a connection and an engine each. Starting over the top of them would drop them
+        // silently -- an HttpClient and a set of worker tasks per configuration, every time
+        // somebody pressed the button after a failure.
+        await using var service = NewService();
+
+        var settings = new AppSettings { Configurations = [Watching("Lumos")] };
+
+        await service.StartMonitoringAsync(settings, "an-api-key");
+        await service.StopMonitoringAsync();
+        await service.StartMonitoringAsync(settings, "an-api-key");
+
+        service.MonitoredConfigurations.ShouldBe(1, "one session, not two");
+        service.IsMonitoring.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task Each_configuration_reads_the_credential_for_its_own_account()
     {
         // Two configurations on one server as different people: the case phase 2 keyed

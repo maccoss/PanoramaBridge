@@ -141,11 +141,12 @@ public sealed class ConfigurationRunner : IAsyncDisposable
 
     /// <summary>Raised when this configuration stops for a reason nobody asked for.</summary>
     /// <remarks>
-    /// Carries the configuration's name, because with several running "Monitoring stopped" does
-    /// not say which folder is no longer being watched -- and the others are still going, so
-    /// there is nothing else to give it away.
+    /// Carries the runner as well as the reason. The name is needed because with several running
+    /// "Monitoring stopped" does not say which folder is no longer being watched, and the runner
+    /// itself is needed because whoever is holding the set has to stop counting this one -- the
+    /// others keep sweeping and would otherwise keep the window looking healthy.
     /// </remarks>
-    public event Action<string>? Failed;
+    public event Action<ConfigurationRunner, string>? Failed;
 
     /// <summary>
     /// Recovers anything interrupted, then starts watching.
@@ -396,11 +397,15 @@ public sealed class ConfigurationRunner : IAsyncDisposable
         {
             _log.LogError(ex, "{Configuration}: monitoring stopped unexpectedly.", Name);
 
+            // Cancelled before the event, so IsRunning is already false by the time anybody asks.
+            // This is a linked child of the token the service holds, and cancelling a child does
+            // not cancel its parent -- which is exactly why the service has to be told rather
+            // than left to notice.
             await running.CancelAsync().ConfigureAwait(false);
 
             Failed?.Invoke(
-                $"{Name}: monitoring stopped. {ex.Message} Start it again once the cause is dealt "
-                + "with.");
+                this,
+                $"Monitoring stopped. {ex.Message} Start it again once the cause is dealt with.");
         }
     }
 

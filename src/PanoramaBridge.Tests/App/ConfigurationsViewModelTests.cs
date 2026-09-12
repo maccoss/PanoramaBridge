@@ -231,14 +231,78 @@ public sealed class ConfigurationsViewModelTests
     }
 
     [Fact]
-    public void A_configuration_with_a_problem_says_so_rather_than_looking_ready()
+    public async Task A_configuration_with_a_problem_says_so_rather_than_looking_ready()
     {
         // The column exists so that a folder nobody can read is visible in the list, rather than
         // only being discovered when monitoring refuses to start.
         var (_, list) = New(Watching("Lumos", @"X:\not\here"));
 
+        await list.StatusesChecked;
+
         list.Rows[0].Status.ShouldBe("Needs attention");
         list.Rows[0].StatusDetail.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public void The_status_column_does_not_touch_the_disk_while_the_list_is_built()
+    {
+        // Validate calls Directory.Exists, and on a share whose server is down that takes the SMB
+        // timeout to answer -- once per row, on the UI thread, every time the list is rebuilt.
+        // Until the off-thread pass comes back, a row says it is still being checked rather than
+        // claiming to be ready, which nothing has established yet.
+        var (_, list) = New(Watching("Lumos", @"X:\not\here"));
+
+        list.Rows[0].Status.ShouldBe("Checking...");
+        list.Rows[0].Problems.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Removing_the_last_configuration_leaves_a_fresh_one_rather_than_nothing()
+    {
+        // An empty list is a state the editor tabs cannot represent: they would go on showing the
+        // configuration just deleted and silently re-add it on the next save, so the settings file
+        // said none and the window said one.
+        var (settings, list) = New(Watching("Lumos", @"D:\Data\Lumos"));
+
+        list.Confirm = _ => true;
+
+        await list.DeleteCommand.ExecuteAsync(null);
+
+        settings.Configurations.ShouldHaveSingleItem();
+        settings.Configurations[0].LocalDirectory.ShouldBeEmpty("and it is a fresh one");
+        list.Rows.ShouldHaveSingleItem();
+        list.SelectedIndex.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task A_configuration_can_be_given_a_name()
+    {
+        // Without this nothing could set one, so two instruments whose folders are both called
+        // Data were two rows with the same name and one entry between them in the status line.
+        var (settings, list) = New(
+            Watching("Lumos", @"D:\Data\Lumos"),
+            Watching("Exploris", @"E:\Data\Exploris"));
+
+        await settings.EditConfigurationAsync(1);
+
+        settings.Name = "  Exploris 480  ";
+
+        await settings.SaveAsync();
+
+        settings.Configurations[1].Name.ShouldBe("Exploris 480", "trimmed on the way in");
+        settings.EditingName.ShouldBe("Exploris 480");
+        list.Rows[1].Name.ShouldBe("Exploris 480");
+    }
+
+    [Fact]
+    public async Task Clearing_the_name_falls_back_to_the_folder()
+    {
+        var (settings, list) = New(Watching("Lumos", @"D:\Data\Lumos"));
+
+        settings.Name = string.Empty;
+        await settings.SaveAsync();
+
+        list.Rows[0].Name.ShouldBe("Lumos", "which is what the folder is called");
     }
 
     [Fact]

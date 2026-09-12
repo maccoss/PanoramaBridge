@@ -19,6 +19,11 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel>
 
+            <GroupBox Header="Name"
+                      ToolTip="What this configuration is called on the Configurations tab and in the Transfer Status and Uploads columns. Leave it empty to be shown by the folder being watched.">
+                <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+            </GroupBox>
+
             <GroupBox Header="Directory to monitor">
                 <StackPanel>
                     <DockPanel Margin="{StaticResource RowMargin}" Style="{StaticResource HelpRow}"

@@ -224,7 +224,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             RememberCredential(settings);
 
             var summary = await _transfers
-                .ScanAndUploadAsync(settings, SecretProvider?.Invoke(), _shutdown.Token)
+                .ScanAndUploadAsync(
+                    settings, SecretProvider?.Invoke(), Settings.Edited, _shutdown.Token)
                 .ConfigureAwait(true);
 
             StatusLine = Describe(summary);
@@ -290,7 +291,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             RememberCredential(settings);
 
             await _transfers
-                .StartMonitoringAsync(settings, SecretProvider?.Invoke(), _shutdown.Token)
+                .StartMonitoringAsync(
+                    settings, SecretProvider?.Invoke(), Settings.Edited, _shutdown.Token)
                 .ConfigureAwait(true);
 
             IsMonitoring = true;
@@ -298,8 +300,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
             var count = _transfers.MonitoredConfigurations;
 
+            // The folder of the one actually being watched, not of the one the tabs happen to
+            // show: with a single configuration they are the same, and with several the count is
+            // what is worth saying.
             StatusLine = count == 1
-                ? $"Monitoring {EditedConfiguration(settings).LocalDirectory}."
+                ? $"Monitoring {settings.EnabledConfigurations.First().LocalDirectory}."
                 : $"Monitoring {count} configurations.";
         }
         catch (Exception ex)
@@ -329,7 +334,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ConnectionDetail = null;
 
         var result = await _transfers
-            .TestConnectionAsync(settings, SecretProvider?.Invoke(), _shutdown.Token)
+            .TestConnectionAsync(
+                settings, SecretProvider?.Invoke(), Settings.Edited, _shutdown.Token)
             .ConfigureAwait(true);
 
         StatusLine = result.Summary;
@@ -415,28 +421,18 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             MessageBoxButton.OK,
             MessageBoxImage.Information);
 
-    /// <summary>
-    /// The configuration the settings tabs are showing.
-    /// </summary>
-    /// <remarks>
-    /// The first one, which is what <c>SettingsViewModel</c> edits until phase 5 adds a selector.
-    /// Deliberately not "the first enabled one": the password box and the Save credentials
-    /// tickbox belong to what the person is looking at, and the tabs go on showing a
-    /// configuration after it is switched off.
-    /// </remarks>
-    private static MonitoringConfiguration EditedConfiguration(AppSettings settings) =>
-        settings.Configurations.FirstOrDefault() ?? new MonitoringConfiguration();
-
     /// <summary>Stores or clears the credential according to the user's choice.</summary>
     /// <remarks>
-    /// Only for the configuration being edited. There is one password box and one Save
-    /// credentials tickbox, and they describe that configuration; the others keep whatever they
-    /// already have in Windows Credential Manager, which is the only copy they have.
+    /// Only for the configuration being edited, and asked of the settings view model rather than
+    /// assumed to be the first in the list. There is one password box and one Save credentials
+    /// tickbox; they describe whichever configuration the tabs are showing. Taking the first
+    /// instead wrote one configuration's key into another's credential slot, and an unticked box
+    /// deleted a credential belonging to a configuration nobody was looking at.
     /// </remarks>
     private void RememberCredential(AppSettings settings)
     {
         var secret = SecretProvider?.Invoke();
-        var configuration = EditedConfiguration(settings);
+        var configuration = Settings.Edited;
 
         if (!configuration.SaveCredentials)
         {

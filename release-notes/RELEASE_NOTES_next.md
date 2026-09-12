@@ -27,6 +27,8 @@ time and update the heading; see `README.md` in this directory for the process.
     saying which one each row belongs to.
   - Your existing setup becomes the first configuration on update, named after the folder it
     watches, still signed in, still running. Nothing needs re-entering.
+  - Configurations can be named on the Local Monitoring tab. Leave the name empty and the folder
+    being watched is used instead.
 
 - `pbctl watch` can watch several folders at once. Pass `--also <dir>` for each extra one; they
   share the concurrency limit rather than each taking it, so three folders still move three files
@@ -38,6 +40,11 @@ time and update the heading; see `README.md` in this directory for the process.
 
 ## Bug Fixes
 
+- A transfer that failed for one configuration marked the same file as failed for every other
+  configuration sending it, including ones whose copy was already on the server and verified.
+  Those files were then shown as failed and sent again. A failure now reaches only the
+  destination it happened to, unless the file is one nothing could transfer -- a folder, or a
+  name no server will accept -- in which case it still applies to all of them.
 - Renaming a file so that only its case changed left a second entry for it in the Uploads table.
   Nothing was ever transferred twice; the extra row was a record of the destination the file used
   to have. It is now cleared when the file is next recorded.

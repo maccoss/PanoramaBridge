@@ -61,8 +61,19 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>The saved configurations, with the current edits folded into the selected one.</summary>
     public IReadOnlyList<MonitoringConfiguration> Configurations => ToSettings().Configurations;
 
+    /// <summary>
+    /// The configuration the editor tabs are showing, including edits not yet saved.
+    /// </summary>
+    /// <remarks>
+    /// The password box, the Save credentials tickbox and the Test connection button all belong
+    /// to this one and not to the first in the list. Exposed rather than re-derived by each
+    /// caller, because a caller that guesses at it writes one configuration's key into another
+    /// configuration's credential slot -- silently, and with no way to tell from the screen.
+    /// </remarks>
+    public MonitoringConfiguration Edited => ConfigurationIn(ToSettings());
+
     /// <summary>What the editor tabs are showing, for their headers.</summary>
-    public string EditingName => ConfigurationIn(ToSettings()).DisplayName;
+    public string EditingName => Edited.DisplayName;
 
     /// <summary>
     /// Points the editor tabs at a different configuration.
@@ -130,8 +141,24 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     // -- Local monitoring ---------------------------------------------------------------------
 
+    /// <summary>
+    /// What this configuration is called in the list.
+    /// </summary>
+    /// <remarks>
+    /// Empty is allowed and common: an unnamed configuration is shown by the folder it watches,
+    /// which is what people call them anyway. It is editable because the alternative was that
+    /// nothing could set it at all -- two instruments whose folders are both called Data were
+    /// then two rows with the same name, two identical tab headers, and one entry between them
+    /// in the window's status line.
+    /// </remarks>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
+    [NotifyPropertyChangedFor(nameof(EditingName))]
+    private string _name = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
+    [NotifyPropertyChangedFor(nameof(EditingName))]
     private string _localDirectory = string.Empty;
 
     [ObservableProperty]
@@ -270,6 +297,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         var edited = Saved with
         {
+            Name = Name.Trim(),
             LocalDirectory = LocalDirectory,
             IncludeSubdirectories = IncludeSubdirectories,
             Extensions = AppSettings.ParseExtensions(ExtensionsText),
@@ -398,6 +426,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         var configuration = ConfigurationIn(settings);
 
+        Name = configuration.Name;
         LocalDirectory = configuration.LocalDirectory;
         IncludeSubdirectories = configuration.IncludeSubdirectories;
         ExtensionsText = configuration.FormatExtensions();

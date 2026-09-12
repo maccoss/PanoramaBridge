@@ -47,7 +47,11 @@ public sealed partial class ConfigurationRowViewModel : ObservableObject
         _enabled = configuration.Enabled;
         _setEnabled = setEnabled ?? throw new ArgumentNullException(nameof(setEnabled));
 
-        Problems = configuration.Validate();
+        // Deliberately not Validate() here. That calls Directory.Exists, and on a share whose
+        // server is down the answer takes the SMB timeout to arrive -- seconds, on the UI thread,
+        // once per row, every time the list is rebuilt. The real answer arrives from
+        // ConfigurationsViewModel a moment later, off this thread.
+        _problems = [];
     }
 
     /// <summary>Where this configuration sits in the list.</summary>
@@ -69,7 +73,20 @@ public sealed partial class ConfigurationRowViewModel : ObservableObject
     public string Created { get; }
 
     /// <summary>Anything that would stop this configuration transferring.</summary>
-    public IReadOnlyList<string> Problems { get; }
+    /// <remarks>
+    /// Filled in after the row is built, because working it out touches the disk. Until then the
+    /// status reads as still being checked rather than as ready, which would be a claim nothing
+    /// had yet established.
+    /// </remarks>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(StatusDetail))]
+    private IReadOnlyList<string> _problems = [];
+
+    /// <summary>Whether the disk-touching part of the check has come back yet.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Status))]
+    private bool _checked;
 
     /// <summary>What the status column says.</summary>
     /// <remarks>
@@ -79,7 +96,8 @@ public sealed partial class ConfigurationRowViewModel : ObservableObject
     /// </remarks>
     public string Status => !Enabled
         ? "Off"
-        : Problems.Count > 0 ? "Needs attention" : "Ready";
+        : Problems.Count > 0 ? "Needs attention"
+        : Checked ? "Ready" : "Checking...";
 
     /// <summary>The first problem, for the tooltip on the status column.</summary>
     public string? StatusDetail => Problems.Count > 0 ? string.Join("\n", Problems) : null;
@@ -87,6 +105,13 @@ public sealed partial class ConfigurationRowViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
     private bool _enabled;
+
+    /// <summary>Records what the off-thread check found.</summary>
+    public void Report(IReadOnlyList<string> problems)
+    {
+        Problems = problems ?? [];
+        Checked = true;
+    }
 
     partial void OnEnabledChanged(bool value) => _ = _setEnabled(value);
 }
@@ -242,8 +267,19 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         var configurations = new List<MonitoringConfiguration>(_settings.Configurations);
         configurations.RemoveAt(SelectedIndex);
 
+        // Removing the last one leaves a fresh empty configuration rather than nothing. An empty
+        // list is a state the editor tabs cannot represent -- they would go on showing the
+        // configuration just deleted and silently re-add it on the next save, so the file said
+        // none and the window said one. This is also what a fresh install starts with, so there
+        // is one shape rather than two.
+        if (configurations.Count == 0)
+        {
+            configurations.Add(new MonitoringConfiguration { CreatedUtc = DateTimeOffset.UtcNow });
+        }
+
         await _settings
-            .ReplaceConfigurationsAsync(configurations, Math.Min(SelectedIndex, configurations.Count - 1))
+            .ReplaceConfigurationsAsync(
+                configurations, Math.Min(SelectedIndex, configurations.Count - 1))
             .ConfigureAwait(true);
     }
 
@@ -302,11 +338,12 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         // ask the settings to switch configuration in the middle of being told they changed.
         _rebuilding = true;
 
+        // Read once. Each access rebuilds the whole settings record, extension lists and all.
+        var configurations = _settings.Configurations;
+
         try
         {
             Rows.Clear();
-
-            var configurations = _settings.Configurations;
 
             for (var i = 0; i < configurations.Count; i++)
             {
@@ -326,5 +363,49 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
 
         OnPropertyChanged(nameof(HasSelection));
         OnPropertyChanged(nameof(Summary));
+
+        StatusesChecked = CheckStatusesAsync([.. configurations], [.. Rows]);
+    }
+
+    /// <summary>
+    /// The most recent status pass, so a test can wait for it.
+    /// </summary>
+    /// <remarks>
+    /// Exposed only because the alternative is a test that sleeps. Nothing in the application
+    /// waits on it: the rows update themselves when it finishes.
+    /// </remarks>
+    public Task StatusesChecked { get; private set; } = Task.CompletedTask;
+
+    /// <summary>
+    /// Works out each configuration's status away from the UI thread, then fills it in.
+    /// </summary>
+    /// <remarks>
+    /// Validate calls Directory.Exists, and on a share whose server is down that takes the SMB
+    /// timeout to answer. Doing it once per row while building the list froze the window for the
+    /// sum of those timeouts, on every save and every tick of an Enabled box -- on the instrument
+    /// computer this is supposed to stay out of the way of.
+    /// <para>
+    /// The await returns to the UI thread under WPF, because that is where this was called from.
+    /// In a test there is no such context and the assignment happens on a pool thread, which is
+    /// harmless: nothing is bound to it there.
+    /// </para>
+    /// </remarks>
+    private static async Task CheckStatusesAsync(
+        MonitoringConfiguration[] configurations,
+        ConfigurationRowViewModel[] rows)
+    {
+        if (rows.Length == 0)
+        {
+            return;
+        }
+
+        var problems = await Task
+            .Run(() => configurations.Select(c => c.Validate()).ToArray())
+            .ConfigureAwait(true);
+
+        for (var i = 0; i < rows.Length && i < problems.Length; i++)
+        {
+            rows[i].Report(problems[i]);
+        }
     }
 }

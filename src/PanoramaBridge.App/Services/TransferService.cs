@@ -96,11 +96,37 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// <summary>True while a scan or transfer run is in flight.</summary>
     public bool IsRunning => _run is { IsCancellationRequested: false };
 
-    /// <summary>True while any configuration is being watched.</summary>
-    public bool IsMonitoring => _monitoring is { IsCancellationRequested: false };
+    /// <summary>
+    /// True while any configuration is still being watched.
+    /// </summary>
+    /// <remarks>
+    /// Asks the runners rather than only the token, because a runner whose monitor died cancels
+    /// its own linked token and that does not cancel this one. Reporting true when every runner
+    /// has stopped would leave the window saying it was monitoring folders nobody was looking
+    /// at, with the button still offering to stop something that had already stopped.
+    /// </remarks>
+    public bool IsMonitoring =>
+        _monitoring is { IsCancellationRequested: false } && MonitoredConfigurations > 0;
 
     /// <summary>How many configurations are currently being watched.</summary>
-    public int MonitoredConfigurations => _runners.Length;
+    /// <remarks>Counted rather than taken from the length, so one that has given up drops out.</remarks>
+    public int MonitoredConfigurations
+    {
+        get
+        {
+            var running = 0;
+
+            foreach (var runner in _runners)
+            {
+                if (runner.IsRunning)
+                {
+                    running++;
+                }
+            }
+
+            return running;
+        }
+    }
 
     /// <summary>
     /// True while any file has bytes moving, however that transfer was started.
@@ -173,9 +199,15 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// Reports whether the chosen destination is writable, rather than letting the user discover
     /// a permissions problem hours into a transfer.
     /// </remarks>
+    /// <param name="edited">
+    /// The configuration the settings tabs are showing, which is the one to test and the one the
+    /// typed secret belongs to. Null falls back to the first, which is what a caller with only
+    /// one configuration means.
+    /// </param>
     public async Task<ConnectionCheck> TestConnectionAsync(
         AppSettings settings,
         string? secret,
+        MonitoringConfiguration? edited = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -186,7 +218,7 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             return new ConnectionCheck(false, problems[0]);
         }
 
-        var configuration = EditedConfiguration(settings) ?? new MonitoringConfiguration();
+        var configuration = edited ?? EditedConfiguration(settings) ?? new MonitoringConfiguration();
 
         try
         {
@@ -275,9 +307,14 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// one's two-minute patience for a file still being written before it was looked at at all.
     /// </para>
     /// </remarks>
+    /// <param name="edited">
+    /// The configuration the settings tabs are showing, so the typed secret reaches the
+    /// credential slot it was typed for. See <see cref="SecretFor"/>.
+    /// </param>
     public async Task<TransferSummary> ScanAndUploadAsync(
         AppSettings settings,
         string? secret,
+        MonitoringConfiguration? edited = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -311,7 +348,8 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         try
         {
             var scans = configurations
-                .Select(c => ScanOneAsync(settings, c, SecretFor(settings, c, secret), budget, _run.Token))
+                .Select(c => ScanOneAsync(
+                    settings, c, SecretFor(settings, c, secret, edited), budget, _run.Token))
                 .ToArray();
 
             var summaries = await Task.WhenAll(scans).ConfigureAwait(false);
@@ -390,9 +428,14 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// one folder is uncovered.
     /// </para>
     /// </remarks>
+    /// <param name="edited">
+    /// The configuration the settings tabs are showing, so the typed secret reaches the
+    /// credential slot it was typed for. See <see cref="SecretFor"/>.
+    /// </param>
     public async Task StartMonitoringAsync(
         AppSettings settings,
         string? secret,
+        MonitoringConfiguration? edited = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -406,6 +449,15 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         {
             throw new InvalidOperationException(
                 "A scan is already running. Wait for it to finish before starting monitoring.");
+        }
+
+        // IsMonitoring is false once every runner has given up, but the runners themselves are
+        // still here holding a connection, an engine and a monitor each. Starting again without
+        // winding them down would simply drop them, leaking an HttpClient and a set of worker
+        // tasks per configuration, every time somebody pressed the button after a failure.
+        if (_monitoring is not null)
+        {
+            await StopMonitoringAsync().ConfigureAwait(false);
         }
 
         var problems = settings.Validate();
@@ -423,7 +475,7 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             foreach (var configuration in settings.EnabledConfigurations)
             {
                 var credential = ResolveCredential(
-                        configuration, SecretFor(settings, configuration, secret))
+                        configuration, SecretFor(settings, configuration, secret, edited))
                     ?? throw new InvalidOperationException(
                         $"{configuration.DisplayName}: no credential is available for "
                         + $"{configuration.ServerUrl}.");
@@ -598,7 +650,9 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// The configuration the settings tabs are showing.
     /// </summary>
     /// <remarks>
-    /// The first one, which is what <c>SettingsViewModel</c> edits until phase 5 adds a selector.
+    /// Only a fallback for a caller that did not say. The tabs can be showing any of them, and
+    /// <c>SettingsViewModel.Edited</c> is what actually knows which -- so every caller that has a
+    /// view model passes it, and this covers the one-configuration case and the tests.
     /// Deliberately not "the first enabled one": testing the connection has to test what the
     /// person is looking at, and the tabs go on showing a configuration after it is switched off.
     /// </remarks>
@@ -631,9 +685,10 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     private static string? SecretFor(
         AppSettings settings,
         MonitoringConfiguration configuration,
-        string? secret)
+        string? secret,
+        MonitoringConfiguration? editing)
     {
-        if (EditedConfiguration(settings) is not { } edited)
+        if ((editing ?? EditedConfiguration(settings)) is not { } edited)
         {
             return null;
         }
@@ -658,7 +713,27 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         Swept?.Invoke(sweep);
     }
 
-    private void OnRunnerFailed(string message) => MonitoringFailed?.Invoke(message);
+    /// <summary>
+    /// Reports a configuration that stopped watching for a reason nobody asked for.
+    /// </summary>
+    /// <remarks>
+    /// Reported as a failed sweep as well as through <see cref="MonitoringFailed"/>. The window
+    /// composes its status line from the last sweep of each configuration, so without this the
+    /// message would be on screen only until the next healthy configuration swept and replaced
+    /// it -- a folder that had stopped being watched, announced once and then gone.
+    /// </remarks>
+    private void OnRunnerFailed(ConfigurationRunner runner, string problem)
+    {
+        OnSwept(new ConfigurationSweep(
+            runner.Name,
+            new SweepResult(0, 0, 0, TimeSpan.Zero, problem)));
+
+        MonitoringFailed?.Invoke($"{runner.Name}: {problem}");
+
+        // So the button and the count re-read: this runner has stopped, and if it was the last
+        // one then IsMonitoring is now false.
+        RunStateChanged?.Invoke();
+    }
 
     /// <summary>
     /// Puts a file that is not ready yet into the transfer list, with the reason.
