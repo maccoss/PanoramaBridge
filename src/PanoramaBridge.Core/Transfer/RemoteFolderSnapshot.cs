@@ -258,6 +258,69 @@ public sealed class RemoteSnapshotCache
     /// is simply gone.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// The server's hash for one file, asking about that file alone.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is what deciding about a file should use, and <see cref="HashOfAsync"/> is not.
+    /// A collection hash is computed on demand and costs the server the whole folder: measured
+    /// against panoramaweb.org, about 600 MB/s, so a folder holding 19 GB answers in 30 seconds
+    /// and one holding 180 GB does not answer inside the five minutes allowed for it.
+    /// </para>
+    /// <para>
+    /// That is not hypothetical. A lab's Astral folder passed 150 GB of acquisitions, and from
+    /// then on every attempt to decide about a 73 KB sequence file beside them asked Panorama to
+    /// hash the entire folder, timed out, retried, and timed out again -- all night, while the
+    /// .raw files uploaded around it perfectly happily. They were unaffected because a file that
+    /// is not on the server yet never reaches this question at all.
+    /// </para>
+    /// <para>
+    /// Asking per file never hashes more bytes than asking per folder -- it hashes only the
+    /// files actually in question, where the collection hashes all of them regardless. What it
+    /// costs is round trips, one per file rather than one per folder, and that is the right way
+    /// round: a round trip is milliseconds, and a folder hash is minutes that grow without limit
+    /// as the folder fills.
+    /// </para>
+    /// </remarks>
+    public async Task<string?> HashOfFileAsync(
+        RemoteFolderSnapshot snapshot,
+        RemotePath file,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(file);
+
+        // Already known: recorded by an upload this session, or folded in by an earlier fetch.
+        // Free, and the reason a second look at the same file costs nothing.
+        if (snapshot.Hashes.TryGetValue(file.Name, out var known))
+        {
+            return known;
+        }
+
+        var hash = await _client.GetFileHashAsync(file, cancellationToken).ConfigureAwait(false);
+
+        if (hash is not null)
+        {
+            // Folded in so a retry, or a sidecar written beside the same file, does not ask
+            // again. Merge keeps anything already on the snapshot, which is newer than this.
+            Merge(
+                file.Parent.AsCollection(),
+                new Dictionary<string, string>(StringComparer.Ordinal) { [file.Name] = hash });
+        }
+
+        return hash;
+    }
+
+    /// <summary>
+    /// The server's hash for a file, fetched for the whole folder at once.
+    /// </summary>
+    /// <remarks>
+    /// Cheap in round trips and expensive in server time, because the server hashes every file
+    /// in the folder to answer. Use <see cref="HashOfFileAsync"/> to decide about a file; this
+    /// is worth it only when nearly every file in a folder is about to be asked about, and its
+    /// cost grows with the folder rather than with what is being asked.
+    /// </remarks>
     public async Task<string?> HashOfAsync(
         RemoteFolderSnapshot snapshot,
         string name,

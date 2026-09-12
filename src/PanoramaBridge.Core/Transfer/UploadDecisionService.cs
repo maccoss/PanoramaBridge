@@ -121,11 +121,15 @@ public sealed class UploadDecisionService
                 $"A folder named '{destination.Name}' already occupies the destination.");
         }
 
-        // Only now, with a name that matches, is a hash worth what the server pays to compute it.
+        // Only now, with a name that matches, is a hash worth what the server pays to compute it
+        // -- and only this file's hash. Asking for the folder's costs the server every byte in
+        // it, which is fine for a folder of a few gigabytes and fatal for one holding a season of
+        // acquisitions: past about 180 GB it cannot answer inside the five minutes allowed, so
+        // deciding about a 73 KB sequence file beside them became impossible, permanently.
         onStep?.Invoke("Hashing the destination");
 
         var remoteHash = await _snapshots
-            .HashOfAsync(snapshot, destination.Name, cancellationToken)
+            .HashOfFileAsync(snapshot, destination, cancellationToken)
             .ConfigureAwait(false);
 
         // Is the remote copy the one this application put there? If the ledger's recorded hash
