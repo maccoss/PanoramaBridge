@@ -30,7 +30,24 @@ public static class MonitoringSummary
     /// <summary>
     /// Describes the most recent sweep from each configuration, keyed by its name.
     /// </summary>
-    public static MonitoringLine Describe(IReadOnlyDictionary<string, SweepResult> sweeps)
+    /// <param name="sweeps">The last result from each configuration.</param>
+    /// <param name="outstanding">
+    /// How many files are actually still waiting, when the caller knows.
+    /// </param>
+    /// <remarks>
+    /// A sweep's Offered is what it handed over at the time, and saying "5 file(s) to transfer"
+    /// from it is true for as long as it takes to transfer them and false afterwards -- the line
+    /// went on claiming five were pending with all five verified on screen and the window idle,
+    /// until the next sweep fifteen minutes later replaced it.
+    /// <para>
+    /// So a caller that knows what is still queued says so, and the count then falls as the files
+    /// go rather than standing still. Left null by the sweep itself, which is reporting what it
+    /// found and has no view of what has happened since.
+    /// </para>
+    /// </remarks>
+    public static MonitoringLine Describe(
+        IReadOnlyDictionary<string, SweepResult> sweeps,
+        int? outstanding = null)
     {
         ArgumentNullException.ThrowIfNull(sweeps);
 
@@ -73,6 +90,10 @@ public static class MonitoringSummary
             offered += result.Offered;
             examined += result.Examined;
         }
+
+        // What is still waiting, when anybody knows: the sweep's own count is a moment in the
+        // past the instant the first file starts moving.
+        offered = outstanding ?? offered;
 
         // Said out loud once there is more than one, because "12 files checked" reads as the whole
         // machine and is only ever one folder's answer otherwise.

@@ -328,6 +328,35 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     }
 
     /// <inheritdoc />
+    public async Task<bool> ForgetAsync(
+        LedgerKey key, CancellationToken cancellationToken = default)
+    {
+        Validate(key);
+
+        // The state is part of the WHERE rather than checked first and deleted second:
+        // between the two a retry could carry the row to Uploaded, and the delete would then
+        // remove the record of a file that is on the server.
+        var removed = await ExecuteWriteCountingAsync(
+            """
+            DELETE FROM uploads
+             WHERE local_path = $path AND remote_path = $remote
+               AND state IN ($failed, $conflict, $superseded);
+            """,
+            command =>
+            {
+                command.Parameters.AddWithValue("$path", key.LocalPath);
+                command.Parameters.AddWithValue("$remote", key.RemotePath);
+                command.Parameters.AddWithValue("$failed", (int)TransferState.Failed);
+                command.Parameters.AddWithValue("$conflict", (int)TransferState.Conflict);
+                command.Parameters.AddWithValue(
+                    "$superseded", (int)TransferState.Superseded);
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        return removed > 0;
+    }
+
+    /// <inheritdoc />
     public Task SetErrorAsync(
         LedgerKey key, string? error, CancellationToken cancellationToken = default)
     {

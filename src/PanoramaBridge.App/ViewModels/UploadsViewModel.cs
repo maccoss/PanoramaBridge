@@ -164,6 +164,62 @@ public sealed partial class UploadsViewModel : ObservableObject
     [ObservableProperty]
     private string _search = string.Empty;
 
+    /// <summary>The row the grid has selected, so it can be acted on.</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(DismissCommand))]
+    private UploadRowViewModel? _selected;
+
+    /// <summary>Asks the user to confirm a dismissal. Supplied by the view.</summary>
+    public Func<string, bool>? Confirm { get; set; }
+
+    /// <summary>
+    /// Forgets a row for a file that never reached the server.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only a failure, a conflict or a superseded attempt, which the ledger enforces as well: a
+    /// row saying a file is on Panorama is the only evidence of it on a rebuilt machine, and this
+    /// is not a way to lose one.
+    /// </para>
+    /// <para>
+    /// It is here because a failure can outlive every reason to retry it. Two sequence files
+    /// failed against a server that could not answer in time, the application then learned to
+    /// skip that kind of file, and nothing would ever attempt them again -- so nothing would ever
+    /// clear them, and they counted against "needs attention" permanently with no way to act.
+    /// </para>
+    /// <para>
+    /// A file that is still wanted will simply be found again on the next sweep and transferred,
+    /// which is the right answer for a row somebody dismissed too eagerly.
+    /// </para>
+    /// </remarks>
+    [RelayCommand(CanExecute = nameof(CanDismiss))]
+    private async Task DismissAsync()
+    {
+        if (Selected is not { NeedsAttention: true } row)
+        {
+            return;
+        }
+
+        var name = System.IO.Path.GetFileName(row.Record.LocalPath);
+
+        if (Confirm is not null
+            && !Confirm(
+                $"Remove the record of {name} from this list?\n\n"
+                + "It was never transferred, so nothing on Panorama changes. If the file is still "
+                + "being monitored it will be found again and sent."))
+        {
+            return;
+        }
+
+        await _store
+            .ForgetAsync(new LedgerKey(row.Record.LocalPath, row.Record.RemotePath))
+            .ConfigureAwait(true);
+
+        await RefreshAsync().ConfigureAwait(true);
+    }
+
+    private bool CanDismiss() => Selected is { NeedsAttention: true };
+
     /// <summary>True when there is nothing to show, so the view can say so rather than sit blank.</summary>
     public bool IsEmpty => !IsLoading && Rows.Count == 0;
 

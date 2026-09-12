@@ -109,6 +109,21 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
     /// <summary>True when at least one row failed, conflicted or was superseded.</summary>
     public bool HasAttentionItems => AttentionCount > 0;
 
+    /// <summary>
+    /// Files accepted and not yet finished: what is genuinely still to do.
+    /// </summary>
+    public int Outstanding { get; private set; }
+
+    /// <summary>
+    /// Raised on the UI thread when <see cref="Outstanding"/> changes.
+    /// </summary>
+    /// <remarks>
+    /// The status line above this grid is built from the last sweep of each configuration, and a
+    /// sweep only speaks once. Without this it kept saying files were waiting after they had all
+    /// been transferred and verified.
+    /// </remarks>
+    public event Action? OutstandingChanged;
+
     /// <summary>Drains whatever changed and applies it to the grid.</summary>
     public void Refresh()
     {
@@ -141,6 +156,14 @@ public sealed partial class TransferStatusViewModel : ObservableObject, IDisposa
         Summary = totals.Describe();
         OverallProgress = totals.Fraction;
         AttentionCount = totals.NeedsAttention;
+
+        var outstanding = totals.Active + totals.Queued;
+
+        if (outstanding != Outstanding)
+        {
+            Outstanding = outstanding;
+            OutstandingChanged?.Invoke();
+        }
 
         // Stop once there is nothing moving and nothing left to draw. Anything new restarts us
         // through WorkAppeared, so no polling is needed to notice.
