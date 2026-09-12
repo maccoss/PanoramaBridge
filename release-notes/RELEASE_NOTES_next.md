@@ -21,6 +21,17 @@ time and update the heading; see `README.md` in this directory for the process.
 
 ## Bug Fixes
 
+- **Deleting a configuration that was running did not stop it.** It kept watching its folder and
+  kept transferring, with no row left on screen that could stop it. Editing the folder or the
+  destination of a running configuration did the same thing, and pressing Run afterwards started a
+  second one beside the one still going. A configuration whose folder, destination or server is no
+  longer what it was running with is now stopped, and says so; press Run to start it again.
+- **Changing Concurrent transfers between a Stop and a Run was ignored.** The limit is shared
+  across configurations, so it was taken when the first one started and kept until everything
+  stopped -- but stopping the last configuration from its own row did not count, so transfers
+  stayed at the old number until Stop all or a restart.
+- **Stopping one configuration left its last report in the status line.** A failure from a folder
+  nobody was watching any more kept being shown, and nothing could ever clear it.
 - **Stop all never became pressable.** Splitting Start onto each row left the toolbar button with
   nothing to tell it that something had started, so it was greyed out from launch and stayed that
   way -- and with starting now per configuration, there was no other way to stand everything down

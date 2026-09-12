@@ -128,6 +128,105 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         };
 
     [Fact]
+    public async Task A_configuration_the_settings_no_longer_describe_is_stopped()
+    {
+        // Deleting a running configuration used to leave its runner watching that folder and
+        // transferring to that destination with no row left that could stop it -- and with Stop
+        // all greyed out, nothing could reach it short of killing the process.
+        await using var service = NewService();
+
+        var lumos = Watching("Lumos");
+        var exploris = Watching("Exploris");
+
+        var settings = new AppSettings { Configurations = [lumos, exploris] };
+
+        await StartAllAsync(service, settings, "an-api-key");
+
+        service.MonitoredConfigurations.ShouldBe(2);
+
+        var afterDelete = settings with { Configurations = [lumos] };
+
+        (await service.ReconcileAsync(afterDelete)).ShouldBe(1);
+
+        service.MonitoredConfigurations.ShouldBe(1);
+        service.IsConfigurationRunning(lumos).ShouldBeTrue("this one is still in the list");
+        service.IsConfigurationRunning(exploris).ShouldBeFalse("this one was deleted");
+    }
+
+    [Fact]
+    public async Task Editing_the_folder_of_a_running_configuration_stops_it()
+    {
+        // A runner watches a folder, a destination and a server. Change one and nothing in the
+        // list refers to that runner any more: the row went back to green Run, Stop became a
+        // no-op, and pressing Run started a second runner beside the first -- two watching, one
+        // of them the folder the user had just navigated away from, and only one on screen.
+        await using var service = NewService();
+
+        var before = Watching("Lumos");
+        var settings = new AppSettings { Configurations = [before] };
+
+        await StartAllAsync(service, settings, "an-api-key");
+
+        var after = before with { LocalDirectory = NewFolder() };
+        var edited = settings with { Configurations = [after] };
+
+        (await service.ReconcileAsync(edited)).ShouldBe(1);
+
+        service.MonitoredConfigurations.ShouldBe(0, "the old folder is no longer watched");
+        service.IsConfigurationRunning(after).ShouldBeFalse("and the new one was never started");
+
+        // And starting it again makes exactly one runner, not a second beside an orphan.
+        await service.StartConfigurationAsync(edited, after, "an-api-key");
+
+        service.MonitoredConfigurations.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task A_configuration_still_in_the_settings_is_left_alone()
+    {
+        // The other half of the rule. Renaming a configuration, or changing anything a runner is
+        // not built from, must not stand it down: the name is a label, and stopping a transfer
+        // because somebody retyped one would be its own bug.
+        await using var service = NewService();
+
+        var original = Watching("Lumos");
+        var settings = new AppSettings { Configurations = [original] };
+
+        await StartAllAsync(service, settings, "an-api-key");
+
+        var renamed = original with { Name = "Lumos 2" };
+
+        (await service.ReconcileAsync(settings with { Configurations = [renamed] })).ShouldBe(0);
+
+        service.MonitoredConfigurations.ShouldBe(1);
+        service.IsConfigurationRunning(renamed).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Changing_the_transfer_limit_after_everything_stopped_takes_effect()
+    {
+        // The budget is the limit across every configuration, so it is created by whichever one
+        // starts first and has to go when the last one stops. Held past that, the ??= that builds
+        // it kept the old one: raising the slider between a Stop and a Run left transfers
+        // throttled at the previous number, until Stop all or a restart, with nothing saying so.
+        await using var service = NewService();
+
+        var configuration = Watching("Lumos");
+        var settings = new AppSettings { Configurations = [configuration], MaxConcurrentTransfers = 2 };
+
+        await service.StartConfigurationAsync(settings, configuration, "an-api-key");
+        await service.StopConfigurationAsync(configuration);
+
+        service.MonitoredConfigurations.ShouldBe(0);
+
+        var raised = settings with { MaxConcurrentTransfers = 8 };
+
+        await service.StartConfigurationAsync(raised, configuration, "an-api-key");
+
+        service.TransferLimit.ShouldBe(8, "the slider was moved while nothing was running");
+    }
+
+    [Fact]
     public async Task Every_enabled_configuration_is_watched()
     {
         await using var service = NewService();

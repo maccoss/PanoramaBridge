@@ -55,4 +55,7 @@ public sealed class ConfigurationRunControl : IConfigurationRunControl
     /// <inheritdoc />
     public Task StopAsync(MonitoringConfiguration configuration) =>
         _transfers.StopConfigurationAsync(configuration);
+
+    /// <inheritdoc />
+    public Task<int> ReconcileAsync() => _transfers.ReconcileAsync(_settings.ToSettings());
 }

@@ -20,4 +20,16 @@ public interface IConfigurationRunControl
 
     /// <summary>Stops watching it. Does nothing when it was not running.</summary>
     Task StopAsync(MonitoringConfiguration configuration);
+
+    /// <summary>
+    /// Stops anything still running that the saved configurations no longer describe.
+    /// </summary>
+    /// <remarks>
+    /// Called after every save the list makes. A runner watches a folder, a destination and a
+    /// server; delete the configuration naming those, or edit any of them, and the runner carries
+    /// on with no row left that could stop it.
+    /// </remarks>
+    /// <returns>How many were stopped, so the list can say so rather than leaving it to be
+    /// noticed.</returns>
+    Task<int> ReconcileAsync();
 }

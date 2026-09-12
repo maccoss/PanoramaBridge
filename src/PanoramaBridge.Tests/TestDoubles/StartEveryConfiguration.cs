@@ -18,8 +18,7 @@ internal static class StartEveryConfiguration
         this TransferService service,
         AppSettings settings,
         string? secret,
-        MonitoringConfiguration? edited = null,
-        CancellationToken cancellationToken = default)
+        MonitoringConfiguration? edited = null)
     {
         ArgumentNullException.ThrowIfNull(service);
         ArgumentNullException.ThrowIfNull(settings);
@@ -27,7 +26,7 @@ internal static class StartEveryConfiguration
         foreach (var configuration in settings.Configurations)
         {
             await service
-                .StartConfigurationAsync(settings, configuration, secret, edited, cancellationToken)
+                .StartConfigurationAsync(settings, configuration, secret, edited)
                 .ConfigureAwait(false);
         }
     }

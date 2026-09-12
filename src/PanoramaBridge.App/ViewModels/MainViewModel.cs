@@ -480,6 +480,57 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         IsBusy = _transfers.IsRunning;
         IsMonitoring = _transfers.IsMonitoring;
+
+        DropSweepsFromConfigurationsThatStopped();
+    }
+
+    /// <summary>
+    /// Forgets what a configuration last reported, once it is no longer being watched.
+    /// </summary>
+    /// <remarks>
+    /// Whatever a configuration last said stops being true the moment it stops being watched.
+    /// Stop all cleared the lot, but stopping one configuration from its own row left its last
+    /// sweep in the dictionary -- so a failure from a folder nobody is watching any more kept
+    /// being folded into the status line, for the rest of the session, and no later sweep could
+    /// ever clear it because none would arrive for that key.
+    /// <para>
+    /// Driven off the run state rather than from the stop itself, so it covers every way a
+    /// configuration can stop being watched: its own button, a reconcile after an edit or a
+    /// delete, or a monitor that gave up on its own.
+    /// </para>
+    /// </remarks>
+    private void DropSweepsFromConfigurationsThatStopped()
+    {
+        if (_sweeps.Count == 0)
+        {
+            return;
+        }
+
+        var running = _transfers.RunningConfigurationNames;
+        var stale = _sweeps.Keys.Where(name => !running.Contains(name)).ToArray();
+
+        if (stale.Length == 0)
+        {
+            return;
+        }
+
+        foreach (var name in stale)
+        {
+            _sweeps.Remove(name);
+        }
+
+        if (_sweeps.Count == 0)
+        {
+            // Nothing is being watched, so there is nothing to describe. The line is left to
+            // whatever stopped things to set, rather than overwritten with a stale summary.
+            ConnectionFailed = false;
+            return;
+        }
+
+        var summary = Core.Monitoring.MonitoringSummary.Describe(_sweeps);
+
+        StatusLine = summary.Line;
+        ConnectionFailed = summary.Failed;
     }
 
     /// <summary>

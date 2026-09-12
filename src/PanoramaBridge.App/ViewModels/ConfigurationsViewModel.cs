@@ -238,6 +238,8 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         public Task StartAsync(MonitoringConfiguration configuration) => Task.CompletedTask;
 
         public Task StopAsync(MonitoringConfiguration configuration) => Task.CompletedTask;
+
+        public Task<int> ReconcileAsync() => Task.FromResult(0);
     }
 
     /// <summary>The configurations, in the order they are kept.</summary>
@@ -285,18 +287,42 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
     [ObservableProperty]
     private string _problem = string.Empty;
 
-    async partial void OnSelectedIndexChanged(int value)
+    /// <summary>
+    /// Opens the clicked configuration on the editor tabs.
+    /// </summary>
+    /// <remarks>
+    /// Not async void, and not merely as a matter of taste. A property setter cannot be awaited,
+    /// so an asynchronous handler returns at its first await and the next click starts a second
+    /// one beside it -- two switches saving the same file and moving the same index, where the
+    /// later one can finish first and leave the list highlighting a row the tabs are not showing.
+    /// The switch in flight is kept instead, and a click arriving while one is running is ignored
+    /// rather than queued: the user's last click is answered by the rebuild that follows.
+    /// </remarks>
+    partial void OnSelectedIndexChanged(int value)
     {
-        if (_rebuilding || value < 0 || value >= Rows.Count)
+        if (_rebuilding || _switching is { IsCompleted: false } || value < 0 || value >= Rows.Count)
         {
             return;
         }
 
+        _switching = SwitchToAsync(value);
+    }
+
+    /// <summary>The configuration switch in flight, so a second click cannot start another.</summary>
+    private Task? _switching;
+
+    /// <summary>Exposed so a test can wait for a switch rather than sleeping.</summary>
+    public Task Switching => _switching ?? Task.CompletedTask;
+
+    private async Task SwitchToAsync(int value)
+    {
         try
         {
             // Switching saves the configuration being left, so this can fail for the same reason
             // a tick can: the settings file is momentarily somebody else's.
             await _settings.EditConfigurationAsync(value).ConfigureAwait(true);
+
+            await ReconcileAsync().ConfigureAwait(true);
         }
         catch (Exception ex)
         {
@@ -350,6 +376,8 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         await _settings
             .ReplaceConfigurationsAsync(configurations, configurations.Count - 1)
             .ConfigureAwait(true);
+
+        await ReconcileAsync().ConfigureAwait(true);
     }
 
     /// <summary>Copies the selected configuration and selects the copy.</summary>
@@ -384,6 +412,8 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         await _settings
             .ReplaceConfigurationsAsync(configurations, SelectedIndex + 1)
             .ConfigureAwait(true);
+
+        await ReconcileAsync().ConfigureAwait(true);
     }
 
     /// <summary>Removes the selected configuration.</summary>
@@ -418,13 +448,27 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         // is one shape rather than two.
         if (configurations.Count == 0)
         {
-            configurations.Add(new MonitoringConfiguration { CreatedUtc = DateTimeOffset.UtcNow });
+            // Off, and CreatedUtc stamped -- the same shape AddAsync produces, because this is
+            // the same thing: an empty configuration nobody has filled in yet. Leaving Enabled at
+            // its record default of true would write a file that an older build reads as "start
+            // this on Start monitoring", and an enabled configuration with no folder is what made
+            // that build refuse to start anything at all.
+            configurations.Add(new MonitoringConfiguration
+            {
+                Enabled = false,
+                CreatedUtc = DateTimeOffset.UtcNow,
+            });
         }
 
         await _settings
             .ReplaceConfigurationsAsync(
                 configurations, Math.Min(SelectedIndex, configurations.Count - 1))
             .ConfigureAwait(true);
+
+        // The deleted configuration may have been running. Nothing in the list refers to its
+        // runner any more, so without this it would go on watching that folder and transferring
+        // to that destination, with no row left to stop it.
+        await ReconcileAsync().ConfigureAwait(true);
     }
 
     /// <summary>Asks the user to confirm a deletion. Supplied by the view.</summary>
@@ -437,6 +481,12 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
     /// Saves first when starting, so what runs is what is on screen. Pressing Run with an edit
     /// still in the boxes and having the old settings start instead would be the sort of
     /// difference nobody can account for afterwards.
+    /// <para>
+    /// The index is checked on both sides of that save, because the save is precisely what can
+    /// change the list it addresses: it raises ConfigurationsChanged, which rebuilds the rows.
+    /// Checking only on the way in left an indexer that could throw out of the button, or start a
+    /// configuration other than the one whose row was pressed.
+    /// </para>
     /// </remarks>
     private async Task RunAsync(int index, bool wanted)
     {
@@ -448,11 +498,43 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         if (wanted)
         {
             await _settings.SaveAsync().ConfigureAwait(true);
+
+            if (index >= _settings.Configurations.Count)
+            {
+                return;
+            }
+
             await _run.StartAsync(_settings.Configurations[index]).ConfigureAwait(true);
         }
         else
         {
             await _run.StopAsync(_settings.Configurations[index]).ConfigureAwait(true);
+        }
+
+        await ReconcileAsync().ConfigureAwait(true);
+
+        RefreshRunState();
+    }
+
+    /// <summary>
+    /// Stops anything the saved configurations no longer describe, and says how many.
+    /// </summary>
+    /// <remarks>
+    /// Called after every save this list makes. Deleting a running configuration, or editing the
+    /// folder or destination of one, used to leave its runner watching the old folder with no row
+    /// left that could stop it.
+    /// </remarks>
+    private async Task ReconcileAsync()
+    {
+        var stopped = await _run.ReconcileAsync().ConfigureAwait(false);
+
+        if (stopped > 0)
+        {
+            Problem = stopped == 1
+                ? "A configuration that was running has been stopped, because what it watches "
+                    + "has changed. Press Run to start it again."
+                : $"{stopped} configurations that were running have been stopped, because what "
+                    + "they watch has changed. Press Run to start them again.";
         }
 
         RefreshRunState();

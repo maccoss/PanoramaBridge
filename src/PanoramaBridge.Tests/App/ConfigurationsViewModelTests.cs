@@ -346,7 +346,82 @@ public sealed class ConfigurationsViewModelTests
         list.Problem.ShouldContain("no credential is available");
     }
 
-    private sealed class RecordingRun(List<string> started) : IConfigurationRunControl
+    [Fact]
+    public async Task Deleting_a_running_configuration_stops_it()
+    {
+        // It kept running. Nothing in the list referred to its runner any more, so it went on
+        // watching that folder and transferring to that destination with no row left to stop it
+        // -- and with Stop all greyed out as well, nothing short of killing the process reached
+        // it.
+        var started = new List<string>();
+
+        var settings = new SettingsViewModel(
+            new InMemorySettingsStore(),
+            new AppSettings
+            {
+                Configurations =
+                [
+                    Watching("Lumos", Path.GetTempPath()),
+                    Watching("Exploris", Path.GetTempPath()),
+                ],
+            });
+
+        var run = new RecordingRun(started, () => settings.Configurations);
+        var list = new ConfigurationsViewModel(settings, run);
+
+        await list.Rows[1].ToggleRunCommand.ExecuteAsync(null);
+
+        run.IsRunning(settings.Configurations[1]).ShouldBeTrue();
+
+        list.Confirm = _ => true;
+        list.SelectedIndex = 1;
+        await list.Switching;
+
+        await list.DeleteCommand.ExecuteAsync(null);
+
+        settings.Configurations.Count.ShouldBe(1);
+        run.IsRunning(Watching("Exploris", Path.GetTempPath())).ShouldBeFalse(
+            "the configuration is gone, so what it was running has to be too");
+        list.Problem.ShouldContain("has been stopped");
+    }
+
+    [Fact]
+    public async Task Every_save_the_list_makes_asks_for_orphans_to_be_stood_down()
+    {
+        // Add, Copy, Delete and Run all save, and a save is what can leave a runner behind. The
+        // count is the assertion: a new save path that forgets to ask is the way this regresses.
+        var started = new List<string>();
+
+        var settings = new SettingsViewModel(
+            new InMemorySettingsStore(),
+            new AppSettings { Configurations = [Watching("Lumos", Path.GetTempPath())] });
+
+        var run = new RecordingRun(started, () => settings.Configurations);
+        var list = new ConfigurationsViewModel(settings, run);
+
+        await list.AddCommand.ExecuteAsync(null);
+        run.Reconciles.ShouldBe(1, "Add saves");
+
+        list.SelectedIndex = 0;
+        await list.Switching;
+        run.Reconciles.ShouldBe(2, "switching saves the one being left");
+
+        await list.CopyCommand.ExecuteAsync(null);
+        run.Reconciles.ShouldBe(3, "Copy saves");
+
+        list.Confirm = _ => true;
+        await list.DeleteCommand.ExecuteAsync(null);
+        run.Reconciles.ShouldBe(4, "Delete saves");
+    }
+
+    /// <param name="configurations">
+    /// What the settings currently hold, so a reconcile can tell which running configurations the
+    /// list no longer describes. Left null by the tests that are not about that.
+    /// </param>
+    private sealed class RecordingRun(
+        List<string> started,
+        Func<IReadOnlyList<MonitoringConfiguration>>? configurations = null)
+        : IConfigurationRunControl
     {
         private readonly HashSet<string> _running = new(StringComparer.Ordinal);
 
@@ -365,6 +440,37 @@ public sealed class ConfigurationsViewModelTests
             _running.Remove(configuration.DisplayName);
             return Task.CompletedTask;
         }
+
+        /// <summary>How many times a save asked for anything orphaned to be stood down.</summary>
+        public int Reconciles { get; private set; }
+
+        /// <summary>
+        /// Stops anything running that is no longer in the list.
+        /// </summary>
+        /// <remarks>
+        /// The real one matches a runner to a configuration by folder, destination and server.
+        /// This one goes by name, which is all it has, and the point is the same: a configuration
+        /// that has been deleted stops being run.
+        /// </remarks>
+        public Task<int> ReconcileAsync()
+        {
+            Reconciles++;
+
+            if (configurations is null)
+            {
+                return Task.FromResult(0);
+            }
+
+            var live = configurations().Select(c => c.DisplayName).ToHashSet(StringComparer.Ordinal);
+            var orphaned = _running.Where(name => !live.Contains(name)).ToArray();
+
+            foreach (var name in orphaned)
+            {
+                _running.Remove(name);
+            }
+
+            return Task.FromResult(orphaned.Length);
+        }
     }
 
     private sealed class RefusingRun(string reason) : IConfigurationRunControl
@@ -375,6 +481,8 @@ public sealed class ConfigurationsViewModelTests
             throw new InvalidOperationException(reason);
 
         public Task StopAsync(MonitoringConfiguration configuration) => Task.CompletedTask;
+
+        public Task<int> ReconcileAsync() => Task.FromResult(0);
     }
 
     [Fact]
