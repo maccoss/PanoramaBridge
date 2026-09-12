@@ -488,7 +488,7 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
 
         var row = Rows[SelectedIndex];
 
-        if (Confirm is not null && !Confirm($"Remove the configuration for {row.Name}?"))
+        if (!Confirm($"Remove the configuration for {row.Name}?"))
         {
             return;
         }
@@ -526,8 +526,16 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         await ReconcileAsync(deleted: true).ConfigureAwait(true);
     }
 
-    /// <summary>Asks the user to confirm a deletion. Supplied by the view.</summary>
-    public Func<string, bool>? Confirm { get; set; }
+    /// <summary>
+    /// Asks the user to confirm a deletion.
+    /// </summary>
+    /// <remarks>
+    /// Defaulted, and deliberately not left for a view to supply. It was left for a view to
+    /// supply and no view ever did, so Delete removed a configuration without asking from the day
+    /// the button was added. A test replaces this; nothing has to remember to.
+    /// See <see cref="Confirmation.Ask"/> for why the default refuses when there is no window.
+    /// </remarks>
+    public Func<string, bool> Confirm { get; set; } = Confirmation.Ask;
 
     /// <summary>
     /// Starts or stops the configuration at this position.

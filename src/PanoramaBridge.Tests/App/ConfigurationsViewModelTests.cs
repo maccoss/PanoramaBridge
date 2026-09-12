@@ -256,6 +256,30 @@ public sealed class ConfigurationsViewModelTests
     }
 
     [Fact]
+    public async Task A_configuration_is_never_removed_without_an_answer()
+    {
+        // Confirm used to be a callback the view was trusted to supply, checked as
+        // "if (Confirm is not null && !Confirm(...))" -- so an unwired one meant carry on. No view
+        // ever wired it, so Delete removed a configuration without asking from the day the button
+        // was added, and nothing on screen said so.
+        //
+        // It is defaulted now, and the default refuses when there is no window to ask through,
+        // which is what this test is. Nothing is deleted rather than everything being deleted
+        // silently, and a test that wants the deletion says so.
+        var (settings, list) = New(
+            Watching("Lumos", @"D:\Data\Lumos"),
+            Watching("Exploris", @"D:\Data\Exploris"));
+
+        list.SelectedIndex = 1;
+        await list.Switching;
+
+        await list.DeleteCommand.ExecuteAsync(null);
+
+        settings.Configurations.Count.ShouldBe(
+            2, "no answer is not the same as yes, least of all for a delete");
+    }
+
+    [Fact]
     public async Task Removing_a_configuration_asks_first()
     {
         var (settings, list) = New(

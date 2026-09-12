@@ -169,8 +169,14 @@ public sealed partial class UploadsViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(DismissCommand))]
     private UploadRowViewModel? _selected;
 
-    /// <summary>Asks the user to confirm a dismissal. Supplied by the view.</summary>
-    public Func<string, bool>? Confirm { get; set; }
+    /// <summary>
+    /// Asks the user to confirm a dismissal.
+    /// </summary>
+    /// <remarks>
+    /// Defaulted for the same reason the Configurations list's is: a callback a view is trusted
+    /// to supply is a callback that can go unsupplied, and the failure is silent.
+    /// </remarks>
+    public Func<string, bool> Confirm { get; set; } = Services.Confirmation.Ask;
 
     /// <summary>
     /// Forgets a row for a file that never reached the server.
@@ -202,8 +208,7 @@ public sealed partial class UploadsViewModel : ObservableObject
 
         var name = System.IO.Path.GetFileName(row.Record.LocalPath);
 
-        if (Confirm is not null
-            && !Confirm(
+        if (!Confirm(
                 $"Remove the record of {name} from this list?\n\n"
                 + "It was never transferred, so nothing on Panorama changes. If the file is still "
                 + "being monitored it will be found again and sent."))
