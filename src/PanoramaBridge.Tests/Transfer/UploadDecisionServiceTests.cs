@@ -164,6 +164,47 @@ public sealed class UploadDecisionServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_small_file_in_a_huge_folder_is_still_decided()
+    {
+        // The one that took a night of transfers to surface, reported from an instrument.
+        //
+        // A destination folder had filled with a season of acquisitions -- about 180 GB of .raw.
+        // Panorama computes a hash on demand and does not cache it, at roughly 600 MB/s, so
+        // hashing that folder takes longer than the five minutes the client allows. Deciding
+        // about a 73 KB sequence file sitting beside them asked for exactly that, timed out,
+        // retried, and timed out again, all night. The .raw files were unaffected throughout,
+        // because a file that is not on the server yet never reaches this question.
+        //
+        // Asking for the one file's hash costs 73 KB instead of 180 GB.
+        var service = NewService();
+
+        // Charge hashing the way the server does, and give it the budget the client does.
+        _server.HashBytesPerMillisecond = 600_000;              // ~600 MB/s
+        _server.HashBudget = TimeSpan.FromMinutes(5);           // CollectionHashTimeout
+
+        var bulk = new byte[40_000_000];                        // 40 MB apiece
+        Random.Shared.NextBytes(bulk);
+
+        for (var i = 0; i < 5; i++)
+        {
+            _server.Seed(Destination.Append($"acquisition{i}.raw"), bulk);
+        }
+
+        // The sequence file beside them, already on the server and rewritten as the run goes on.
+        var stamp = await WriteLocalAsync("sequence.sld", "a sequence somebody named");
+        _server.Seed(Destination.Append("sequence.sld"), "an older sequence"u8.ToArray());
+
+        var decision = await service.DecideAsync(
+            stamp, Destination.Append("sequence.sld"), ConflictPolicy.Overwrite);
+
+        decision.Action.ShouldBe(
+            UploadAction.Upload, "the local sequence differs, so it goes -- it must be decidable");
+
+        _server.CollectionHashCalls.ShouldBe(
+            0, "hashing the folder would have covered 200 MB to answer about 25 bytes");
+    }
+
+    [Fact]
     public async Task A_populated_folder_costs_one_listing_and_one_hash_request()
     {
         var service = NewService();
@@ -188,8 +229,15 @@ public sealed class UploadDecisionServiceTests : IAsyncLifetime
             decision.Action.ShouldBe(UploadAction.Skip);
         }
 
-        _server.ListCalls.ShouldBe(1);
-        _server.CollectionHashCalls.ShouldBe(1);
+        _server.ListCalls.ShouldBe(1, "the folder is listed once however many files follow");
+
+        _server.FileHashCalls.ShouldBe(
+            10, "each file's own hash, and nothing else's");
+
+        _server.CollectionHashCalls.ShouldBe(
+            0,
+            "never the folder: the server hashes every byte in it to answer, so a folder holding "
+            + "a season of acquisitions cannot answer at all");
     }
 
     /// <summary>
@@ -227,7 +275,7 @@ public sealed class UploadDecisionServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_failed_folder_hash_is_not_remembered()
+    public async Task A_failed_hash_is_not_remembered()
     {
         // The one that matters most. Monitoring runs for days on one cache, so a cached failure
         // is not one bad decision but every later decision about that folder: each file whose
@@ -237,7 +285,7 @@ public sealed class UploadDecisionServiceTests : IAsyncLifetime
         var stamp = await WriteLocalAsync("run.raw", "acquisition data");
         _server.Seed(Destination.Append("run.raw"), "something else entirely"u8.ToArray());
 
-        _server.FailNextCollectionHash = true;
+        _server.FailNextFileHash = true;
 
         await Should.ThrowAsync<WebDavException>(() =>
             service.DecideAsync(stamp, Destination.Append("run.raw"), ConflictPolicy.Ask));
@@ -250,7 +298,7 @@ public sealed class UploadDecisionServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_folder_hash_does_not_outlive_the_listing_it_belongs_to()
+    public async Task A_hash_does_not_outlive_the_listing_it_belongs_to()
     {
         // Without this the hashes have no expiry at all. The listing is refetched after its
         // lifetime precisely so a change another client made shows up; answering from an
@@ -266,7 +314,7 @@ public sealed class UploadDecisionServiceTests : IAsyncLifetime
         _server.Seed(Destination.Append("shared.raw"), "our content..."u8.ToArray());
 
         await service.DecideAsync(stamp, Destination.Append("shared.raw"), ConflictPolicy.Ask);
-        _server.CollectionHashCalls.ShouldBe(1);
+        _server.FileHashCalls.ShouldBe(1);
 
         // A colleague replaces it on Panorama, same length, different content.
         _server.Seed(Destination.Append("shared.raw"), "their content.."u8.ToArray());
@@ -275,7 +323,7 @@ public sealed class UploadDecisionServiceTests : IAsyncLifetime
         var decision = await service.DecideAsync(
             stamp, Destination.Append("shared.raw"), ConflictPolicy.Ask);
 
-        _server.CollectionHashCalls.ShouldBe(
+        _server.FileHashCalls.ShouldBe(
             2, "the listing expired, so the hashes that came with it must be gone too");
 
         decision.Action.ShouldBe(
@@ -283,10 +331,13 @@ public sealed class UploadDecisionServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Workers_arriving_together_do_not_each_hash_the_folder()
+    public async Task Workers_arriving_together_each_pay_only_for_their_own_file()
     {
-        // A duplicate listing is a wasted cheap request; a duplicate collection hash is minutes
-        // of server-side reading. GetOrAdd's factory is not atomic, which is why this is a Lazy.
+        // This used to assert that four workers shared one folder hash, which was the whole point
+        // of the Lazy around it. Sharing is what made the cost per folder rather than per file,
+        // and a folder that has grown large cannot be hashed at all inside the time allowed --
+        // so now each worker asks about its own file and the sharing is neither needed nor
+        // wanted. A duplicate listing is still a wasted request, and still must not happen.
         var service = NewService();
 
         for (var i = 0; i < 4; i++)
@@ -299,7 +350,7 @@ public sealed class UploadDecisionServiceTests : IAsyncLifetime
         }
 
         using var gate = new SemaphoreSlim(0);
-        _server.HoldCollectionHash = gate;
+        _server.HoldFileHash = gate;
         _server.Reset();
 
         var decisions = Enumerable.Range(0, 4).Select(i => Task.Run(() =>
@@ -314,8 +365,10 @@ public sealed class UploadDecisionServiceTests : IAsyncLifetime
 
         await Task.WhenAll(decisions);
 
-        _server.CollectionHashCalls.ShouldBe(
-            1, "four workers wanting the same folder's hashes is one request, not four");
+        _server.FileHashCalls.ShouldBe(
+            4, "one hash each, and none of them waiting on anybody else's file");
+
+        _server.CollectionHashCalls.ShouldBe(0, "and the folder is never hashed");
     }
 
     [Fact]

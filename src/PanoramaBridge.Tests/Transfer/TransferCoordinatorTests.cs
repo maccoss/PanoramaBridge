@@ -462,11 +462,20 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_batch_that_does_need_hashes_still_only_asks_once()
+    public async Task A_batch_that_does_need_hashes_asks_about_each_file()
     {
-        // The other half of the same property. When the names do match, the folder's hashes are
-        // worth fetching -- and they arrive together, so twelve files cost one request rather
-        // than twelve. Making the fetch lazy must not turn one round trip into a dozen.
+        // The other half of the same property. When the names do match, a hash is worth fetching
+        // -- of each file, not of the folder.
+        //
+        // This asserted one request for all twelve until a lab's destination folder passed 150 GB
+        // of acquisitions. A collection hash costs the server every byte in the folder, measured
+        // at about 600 MB/s, so past roughly 180 GB it cannot answer inside the five minutes
+        // allowed -- and deciding about a 73 KB sequence file beside them became impossible,
+        // permanently, while the .raw files uploaded around it perfectly happily.
+        //
+        // Twelve requests rather than one is the price, and it is the right way round: asking per
+        // file hashes only the files in question, where the collection hashes all of them
+        // regardless, so it never costs the server more and usually far less.
         var files = new List<string>();
 
         for (var i = 0; i < 12; i++)
@@ -483,8 +492,10 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         var summary = await RunWithAsync(NewCoordinator(concurrency: 1), [.. files]);
 
         summary.Skipped.ShouldBe(12, "every one is already there, byte for byte");
-        _server.ListCalls.ShouldBe(1);
-        _server.CollectionHashCalls.ShouldBe(1, "fetched once for the folder, not once per file");
+        _server.ListCalls.ShouldBe(1, "the listing is still one request for the folder");
+        _server.FileHashCalls.ShouldBe(12, "one per file in question");
+        _server.CollectionHashCalls.ShouldBe(
+            0, "and never the whole folder, whose cost grows without limit as it fills");
         _server.UploadCalls.ShouldBe(0);
     }
 

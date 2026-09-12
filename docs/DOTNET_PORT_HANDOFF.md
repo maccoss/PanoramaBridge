@@ -205,7 +205,7 @@ All confirmed with real HTTP against panoramaweb.org (LabKey 26.7).
 | Fact | Consequence |
 |---|---|
 | `?method=md5sum` returns a server-computed MD5, per file **or per whole collection** (flat, subdirectories omitted) | The basis of verification. One request per folder. |
-| A collection hash is **computed on demand, not cached**: the folder holding this lab's test `.raw` files, about 19 GB, took **30 s** | Roughly 600 MB/s of server-side hashing. The first transfer into a folder full of large files therefore waits half a minute before anything moves, once per folder per session. A 100 GB folder would be two to three minutes. |
+| A collection hash is **computed on demand, not cached**: the folder holding this lab's test `.raw` files, about 19 GB, took **30 s** | Roughly 600 MB/s of server-side hashing, and the cost is the whole folder however little you asked about. Past roughly 180 GB it cannot answer inside the five minutes allowed. **Deciding about a file asks for that file's hash, never the folder's** -- see `RemoteSnapshotCache.HashOfFileAsync`. A lab's folder crossed that line in 26.10.0 and every sequence file beside the acquisitions stopped transferring, permanently, while the acquisitions themselves were unaffected because a file not yet on the server never asks. |
 | `?method=json` carries `canRead/canUpload/canEdit/canDelete/canRename` and an `options` verb list | The folder browser can refuse a read-only destination up front. |
 | **`Content-Range` on PUT is not implemented** | No partial or resumable upload. One streaming PUT per file, any size. A retry restarts from zero. |
 | MKCOL is **single-level**: 409 on a nested path, 405 when it already exists | Recursive creation, treating 405 as success. |

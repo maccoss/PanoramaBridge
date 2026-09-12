@@ -215,20 +215,44 @@ public sealed class FakeWebDavClient : IWebDavClient
                 TaskContinuationOptions.OnlyOnRanToCompletion,
                 TaskScheduler.Default);
 
-    public Task<string?> GetFileHashAsync(
+    public async Task<string?> GetFileHashAsync(
         RemotePath file,
         CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _fileHashCalls);
 
+        if (HoldFileHash is { } gate)
+        {
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        if (FailNextFileHash)
+        {
+            FailNextFileHash = false;
+            throw new WebDavException("GET(md5sum)", file, System.Net.HttpStatusCode.ServiceUnavailable);
+        }
+
         var content = Content(file);
         if (content is null || WithholdHashes)
         {
-            return Task.FromResult<string?>(null);
+            return null;
         }
 
-        return Task.FromResult<string?>(OverrideReportedHash ?? Md5Of(content));
+        ChargeForHashing(content.Length, "GET(md5sum)", file);
+
+        return OverrideReportedHash ?? Md5Of(content);
     }
+
+    /// <summary>Makes the next single-file hash request fail, once.</summary>
+    /// <remarks>
+    /// The same question as <see cref="FailNextCollectionHash"/>, asked of the request that now
+    /// decides about a file: not whether one request fails, but whether the failure is
+    /// remembered and poisons every later decision about that name.
+    /// </remarks>
+    public bool FailNextFileHash { get; set; }
+
+    /// <summary>Blocks single-file hash requests until released, so races can be arranged.</summary>
+    public SemaphoreSlim? HoldFileHash { get; set; }
 
     /// <summary>
     /// Makes the next collection-hash request fail, once.
@@ -242,6 +266,36 @@ public sealed class FakeWebDavClient : IWebDavClient
 
     /// <summary>Blocks collection-hash requests until released, so races can be arranged.</summary>
     public SemaphoreSlim? HoldCollectionHash { get; set; }
+
+    /// <summary>
+    /// How fast the server hashes, in bytes per millisecond, when a budget is being tested.
+    /// </summary>
+    /// <remarks>
+    /// Panorama computes a hash on demand and does not cache it, so what a request costs is the
+    /// bytes it covers: a collection request covers the whole folder, a file request covers one
+    /// file. Measured against panoramaweb.org at roughly 600 MB/s. Left null, nothing is charged
+    /// and hashes answer instantly, which is what every other test wants.
+    /// </remarks>
+    public double? HashBytesPerMillisecond { get; set; }
+
+    /// <summary>The budget a hash request is given, so exceeding it can be tested.</summary>
+    public TimeSpan? HashBudget { get; set; }
+
+    private void ChargeForHashing(long bytes, string method, RemotePath path)
+    {
+        if (HashBytesPerMillisecond is not { } rate || HashBudget is not { } budget)
+        {
+            return;
+        }
+
+        if (TimeSpan.FromMilliseconds(bytes / rate) > budget)
+        {
+            // What the real client does when its own budget runs out: the request is cancelled
+            // and the caller sees it as a cancellation, not as an answer.
+            throw new TaskCanceledException(
+                $"{method} of {path} covers {bytes} bytes, more than {budget} allows.");
+        }
+    }
 
     /// <summary>Blocks uploads until released, so a transfer can be interrupted mid-flight.</summary>
     public SemaphoreSlim? HoldUpload { get; set; }
@@ -276,14 +330,21 @@ public sealed class FakeWebDavClient : IWebDavClient
         }
 
         var prefix = collection.AsCollection().ToEncodedString();
+        long covered = 0;
+
         foreach (var (path, content) in _files)
         {
             if (path.StartsWith(prefix, StringComparison.Ordinal)
                 && !path[prefix.Length..].Contains('/', StringComparison.Ordinal))
             {
                 hashes[path[prefix.Length..]] = OverrideReportedHash ?? Md5Of(content);
+                covered += content.Length;
             }
         }
+
+        // Every byte in the folder, which is what makes this request's cost grow with the folder
+        // rather than with what is being asked about.
+        ChargeForHashing(covered, "GET(md5sum)", collection);
 
         return hashes;
     }
