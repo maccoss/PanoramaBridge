@@ -69,6 +69,16 @@
 
             <DataGrid.Columns>
                 <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="2*" />
+
+                <!--
+                    Worked out from the paths rather than stored on the row, so it follows a
+                    configuration being renamed or repointed. Blank means no configuration now
+                    matches, which is ordinary: the ledger outlives the configuration that wrote
+                    a row.
+                -->
+                <DataGridTextColumn Header="Configuration" Binding="{Binding Configuration}"
+                                    Width="140" />
+
                 <DataGridTextColumn Header="State" Binding="{Binding State}" Width="130" />
 
                 <!--

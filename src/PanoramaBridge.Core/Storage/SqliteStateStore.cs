@@ -106,8 +106,24 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         // cannot still carry a stale value a rolled-back build would act on. conflict_kind is
         // live again: it records why a row is held, which the sweep needs to know before
         // releasing it under a policy.
+        //
+        // The DELETE clears a row left behind by a rename that changed only case. local_path
+        // collapses case-insensitively but remote_path does not, so renaming run.raw to RUN.raw
+        // leaves the old destination's row beside the new one. Nothing re-uploads -- the sweep
+        // asks about the destination it would use now -- but the Uploads table would show one
+        // file twice, and the second entry would look like a transfer nobody could account for.
+        //
+        // The condition is deliberately narrow: same local file, a remote path that differs from
+        // this one exactly, yet matches it ignoring case. A genuinely different destination fails
+        // that second test and is left alone, which is what makes two configurations sharing a
+        // folder possible at all.
         await ExecuteWriteAsync(
             """
+            DELETE FROM uploads
+            WHERE local_path = $path
+              AND remote_path <> $remote
+              AND remote_path = $remote COLLATE NOCASE;
+
             INSERT INTO uploads
               (local_path, remote_path, size, mtime_utc, md5, sha256,
                state, verify_method, verified_utc, attempts, last_error, is_dataset,

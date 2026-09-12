@@ -37,6 +37,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel(
         SettingsViewModel settings,
+        ConfigurationsViewModel configurations,
         TransferStatusViewModel transferStatus,
         UploadsViewModel uploads,
         TransferService transfers,
@@ -47,6 +48,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ILogger<MainViewModel> log)
     {
         Settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        Configurations = configurations ?? throw new ArgumentNullException(nameof(configurations));
         TransferStatus = transferStatus ?? throw new ArgumentNullException(nameof(transferStatus));
         Uploads = uploads ?? throw new ArgumentNullException(nameof(uploads));
         _transfers = transfers ?? throw new ArgumentNullException(nameof(transfers));
@@ -65,6 +67,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     public SettingsViewModel Settings { get; }
+
+    /// <summary>The list of folder-to-destination pairings, and which one the tabs are editing.</summary>
+    public ConfigurationsViewModel Configurations { get; }
 
     public TransferStatusViewModel TransferStatus { get; }
 

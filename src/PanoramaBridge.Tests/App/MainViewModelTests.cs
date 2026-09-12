@@ -82,8 +82,12 @@ public sealed class MainViewModelTests : IAsyncLifetime
             new VersionPolicyClient(_http.CreateClient(), policyUrl: null),
             NullLogger<UpdateService>.Instance);
 
+        var settingsViewModel =
+            new SettingsViewModel(new InMemorySettingsStore(), settings ?? Usable());
+
         var shell = new MainViewModel(
-            new SettingsViewModel(new InMemorySettingsStore(), settings ?? Usable()),
+            settingsViewModel,
+            new ConfigurationsViewModel(settingsViewModel),
             new TransferStatusViewModel(_transfers.Progress),
             new UploadsViewModel(_store),
             _transfers,

@@ -77,4 +77,10 @@
     <Resource Include="Assets\panoramabridge.ico" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- So the service container can be built in a test: a window that will not open is a
+         defect nothing else catches, because every part of it compiles. -->
+    <InternalsVisibleTo Include="PanoramaBridge.Tests" />
+  </ItemGroup>
+
 </Project>

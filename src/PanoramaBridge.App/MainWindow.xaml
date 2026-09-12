@@ -111,11 +111,21 @@
         </Border>
 
         <TabControl Margin="8" Padding="12">
-            <TabItem Header="Local Monitoring">
+            <TabItem Header="Configurations">
+                <views:ConfigurationsView DataContext="{Binding Configurations}" />
+            </TabItem>
+            <!--
+                These two edit whichever configuration is selected on the Configurations tab, so
+                their headers say which one rather than leaving somebody to remember.
+            -->
+            <TabItem Header="{Binding Settings.EditingName, StringFormat='Local Monitoring - {0}'}">
                 <views:LocalMonitoringView DataContext="{Binding Settings}" />
             </TabItem>
-            <TabItem Header="Remote Settings">
+            <TabItem Header="{Binding Settings.EditingName, StringFormat='Remote Settings - {0}'}">
                 <views:RemoteSettingsView x:Name="RemoteSettings" DataContext="{Binding Settings}" />
+            </TabItem>
+            <TabItem Header="Application">
+                <views:ApplicationView DataContext="{Binding Settings}" />
             </TabItem>
             <TabItem Header="Transfer Status">
                 <views:TransferStatusView DataContext="{Binding TransferStatus}" />

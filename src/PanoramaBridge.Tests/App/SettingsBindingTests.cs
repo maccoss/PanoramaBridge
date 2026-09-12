@@ -22,12 +22,42 @@ namespace PanoramaBridge.Tests.App;
 /// </remarks>
 public sealed partial class SettingsBindingTests
 {
-    /// <summary>The two views whose DataContext is the settings view model.</summary>
+    /// <summary>The views whose DataContext is the settings view model.</summary>
     public static TheoryData<string> SettingsViews =>
     [
         "LocalMonitoringView.xaml",
         "RemoteSettingsView.xaml",
+        "ApplicationView.xaml",
     ];
+
+    /// <summary>The tabs that edit one configuration rather than the machine.</summary>
+    public static TheoryData<string> PerConfigurationViews =>
+    [
+        "LocalMonitoringView.xaml",
+        "RemoteSettingsView.xaml",
+    ];
+
+    /// <summary>
+    /// Settings that describe this computer rather than any one pairing.
+    /// </summary>
+    /// <remarks>
+    /// Taken from <see cref="AppSettings"/> rather than listed by hand, so a setting added there
+    /// is covered without anybody remembering to come back here.
+    /// </remarks>
+    private static string[] ApplicationLevelSettings() =>
+        typeof(PanoramaBridge.Core.Storage.AppSettings)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(property => property.Name)
+            .Where(name => name is not ("Configurations" or "EnabledConfigurations" or "Version"))
+
+            // RecentRemotePaths is the one real exception, and it is an exception because it is
+            // not edited anywhere: it is the list of destinations offered in the drop-down beside
+            // a configuration's own remote path, gathered from every configuration because a path
+            // one of them uses is exactly what the next one wants to start from. Nothing about it
+            // is set on that tab, so nothing about it can be misread as belonging to the
+            // configuration being edited.
+            .Where(name => name is not "RecentRemotePaths")
+            .ToArray();
 
     [GeneratedRegex(@"\{Binding\s+(?:Path=)?([A-Za-z_][A-Za-z0-9_]*)")]
     private static partial Regex BindingPath();
@@ -62,23 +92,79 @@ public sealed partial class SettingsBindingTests
         }
     }
 
-    [Fact]
-    public void The_application_settings_live_on_the_local_tab_and_not_the_remote_one()
+    [Theory]
+    [MemberData(nameof(PerConfigurationViews))]
+    public void No_machine_wide_setting_appears_on_a_per_configuration_tab(string view)
     {
-        // Neither is a remote setting. They sat under Remote Settings / Advanced beside a
-        // trusted-root certificate path only because there was nowhere else to put them, which
-        // is a poor reason and a confusing place to look.
-        var local = File.ReadAllText(Path.Combine(ViewsDirectory(), "LocalMonitoringView.xaml"));
-        var remote = File.ReadAllText(Path.Combine(ViewsDirectory(), "RemoteSettingsView.xaml"));
+        // Local Monitoring and Remote Settings edit whichever configuration is selected. A
+        // machine-wide setting shown beside them reads as belonging to that configuration, so
+        // somebody changing it for one instrument would reasonably believe the others were
+        // untouched. The screen would be saying something untrue, and silently.
+        //
+        // Stated as the rule rather than as a list of where things sit today, because the next
+        // setting to be added is the one that gets put on the nearest tab.
+        var xaml = File.ReadAllText(Path.Combine(ViewsDirectory(), view));
 
-        local.ShouldContain("MinimizeToTray");
-        local.ShouldContain("VerboseLogging");
+        var bound = BindingPath()
+            .Matches(xaml)
+            .Select(m => m.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
 
-        remote.ShouldNotContain("MinimizeToTray");
-        remote.ShouldNotContain("VerboseLogging");
+        foreach (var name in ApplicationLevelSettings())
+        {
+            bound.ShouldNotContain(
+                name,
+                $"{view} edits one configuration, and {name} describes the whole machine. "
+                + "It belongs on the Application tab.");
+        }
+    }
 
-        // The certificate stays: it is genuinely about reaching the server.
-        remote.ShouldContain("TrustedRootCertificatePath");
+    [Fact]
+    public void The_machine_wide_settings_that_have_a_control_are_on_the_application_tab()
+    {
+        // The other half: having moved them off the per-configuration tabs, they have to have
+        // somewhere to be. Not every application setting has a control -- RecordSha256 and
+        // YieldToInstrumentSoftware are deliberately settings-file-only -- so this names the ones
+        // that do rather than requiring all of them.
+        var application = File.ReadAllText(Path.Combine(ViewsDirectory(), "ApplicationView.xaml"));
+
+        application.ShouldContain("MinimizeToTray");
+        application.ShouldContain("VerboseLogging");
+        application.ShouldContain("MaxConcurrentTransfers");
+        application.ShouldContain("TrustedRootCertificatePath");
+    }
+
+    [Fact]
+    public void Every_binding_on_the_configurations_tab_resolves()
+    {
+        // The same silent failure, against a different view model. This one matters more than
+        // most: the list is how somebody tells which folders are covered, and a column bound to
+        // a property that is not there is simply blank rather than wrong-looking.
+        var xaml = File.ReadAllText(Path.Combine(ViewsDirectory(), "ConfigurationsView.xaml"));
+
+        var names = BindingPath()
+            .Matches(xaml)
+            .Select(m => m.Groups[1].Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        names.ShouldNotBeEmpty("the view should bind to something");
+
+        // Both, because the grid's rows bind to the row view model while everything around them
+        // binds to the tab's own.
+        var available = typeof(ConfigurationsViewModel)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Concat(typeof(ConfigurationRowViewModel)
+                .GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            .Select(p => p.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var name in names)
+        {
+            available.ShouldContain(
+                name,
+                $"ConfigurationsView binds to '{name}', which neither view model has");
+        }
     }
 
     /// <summary>Walks up to the repository so the XAML can be read as text.</summary>

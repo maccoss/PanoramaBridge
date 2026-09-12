@@ -30,14 +30,11 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly ISettingsStore _store;
     private AppSettings _saved;
 
-    /// <summary>Which configuration these two tabs are editing.</summary>
-    private readonly int _configurationIndex;
+    private int _configurationIndex;
 
     /// <param name="configurationIndex">
-    /// Which configuration to edit. The first one unless told otherwise, because nothing can yet
-    /// choose another: the Configurations tab arrives in phase 5. Taken as a parameter rather
-    /// than assumed at each use, so that adding the selector is a matter of passing it, and so
-    /// the assumption is written down in one place instead of spread through the tabs.
+    /// Which configuration to edit. The Configurations tab changes it through
+    /// <see cref="EditConfigurationAsync"/>; the first one is what the window opens on.
     /// </param>
     public SettingsViewModel(ISettingsStore store, AppSettings initial, int configurationIndex = 0)
     {
@@ -48,6 +45,87 @@ public sealed partial class SettingsViewModel : ObservableObject
         _configurationIndex = configurationIndex;
 
         LoadFrom(_saved);
+    }
+
+    /// <summary>Raised when the configurations, or which one is being edited, have changed.</summary>
+    /// <remarks>
+    /// The Configurations tab is a view over what this owns rather than a second owner of it --
+    /// two objects holding the same settings is exactly the trap this class's own remarks warn
+    /// about -- so it rebuilds its list from here when this fires.
+    /// </remarks>
+    public event Action? ConfigurationsChanged;
+
+    /// <summary>Which configuration the Local Monitoring and Remote Settings tabs are editing.</summary>
+    public int ConfigurationIndex => _configurationIndex;
+
+    /// <summary>The saved configurations, with the current edits folded into the selected one.</summary>
+    public IReadOnlyList<MonitoringConfiguration> Configurations => ToSettings().Configurations;
+
+    /// <summary>What the editor tabs are showing, for their headers.</summary>
+    public string EditingName => ConfigurationIn(ToSettings()).DisplayName;
+
+    /// <summary>
+    /// Points the editor tabs at a different configuration.
+    /// </summary>
+    /// <remarks>
+    /// Saves first. Switching away from half-typed edits and silently discarding them would be
+    /// the worst of the options: the boxes would simply be different when you came back and
+    /// nothing would say why. Saving is cheap, reversible, and already what pressing Start
+    /// monitoring does.
+    /// </remarks>
+    public async Task EditConfigurationAsync(
+        int index,
+        CancellationToken cancellationToken = default)
+    {
+        if (index == _configurationIndex)
+        {
+            return;
+        }
+
+        var settings = await SaveAsync(cancellationToken).ConfigureAwait(true);
+
+        _configurationIndex = index;
+
+        LoadFrom(settings);
+        OnPropertyChanged(nameof(HasUnsavedChanges));
+        OnPropertyChanged(nameof(ConfigurationIndex));
+        OnPropertyChanged(nameof(EditingName));
+
+        ConfigurationsChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Replaces the whole set of configurations, and says which one to edit afterwards.
+    /// </summary>
+    /// <remarks>
+    /// The single seam the Configurations tab writes through. Adding, copying, deleting and
+    /// ticking Enabled all come down to a new list plus an index, and routing them all through
+    /// one method is what keeps this class the only thing that owns the settings.
+    /// </remarks>
+    public async Task<AppSettings> ReplaceConfigurationsAsync(
+        IReadOnlyList<MonitoringConfiguration> configurations,
+        int index,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(configurations);
+
+        // From ToSettings, so an edit in progress on the selected configuration is carried rather
+        // than thrown away by a tick in the list beside it.
+        var settings = ToSettings() with { Configurations = configurations };
+
+        await _store.SaveAsync(settings, cancellationToken).ConfigureAwait(true);
+
+        _saved = settings;
+        _configurationIndex = Math.Clamp(index, 0, Math.Max(0, configurations.Count - 1));
+
+        LoadFrom(settings);
+        OnPropertyChanged(nameof(HasUnsavedChanges));
+        OnPropertyChanged(nameof(ConfigurationIndex));
+        OnPropertyChanged(nameof(EditingName));
+
+        ConfigurationsChanged?.Invoke();
+
+        return settings;
     }
 
     // -- Local monitoring ---------------------------------------------------------------------
@@ -247,6 +325,11 @@ public sealed partial class SettingsViewModel : ObservableObject
         _saved = settings;
         LoadFrom(settings);
         OnPropertyChanged(nameof(HasUnsavedChanges));
+        OnPropertyChanged(nameof(EditingName));
+
+        // The list shows the monitored folder, and an unnamed configuration is named after it,
+        // so saving can change what the Configurations tab should be displaying.
+        ConfigurationsChanged?.Invoke();
 
         // Immediately, because someone turning this on is trying to capture something that is
         // happening now.

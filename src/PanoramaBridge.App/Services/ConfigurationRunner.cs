@@ -427,7 +427,17 @@ public sealed class ConfigurationRunner : IAsyncDisposable
         }
     }
 
-    private void OnProgress(TransferProgress progress) => Progress?.Invoke(progress);
+    /// <summary>
+    /// Passes a progress report up, saying which configuration it came from.
+    /// </summary>
+    /// <remarks>
+    /// Tagged here because this is the last place that knows. Once several configurations report
+    /// into one transfer table, a row without this is a file moving with nothing to say which
+    /// instrument it came from or where it is going -- and with overlapping folders allowed, the
+    /// path alone cannot answer that.
+    /// </remarks>
+    private void OnProgress(TransferProgress progress) =>
+        Progress?.Invoke(progress with { Configuration = Name });
 
     private void OnSwept(SweepResult result) => Swept?.Invoke(new ConfigurationSweep(Name, result));
 

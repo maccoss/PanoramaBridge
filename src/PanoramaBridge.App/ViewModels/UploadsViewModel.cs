@@ -13,17 +13,28 @@ namespace PanoramaBridge.App.ViewModels;
 /// <summary>One row of the upload ledger, as shown in the audit view.</summary>
 public sealed class UploadRowViewModel
 {
-    public UploadRowViewModel(UploadRecord record)
+    public UploadRowViewModel(UploadRecord record, string configuration = "")
     {
         ArgumentNullException.ThrowIfNull(record);
 
         Record = record;
         FileName = Path.GetFileName(record.LocalPath);
+        Configuration = configuration;
     }
 
     public UploadRecord Record { get; }
 
     public string FileName { get; }
+
+    /// <summary>
+    /// Which configuration transferred this, or empty when none now matches.
+    /// </summary>
+    /// <remarks>
+    /// Empty is ordinary rather than a failure: the ledger outlives the configuration that wrote
+    /// a row, so a file uploaded last year by a configuration since deleted still has a true
+    /// record and no name to put beside it. Inventing one would be worse than a blank.
+    /// </remarks>
+    public string Configuration { get; }
 
     public string LocalPath => Record.LocalPath;
 
@@ -121,9 +132,20 @@ public sealed partial class UploadsViewModel : ObservableObject
     ];
 
     private readonly IStateStore _store;
+    private readonly Func<IReadOnlyList<MonitoringConfiguration>> _configurations;
 
-    public UploadsViewModel(IStateStore store) =>
+    /// <param name="configurations">
+    /// Read afresh on each refresh rather than captured once, so renaming a configuration or
+    /// repointing its destination shows up here without restarting. A function rather than the
+    /// settings view model itself, so this stays testable without one.
+    /// </param>
+    public UploadsViewModel(
+        IStateStore store,
+        Func<IReadOnlyList<MonitoringConfiguration>>? configurations = null)
+    {
         _store = store ?? throw new ArgumentNullException(nameof(store));
+        _configurations = configurations ?? Array.Empty<MonitoringConfiguration>;
+    }
 
     /// <summary>Rows currently shown.</summary>
     public ObservableCollection<UploadRowViewModel> Rows { get; } = [];
@@ -185,10 +207,18 @@ public sealed partial class UploadsViewModel : ObservableObject
                     .ToArray();
             }
 
+            // Once per refresh rather than once per row: the list is short and the lookup walks
+            // it for every record, so re-reading it five thousand times would be the sort of
+            // quiet cost this codebase keeps finding.
+            var configurations = _configurations();
+
             Rows.Clear();
             foreach (var record in records)
             {
-                Rows.Add(new UploadRowViewModel(record));
+                Rows.Add(new UploadRowViewModel(
+                    record,
+                    ConfigurationLookup.NameFor(
+                        configurations, record.LocalPath, record.RemotePath)));
             }
 
             await UpdateSummaryAsync().ConfigureAwait(true);

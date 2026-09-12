@@ -55,6 +55,11 @@ Everything below `TransferService` already takes an `AppSettings` and is therefo
 per-configuration: `MonitorOptions.FromSettings`, `NewCoordinator`, `ContinuousMonitor`. The
 single-configuration assumption lives in three places, and two of them hold data.
 
+> Written before any of the work. The names have moved since -- `FromSettings` is
+> `FromConfiguration`, `NewCoordinator` is `ConfigurationRunner` -- and the phase sections below
+> record what each step actually did. This part is left as it was because it is the reasoning
+> that set the order, and that reasoning held.
+
 ### 1. The upload ledger is keyed by local path alone
 
 ```sql
@@ -133,11 +138,10 @@ Two things the ledger work surfaced that later phases have to deal with:
 - **A failure recorded before a destination is known uses an empty destination.** That is a real
   key, not an argument error, and `SafeSetStateAsync` marks every row a file has -- all three
   routes there are files nothing can transfer, so the failure is true for every destination.
-- **A case-only rename now leaves a stale row.** Local paths still collapse case-insensitively
-  but remote paths compare exactly, so `run.raw` to `RUN.raw` produces two rows. Nothing
-  re-uploads; the sweep finds the row for the destination it would use now. The Uploads table
-  would show two entries for one file, so this wants clearing on save before phase 5 puts that
-  table in front of anyone.
+- **A case-only rename left a stale row.** Local paths collapse case-insensitively but remote
+  paths compare exactly, so `run.raw` to `RUN.raw` produced two rows. Nothing ever re-uploaded;
+  the sweep finds the row for the destination it would use now. The Uploads table would have
+  shown one file twice, so it is cleared on save -- see phase 5.
 
 ### Phase 3 — split settings into application and configurations  **[done]**
 
@@ -235,10 +239,55 @@ Two smaller decisions worth recording:
 available through a filter matching nothing; it was not, and that paragraph now describes what
 actually works.
 
-### Phase 5 — the Configurations tab
+### Phase 5 — the Configurations tab  **[done]**
 
-The list: name, user, created, status, with add, edit, copy, delete and a checkbox to enable.
-Transfer Status and Uploads gain a configuration column.
+The list, with the columns AutoQC Loader shows: name, user, created, status, a tick to enable,
+and Add, Copy and Remove. Selecting a row points the Local Monitoring and Remote Settings tabs at
+that configuration, so those two are the editor rather than a second place configurations live —
+which is why the tab layout grew by two rather than by one.
+
+**The Application tab is the other new one, and it is not decoration.** Local Monitoring and
+Remote Settings carried settings that describe this computer: the concurrency slider, the tray
+and verbose-logging options, the additional root certificate. Once those tabs edit *a*
+configuration, a machine-wide setting shown beside them reads as belonging to it — somebody
+turning off verbose logging for one instrument would reasonably believe the others were
+untouched. A screen that says that is a screen that lies, so they moved. `SettingsBindingTests`
+now states the rule rather than where things sit: no property of `AppSettings` may be bound on a
+per-configuration tab. The single exception is `RecentRemotePaths`, and it is an exception
+because it is not edited anywhere — it is the drop-down beside a configuration's own destination.
+
+**The configuration column is derived, not stored.** `ConfigurationLookup` matches a row's local
+path and destination against the configurations. Adding a column to the ledger would mean a
+schema migration to store something already derivable, and it would go stale the moment somebody
+renamed a configuration. Both halves have to match, because two configurations may watch one
+folder. Transfer Status does not use the lookup: `ConfigurationRunner` tags each progress report
+as it leaves, because it knows, and a lookup there would be guessing at what it already knew.
+
+Blank in that column is ordinary rather than a failure: the ledger outlives the configuration
+that wrote a row, and a file transferred by one since deleted is still a true record of an
+upload.
+
+**Switching configuration saves first.** Discarding half-typed edits on a click elsewhere is the
+worst of the options — the boxes are simply different when you come back and nothing says why.
+
+**A copy gets a new credential slot**, unlike the configuration it came from. Two configurations
+sharing one slot is fine and common, but a copy is a new pairing, and its own slot is what lets
+it be signed in as somebody else later without signing the original out.
+
+**Status is whether it would run, not whether it is running.** The Transfer Status tab is where
+what is happening now belongs. Saying "Running" here for a configuration whose share had just
+gone would be the kind of tick that means less than it appears to.
+
+`StartupTests` builds the real service container and resolves the window. Every registration
+compiles whatever it resolves to, so a missing one or a cycle between two view models is a clean
+build and an application that will not open — and adding a tab is exactly the change that invites
+that.
+
+**The stale row carried forward from phase 1 is cleared on save.** The condition is deliberately
+narrow: the same local file, a destination that differs from the one being written exactly yet
+matches it ignoring case. A genuinely different destination fails that second test and is kept,
+which is what makes two configurations sharing a folder possible at all. `CaseOnlyRenameTests`
+pins both halves.
 
 ---
 

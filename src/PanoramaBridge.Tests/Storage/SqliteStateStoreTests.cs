@@ -57,20 +57,17 @@ public sealed class SqliteStateStoreTests : IAsyncLifetime
         var renamed = new LocalFileStamp(@"C:\data\RUN.raw", 42, 1);
         await _store.SaveAsync(UploadRecord.ForNewFile(renamed, "/_webdav/uploads/RUN.raw"));
 
-        // Two rows now, not one, and that is a consequence of widening the key rather than a
-        // decision taken here. The local halves collapse under NOCASE as they always did, but the
-        // destinations differ by case and remote_path is compared exactly, because Panorama is
-        // case-sensitive. So the row for the new spelling is what a lookup finds, and the row for
-        // the old one is left behind.
-        //
-        // Nothing re-uploads: the sweep resolves the destination it would use now and finds the
-        // matching row. What is left is a stale row, visible in the Uploads table as a second
-        // entry for one file. Worth removing on save; not silently, which is why this says so.
         (await _store.GetAsync(Key(@"C:\data\RUN.raw", "/_webdav/uploads/RUN.raw")))!
             .LocalPath.ShouldBe(@"C:\data\RUN.raw");
 
+        // And only one row. Widening the key made a second one possible -- the local halves
+        // collapse under NOCASE as they always did, but destinations are compared exactly because
+        // Panorama is case-sensitive -- so the pre-rename destination used to be left behind.
+        // Nothing ever re-uploaded, but the Uploads table would show one file twice, and saving
+        // now clears it. CaseOnlyRenameTests is where the narrowness of that clearing is pinned:
+        // a destination differing by more than case is a different destination and is kept.
         (await _store.GetAsync(Key(@"C:\data\run.raw")))
-            .ShouldNotBeNull("the row for the pre-rename destination is still there");
+            .ShouldBeNull("the row for the pre-rename destination is cleared on save");
     }
 
     // IAsyncLifetime, not IAsyncDisposable: xUnit v2 never calls IAsyncDisposable on a test
