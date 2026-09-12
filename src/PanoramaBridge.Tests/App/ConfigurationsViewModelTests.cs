@@ -351,7 +351,7 @@ public sealed class ConfigurationsViewModelTests
     {
         // It kept running. Nothing in the list referred to its runner any more, so it went on
         // watching that folder and transferring to that destination with no row left to stop it
-        // -- and with Stop all greyed out as well, nothing short of killing the process reached
+        // -- and with Stop all grayed out as well, nothing short of killing the process reached
         // it.
         var started = new List<string>();
 

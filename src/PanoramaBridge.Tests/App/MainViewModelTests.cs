@@ -202,7 +202,7 @@ public sealed class MainViewModelTests : IAsyncLifetime
         // is why the test above passed against a button nobody could press. A WPF button asks once
         // when the binding attaches, and after that only when this event tells it to; with
         // IsMonitoring false at that moment, an event that never comes means a button that is
-        // greyed out for the life of the window.
+        // grayed out for the life of the window.
         using var shell = NewShell();
 
         var raised = 0;

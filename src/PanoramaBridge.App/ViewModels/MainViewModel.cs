@@ -104,7 +104,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// CommandManager.RequerySuggested, so a command's CanExecute is asked once when the binding
     /// attaches and then only when something raises CanExecuteChanged. This property starts false,
     /// so without this attribute the button is evaluated once as disabled and stays that way for
-    /// the life of the window -- with nothing to see, because a button that is greyed out from the
+    /// the life of the window -- with nothing to see, because a button that is grayed out from the
     /// start looks like a button that has nothing to do.
     /// </remarks>
     [ObservableProperty]

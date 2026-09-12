@@ -51,10 +51,6 @@ public sealed class ConfigurationRunner : IAsyncDisposable
     private bool _disposed;
 
     /// <param name="configuration">The pairing this runner serves.</param>
-    /// <param name="settings">
-    /// Application-level settings. Read for the things that describe this computer rather than
-    /// the pairing: the extra root certificate, the SHA-256 record, the connection pool size.
-    /// </param>
     /// <param name="client">
     /// The connection to this configuration's server, from <see cref="WebDavClientCache"/>.
     /// Borrowed rather than owned: it is shared with any other configuration signing in to the
@@ -62,16 +58,21 @@ public sealed class ConfigurationRunner : IAsyncDisposable
     /// meant a fresh connection pool, and a fresh TLS handshake per file, for every scan.
     /// </param>
     /// <param name="budget">The concurrency limit shared with every other runner.</param>
+    /// <remarks>
+    /// Takes no AppSettings. It used to, for the extra root certificate, the SHA-256 record and
+    /// the connection pool size -- all three of which the client is built from, and the client is
+    /// now built by <see cref="WebDavClientCache"/> and handed in. Keeping the parameter would
+    /// have left somebody adding a fourth application-level setting wiring it through here and
+    /// finding it silently ignored.
+    /// </remarks>
     public ConfigurationRunner(
         MonitoringConfiguration configuration,
-        AppSettings settings,
         IWebDavClient client,
         IStateStore store,
         TransferBudget budget,
         ILoggerFactory loggerFactory)
     {
         Configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-        ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(budget);
 
         _client = client ?? throw new ArgumentNullException(nameof(client));

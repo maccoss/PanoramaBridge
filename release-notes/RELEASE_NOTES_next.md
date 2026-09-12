@@ -33,7 +33,7 @@ time and update the heading; see `README.md` in this directory for the process.
 - **Stopping one configuration left its last report in the status line.** A failure from a folder
   nobody was watching any more kept being shown, and nothing could ever clear it.
 - **Stop all never became pressable.** Splitting Start onto each row left the toolbar button with
-  nothing to tell it that something had started, so it was greyed out from launch and stayed that
+  nothing to tell it that something had started, so it was grayed out from launch and stayed that
   way -- and with starting now per configuration, there was no other way to stand everything down
   before a reboot.
 - A settings file that was briefly in use by something else -- antivirus opening it, or a backup

@@ -132,7 +132,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
     {
         // Deleting a running configuration used to leave its runner watching that folder and
         // transferring to that destination with no row left that could stop it -- and with Stop
-        // all greyed out, nothing could reach it short of killing the process.
+        // all grayed out, nothing could reach it short of killing the process.
         await using var service = NewService();
 
         var lumos = Watching("Lumos");

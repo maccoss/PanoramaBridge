@@ -440,7 +440,6 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
 
         await using var runner = new ConfigurationRunner(
             configuration,
-            settings,
             _clients.For(settings, configuration, credential),
             _store,
             budget,
@@ -522,9 +521,12 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             throw new InvalidOperationException(problems[0]);
         }
 
-        if (settings.MaxConcurrentTransfers is < 1 or > 8)
+        // Asked of the settings rather than restated here. The bound and its wording had been
+        // copied, so the two could disagree about what is allowed and only one of them would be
+        // the message anybody read.
+        if (settings.Validate() is { Count: > 0 } faults)
         {
-            throw new InvalidOperationException("Concurrent transfers must be between 1 and 8.");
+            throw new InvalidOperationException(faults[0]);
         }
 
         var credential = ResolveCredential(
@@ -545,7 +547,6 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
 
         var runner = new ConfigurationRunner(
             configuration,
-            settings,
             _clients.For(settings, configuration, credential),
             _store,
             _budget,

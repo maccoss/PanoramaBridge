@@ -178,9 +178,9 @@
         </Style>
 
         <!--
-            The per-row run control. Same colours and the same reasoning as the toolbar button it
+            The per-row run control. Same colors and the same reasoning as the toolbar button it
             replaces: green for the thing that will start something, red for the thing that will
-            stop it, and the colour bound to the same property as the word so the two cannot
+            stop it, and the color bound to the same property as the word so the two cannot
             disagree about which state a configuration is in.
         -->
         <Style x:Key="RowRunButton" TargetType="Button" BasedOn="{StaticResource MonitoringButton}">
