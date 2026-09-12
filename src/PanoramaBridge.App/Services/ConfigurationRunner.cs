@@ -23,10 +23,11 @@ public readonly record struct ConfigurationSweep(string Configuration, SweepResu
 /// </summary>
 /// <remarks>
 /// <para>
-/// One of these per enabled configuration. Each owns its own WebDAV client because configurations
-/// may address different servers, and may sign in to one server as different people -- a client
-/// carries exactly one credential, so sharing would mean whichever configuration connected last
-/// decided who all of them were.
+/// One of these per running configuration. The connection is borrowed rather than owned: a client
+/// carries exactly one credential, so <see cref="WebDavClientCache"/> keys them by server and
+/// sign-in and hands the same one to every configuration that matches. Two folders going to two
+/// projects on one Panorama share a connection pool; the same server as a different account does
+/// not. Nothing here disposes it, because the next configuration along is very likely using it.
 /// </para>
 /// <para>
 /// What it deliberately does not own is the concurrency limit. That is a

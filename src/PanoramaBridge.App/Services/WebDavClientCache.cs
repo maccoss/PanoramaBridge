@@ -1,4 +1,6 @@
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Core.WebDav;
@@ -23,9 +25,17 @@ namespace PanoramaBridge.App.Services;
 /// a different account does not, since a client carries exactly one credential.
 /// </para>
 /// <para>
-/// The secret is not part of the key in any readable form -- only its hash code contributes, the
-/// same way <c>TransferService</c> has always compared connection identity -- so a cache key can
-/// be logged without leaking anything.
+/// The secret reaches the key only as a SHA-256 digest, so a key can be logged without leaking
+/// it. Deliberately not <c>string.GetHashCode</c>, which the code this replaced used: that is
+/// thirty-two bits and not collision-resistant, and a collision here does not degrade a cache --
+/// it hands one configuration a client carrying another account's Authorization header, and
+/// uploads its files as that account.
+/// </para>
+/// <para>
+/// Everything else the client is built from is in the key too. An entry made before somebody
+/// changed the extra root certificate, the pool size or the SHA-256 setting would otherwise be
+/// handed back afterwards, and the new setting would be silently ignored for the rest of the
+/// session.
 /// </para>
 /// </remarks>
 public sealed class WebDavClientCache : IDisposable
@@ -66,13 +76,22 @@ public sealed class WebDavClientCache : IDisposable
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(credential);
 
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
-        var key =
-            $"{configuration.ServerUrl}|{credential.UserName}|{credential.Secret.GetHashCode()}";
+        var key = string.Join(
+            '|',
+            configuration.ServerUrl,
+            credential.UserName,
+            Fingerprint(credential.Secret),
+            settings.MaxConcurrentTransfers,
+            settings.TrustedRootCertificatePath ?? string.Empty,
+            settings.RecordSha256);
 
         lock (_gate)
         {
+            // Inside the lock, not before it. Checked outside, a Dispose could run between the
+            // check and the lock, and this would then put a client into a dictionary that has
+            // already been emptied -- never disposed, and still handed out after teardown.
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
             if (_clients.TryGetValue(key, out var existing))
             {
                 return existing.Client;
@@ -127,6 +146,10 @@ public sealed class WebDavClientCache : IDisposable
             _clients.Clear();
         }
     }
+
+    /// <summary>A digest of the secret, so identity is exact and the key is still safe to log.</summary>
+    private static string Fingerprint(string secret) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
 
     private sealed record Entry(HttpClient Http, WebDavClient Client);
 }

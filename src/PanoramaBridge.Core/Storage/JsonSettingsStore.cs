@@ -52,6 +52,21 @@ public sealed class JsonSettingsStore : ISettingsStore
     private readonly ILogger<JsonSettingsStore> _log;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
+    /// <summary>
+    /// Set when a load returned defaults because the file could not be read.
+    /// </summary>
+    /// <remarks>
+    /// Leaving the file alone on a failed read is only half the job. What the caller is then
+    /// holding is defaults, and every route to a save -- pressing Run, Save settings, switching
+    /// configuration -- would write those defaults over the settings that were never read. The
+    /// file survives the lock and is then destroyed by the next click.
+    /// <para>
+    /// So saving is refused until a load succeeds. Refusing is not a good outcome, but there is no
+    /// good one here: the alternative is overwriting a file whose contents are still unknown.
+    /// </para>
+    /// </remarks>
+    private volatile bool _readFailed;
+
     public JsonSettingsStore(string path, ILogger<JsonSettingsStore>? log = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -80,6 +95,9 @@ public sealed class JsonSettingsStore : ISettingsStore
             var settings = loaded ?? new AppSettings();
             var normalized = settings.NormalizeWithdrawnValues();
 
+            // Whatever went wrong last time, the file has now been read.
+            _readFailed = false;
+
             // Writing the result back is how an upgraded file stops being upgraded on every
             // launch, and how a withdrawn setting stops being carried. Neither applies to a file
             // written by a newer build: this one cannot represent everything in it, so stamping
@@ -107,7 +125,9 @@ public sealed class JsonSettingsStore : ISettingsStore
         catch (JsonException ex)
         {
             // The content is bad. Falling back to defaults beats refusing to start, and the file
-            // is kept so it can be looked at rather than silently discarded.
+            // is kept so it can be looked at rather than silently discarded. Saving stays allowed
+            // here, unlike the failed-read path below: the file has been read, it simply held
+            // nothing usable, so writing over it loses nothing the .corrupt copy does not have.
             _log.LogError(ex, "Could not read settings from {Path}; falling back to defaults.", _path);
             TryPreserveCorruptFile();
             return new AppSettings();
@@ -128,9 +148,12 @@ public sealed class JsonSettingsStore : ISettingsStore
             _log.LogError(
                 ex,
                 "Could not open {Path} after {Attempts} attempts; it is in use by something else. "
-                + "Starting with default settings this session; the file has been left alone.",
+                + "Starting with default settings this session; the file has been left alone and "
+                + "will not be written to until it can be read.",
                 _path,
                 ReadAttempts);
+
+            _readFailed = true;
 
             return new AppSettings();
         }
@@ -188,6 +211,17 @@ public sealed class JsonSettingsStore : ISettingsStore
     public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
+
+        if (_readFailed)
+        {
+            throw new InvalidOperationException(
+                "Your settings could not be read when PanoramaBridge started, because something "
+                + "else had the file open, so what is on screen is the defaults rather than your "
+                + "settings. Saving now would write those over the file. Close PanoramaBridge, "
+                + "make sure nothing else is holding "
+                + Path.GetFileName(_path)
+                + ", and start it again.");
+        }
 
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -439,9 +473,13 @@ public sealed class JsonSettingsStore : ISettingsStore
             File.Move(_path, kept, overwrite: true);
             _log.LogInformation("The unreadable settings file was kept as {Path}.", kept);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Nothing more to be done; defaults are already in use.
+            // Both, because a move over a file anybody holds open throws
+            // UnauthorizedAccessException and that does not derive from IOException. Catching only
+            // the latter meant a malformed file that something locked between being read and being
+            // moved took the exception past the handler that had already decided to carry on with
+            // defaults, and the application failed to start instead.
         }
     }
 }

@@ -28,6 +28,10 @@ time and update the heading; see `README.md` in this directory for the process.
   it is. A file whose contents really are bad is still kept for inspection, as before.
 - A settings save that could not replace the file left a `settings.json.tmp` beside it, one for
   every save that lost that race.
+- **And the defaults from a settings file that could not be read are no longer written back over
+  it.** Leaving the file alone was only half the job: what the window then showed was defaults,
+  and the next thing that saved would have put those in the file. Saving is refused, with a
+  message saying what to close and to start again, until the settings have actually been read.
 - On the Configurations tab, starting or stopping a configuration when the settings file could
   not be written left the button showing a change that had not happened. It now goes back and the
   reason is shown under the list.

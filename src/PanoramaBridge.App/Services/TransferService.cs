@@ -34,10 +34,12 @@ public readonly record struct ConnectionCheck(
 /// which credential is in force -- live in one place.
 /// </para>
 /// <para>
-/// One <see cref="ConfigurationRunner"/> per enabled configuration, each with its own connection,
-/// engine and monitor, because configurations may watch different folders and address different
-/// servers as different people. What they share is the concurrency limit, which describes the
-/// disk and the link rather than any one pairing -- see <see cref="TransferBudget"/>.
+/// One <see cref="ConfigurationRunner"/> per running configuration, each with its own engine and
+/// monitor. Two things are deliberately shared rather than owned by a runner: the concurrency
+/// limit, which describes the disk and the link rather than any one pairing
+/// (<see cref="TransferBudget"/>), and the connection, which is keyed by server and sign-in
+/// (<see cref="WebDavClientCache"/>) so configurations talking to one Panorama as one account use
+/// one pool between them. A runner must never dispose either.
 /// </para>
 /// </remarks>
 public sealed class TransferService : IAsyncDisposable, IDisposable
@@ -61,6 +63,17 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     private TransferBudget? _budget;
     private CancellationTokenSource? _monitoring;
     private CancellationTokenSource? _run;
+
+    /// <summary>
+    /// The manual scan in flight, so teardown can wait for it.
+    /// </summary>
+    /// <remarks>
+    /// Cancelling it is not enough. A scan borrows a client from the cache, and disposing the
+    /// cache while the scan is still unwinding pulls the HttpClient out from under a request on
+    /// its way to being cancelled -- turning an orderly stop into disposal failures in the log,
+    /// on the way out of the process.
+    /// </remarks>
+    private Task? _scanning;
     private SweepResult? _lastSweep;
 
     /// <summary>
@@ -327,11 +340,26 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// The configuration the settings tabs are showing, so the typed secret reaches the
     /// credential slot it was typed for. See <see cref="SecretFor"/>.
     /// </param>
-    public async Task<TransferSummary> ScanAndUploadAsync(
+    public Task<TransferSummary> ScanAndUploadAsync(
         AppSettings settings,
         string? secret,
         MonitoringConfiguration? edited = null,
         CancellationToken cancellationToken = default)
+    {
+        // Kept so teardown can wait for it. A method cannot hold its own task, so the public entry
+        // point is this wrapper and the work is below.
+        var scan = ScanCoreAsync(settings, secret, edited, cancellationToken);
+
+        _scanning = scan;
+
+        return scan;
+    }
+
+    private async Task<TransferSummary> ScanCoreAsync(
+        AppSettings settings,
+        string? secret,
+        MonitoringConfiguration? edited,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(settings);
 
@@ -660,6 +688,13 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         _disposed = true;
 
         _run?.Cancel();
+
+        // Waited for, not merely cancelled: the scan is using a client the cache is about to
+        // dispose, and pulling it out from under a request that is still unwinding turns an
+        // orderly stop into disposal failures.
+        await AwaitQuietlyAsync(_scanning).ConfigureAwait(false);
+        _scanning = null;
+
         _run?.Dispose();
         _run = null;
 
@@ -717,7 +752,11 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         // leaving it: the budget holds no handle, and the process is exiting.
         _budget = null;
 
-        _clients.Dispose();
+        // The cache is deliberately not disposed here, unlike in the asynchronous path. This one
+        // cancels without waiting, so a scan may still be unwinding and still holding a borrowed
+        // client; closing its pool underneath it would turn the way out of the process into a
+        // page of disposal failures. The process is exiting and the sockets go with it.
+        _scanning = null;
     }
 
     /// <summary>
@@ -771,6 +810,34 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         var typedFor = WindowsCredentialStore.TargetFor(edited.ServerUrl, edited.Account);
 
         return string.Equals(slot, typedFor, StringComparison.OrdinalIgnoreCase) ? secret : null;
+    }
+
+    /// <summary>
+    /// Waits for something that is already being torn down, and does not let it stop the teardown.
+    /// </summary>
+    /// <remarks>
+    /// A cancelled scan ends by throwing, which is how it is supposed to end. Anything else is
+    /// worth recording but not worth leaving the service half disposed over.
+    /// </remarks>
+    private async Task AwaitQuietlyAsync(Task? task)
+    {
+        if (task is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await task.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // How a cancelled run is supposed to end.
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Something failed while the service was being disposed.");
+        }
     }
 
     private void Detach(ConfigurationRunner runner)

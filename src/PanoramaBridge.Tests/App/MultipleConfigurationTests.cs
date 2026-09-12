@@ -405,6 +405,59 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Changing_a_setting_the_client_is_built_from_does_not_reuse_the_old_connection()
+    {
+        // A client is built from more than the server and sign-in: the pool size, the extra root
+        // certificate and the SHA-256 setting all go into it. An entry made before one of those
+        // changed would otherwise be handed back afterwards, and the new value silently ignored
+        // for the rest of the session.
+        //
+        // RecordSha256 stands in for all three because it needs nothing on disk; a certificate
+        // path is loaded when the client is built, so a made-up one fails for its own reasons.
+        await using var service = NewService();
+
+        var settings = new AppSettings { Configurations = [Watching("Lumos")] };
+
+        await service.StartConfigurationAsync(settings, settings.Configurations[0], "an-api-key");
+        service.OpenConnections.ShouldBe(1);
+
+        await service.StopConfigurationAsync(settings.Configurations[0]);
+
+        var changed = settings with { RecordSha256 = true };
+
+        await service.StartConfigurationAsync(
+            changed, changed.Configurations[0], "an-api-key");
+
+        service.OpenConnections.ShouldBe(
+            2, "what the client was built from is part of what a connection is");
+    }
+
+    [Fact]
+    public async Task Two_secrets_on_one_server_never_share_a_connection()
+    {
+        // The key holds a digest of the secret rather than its hash code. Thirty-two bits are not
+        // collision-resistant, and a collision here does not merely miss a cache -- it hands one
+        // configuration a client carrying the other account's Authorization header.
+        await using var service = NewService();
+
+        const string Server = "https://panorama.invalid";
+
+        var first = Watching("First", server: Server, account: "config-first");
+        var second = Watching("Second", server: Server, account: "config-second");
+
+        _credentials.Write(Server, new StoredCredential("apikey", "secret-one"), "config-first");
+        _credentials.Write(Server, new StoredCredential("apikey", "secret-two"), "config-second");
+
+        await service.StartConfigurationAsync(
+            new AppSettings { Configurations = [first, second] }, first, secret: null);
+
+        await service.StartConfigurationAsync(
+            new AppSettings { Configurations = [first, second] }, second, secret: null);
+
+        service.OpenConnections.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Each_configuration_reads_the_credential_for_its_own_account()
     {
         // Two configurations on one server as different people: the case phase 2 keyed

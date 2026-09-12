@@ -301,6 +301,21 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         catch (Exception ex)
         {
             Problem = $"Could not open that configuration: {ex.Message}";
+
+            // EditConfigurationAsync saves before it moves, and leaves the index alone when that
+            // save throws. Without this the list would highlight the row that was clicked while
+            // the tabs still showed the previous one, and the next edit would be applied to a
+            // configuration nobody was looking at.
+            _rebuilding = true;
+
+            try
+            {
+                SelectedIndex = _settings.ConfigurationIndex;
+            }
+            finally
+            {
+                _rebuilding = false;
+            }
         }
     }
 

@@ -88,6 +88,67 @@ public sealed class LockedSettingsFileTests : IDisposable
     }
 
     [Fact]
+    public async Task Defaults_from_a_file_that_could_not_be_read_are_never_written_back_over_it()
+    {
+        // Leaving the file alone on a failed read is only half the job. What the caller holds is
+        // defaults, and every route to a save -- pressing Run, Save settings, switching
+        // configuration -- would write those over settings that were never read. The file
+        // survives the lock and is then destroyed by the next click.
+        await File.WriteAllTextAsync(SettingsPath, Usable);
+        var before = await File.ReadAllTextAsync(SettingsPath);
+
+        var store = new JsonSettingsStore(SettingsPath);
+
+        await using (new FileStream(SettingsPath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            (await store.LoadAsync()).MaxConcurrentTransfers.ShouldBe(3, "defaults");
+        }
+
+        // The lock has gone, so the save would now succeed -- and that is exactly the moment the
+        // settings would have been lost.
+        var refusal = await Should.ThrowAsync<InvalidOperationException>(
+            () => store.SaveAsync(new AppSettings()));
+
+        refusal.Message.ShouldContain("could not be read");
+        (await File.ReadAllTextAsync(SettingsPath)).ShouldBe(before);
+    }
+
+    [Fact]
+    public async Task Saving_works_again_once_the_file_has_been_read()
+    {
+        // The refusal is about not knowing what is in the file, so it lasts exactly as long as
+        // that. A session that recovers must not be stuck unable to save for ever.
+        await File.WriteAllTextAsync(SettingsPath, Usable);
+
+        var store = new JsonSettingsStore(SettingsPath);
+
+        await using (new FileStream(SettingsPath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            await store.LoadAsync();
+        }
+
+        await Should.ThrowAsync<InvalidOperationException>(
+            () => store.SaveAsync(new AppSettings()));
+
+        (await store.LoadAsync()).MaxConcurrentTransfers.ShouldBe(5, "the real file, this time");
+
+        await Should.NotThrowAsync(() => store.SaveAsync(new AppSettings()));
+    }
+
+    [Fact]
+    public async Task A_file_whose_contents_are_bad_can_still_be_saved_over()
+    {
+        // Unlike a file that could not be read. This one has been read; it simply held nothing
+        // usable, and the .corrupt copy keeps whatever it did hold.
+        await File.WriteAllTextAsync(SettingsPath, "{ this is not json");
+
+        var store = new JsonSettingsStore(SettingsPath);
+        await store.LoadAsync();
+
+        await Should.NotThrowAsync(() => store.SaveAsync(new AppSettings()));
+    }
+
+    [Fact]
     public async Task A_file_whose_contents_are_bad_is_still_moved_aside()
     {
         // Unchanged behavior, asserted so that separating the two failures did not quietly drop
