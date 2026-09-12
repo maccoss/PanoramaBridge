@@ -165,6 +165,10 @@ public sealed class CandidateFilter
     /// name rather than as one segment of the walk, so <c>QC.tmp.mzML</c> -- a finished mzML
     /// whose stem merely reads like a temporary file -- is unaffected.
     /// </item>
+    /// <item>
+    /// A sequence file the Thermo data system named for itself -- see
+    /// <see cref="IsGeneratedSequence"/>.
+    /// </item>
     /// </list>
     /// </remarks>
     private static bool IsWorkingFile(string name) =>
@@ -172,5 +176,41 @@ public sealed class CandidateFilter
         || name.EndsWith("-wal", StringComparison.OrdinalIgnoreCase)
         || name.EndsWith("-shm", StringComparison.OrdinalIgnoreCase)
         || name.EndsWith(".md5", StringComparison.OrdinalIgnoreCase)
-        || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase);
+        || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
+        || IsGeneratedSequence(name);
+
+    /// <summary>
+    /// Whether a sequence file was named by the data system rather than by a person.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Thermo data system leaves sequence files whose whole name is a GUID, like
+    /// <c>203b13ca-0743-4a98-bed4-5830bfc7d826.sld</c>. They are working copies of the sequence
+    /// being edited or run, and they accumulate: a lab asking for <c>.sld</c> wants the sequences
+    /// somebody named and saved, not one of these per session.
+    /// </para>
+    /// <para>
+    /// Unlike <c>.skyd</c>, this one a rule can actually decide. A Skyline cache is shaped
+    /// exactly like a genuine companion, so telling them apart needs knowledge and the answer
+    /// lives in a list a user can edit. A name that is a bare GUID carries nothing a person
+    /// chose, which is checkable -- so it is decided here instead of being one more box to know
+    /// about.
+    /// </para>
+    /// <para>
+    /// Deliberately only <c>.sld</c>, and deliberately not every GUID-named file. A sequence is a
+    /// working document and regenerable; an acquisition is not. Some pipelines do name
+    /// acquisitions by GUID to keep them unique, and a rule broad enough to catch a temporary
+    /// <c>.raw</c> would silently drop those -- losing data to save clutter, which is the wrong
+    /// way round. If the data system turns out to do this for another extension, that is worth
+    /// adding on evidence rather than by guessing at it now.
+    /// </para>
+    /// <para>
+    /// TryParseExact with "D" rather than Guid.TryParse: the latter also accepts the braced and
+    /// unhyphenated forms, and a thirty-two character hex name is a plausible thing for somebody
+    /// to have chosen on purpose. Only the exact 8-4-4-4-12 shape the data system writes matches.
+    /// </para>
+    /// </remarks>
+    private static bool IsGeneratedSequence(string name) =>
+        Path.GetExtension(name).Equals(".sld", StringComparison.OrdinalIgnoreCase)
+        && Guid.TryParseExact(Path.GetFileNameWithoutExtension(name), "D", out _);
 }

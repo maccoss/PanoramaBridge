@@ -17,6 +17,15 @@ time and update the heading; see `README.md` in this directory for the process.
 - On the Configurations tab, turning a configuration on or off when the settings file could not be
   written left the tick showing a change that had not been saved. The tick now goes back and the
   reason is shown.
+- **Adding a configuration blanked the destination of the one you were looking at.** The
+  where-to-upload box emptied itself whenever the list of configurations was reloaded, so after
+  adding one, the previous configuration showed no destination -- and the next save would have
+  written that blank. It also made the list report the configuration as needing attention while
+  it was still transferring quite happily, because the destination it was being judged on was the
+  blank one on screen rather than the one it was actually using.
+- A sequence file the Thermo data system names for itself -- a bare GUID, like
+  `203b13ca-0743-4a98-bed4-5830bfc7d826.sld` -- is no longer transferred. Sequence files somebody
+  named and saved still are; only the generated ones are skipped.
 - **Adding a configuration stopped monitoring starting at all.** A new configuration was switched
   on, and it has no folder and no destination, so the settings as a whole were invalid and Start
   monitoring refused on the first problem it found -- including for the configurations that were

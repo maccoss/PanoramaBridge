@@ -426,6 +426,14 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         var configuration = ConfigurationIn(settings);
 
+        // Before RemotePath, and this ordering is load-bearing. The destination box is an
+        // editable ComboBox whose ItemsSource is this collection and whose Text is two-way bound
+        // to RemotePath with UpdateSourceTrigger=PropertyChanged. Replacing the items clears that
+        // Text, and the binding writes the empty string straight back -- so filling this list
+        // after setting RemotePath blanked the destination of whichever configuration was on
+        // screen, and the next save wrote the blank.
+        SyncRecentRemotePaths(settings.RecentRemotePaths);
+
         Name = configuration.Name;
         LocalDirectory = configuration.LocalDirectory;
         IncludeSubdirectories = configuration.IncludeSubdirectories;
@@ -448,9 +456,27 @@ public sealed partial class SettingsViewModel : ObservableObject
         TrustedRootCertificatePath = settings.TrustedRootCertificatePath;
         VerboseLogging = settings.VerboseLogging;
         MinimizeToTray = settings.MinimizeToTray;
+    }
+
+    /// <summary>
+    /// Brings the recent-destinations list up to date, and leaves it alone when it already is.
+    /// </summary>
+    /// <remarks>
+    /// The comparison is not an optimization. Clearing and refilling raises a Reset, and a Reset
+    /// is what makes the destination ComboBox throw away what is typed in it -- so the cheapest
+    /// way not to blank the destination is not to touch the list when nothing about it changed,
+    /// which is almost every time this runs.
+    /// </remarks>
+    private void SyncRecentRemotePaths(IReadOnlyList<string> paths)
+    {
+        if (RecentRemotePaths.SequenceEqual(paths, StringComparer.Ordinal))
+        {
+            return;
+        }
 
         RecentRemotePaths.Clear();
-        foreach (var path in settings.RecentRemotePaths)
+
+        foreach (var path in paths)
         {
             RecentRemotePaths.Add(path);
         }

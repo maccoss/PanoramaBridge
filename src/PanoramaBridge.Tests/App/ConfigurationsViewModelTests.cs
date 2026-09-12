@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using PanoramaBridge.App.ViewModels;
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Tests.TestDoubles;
@@ -122,6 +123,49 @@ public sealed class ConfigurationsViewModelTests
         await list.StatusesChecked;
 
         list.Rows[0].Status.ShouldBe("Off");
+    }
+
+    [Fact]
+    public async Task Reloading_leaves_the_recent_destinations_alone_when_nothing_changed()
+    {
+        // The destination box is an editable ComboBox whose items are this collection and whose
+        // text is two-way bound to RemotePath. Replacing the items raises a Reset, the ComboBox
+        // throws away its text, and the binding writes the empty string back -- so the
+        // destination of whichever configuration was on screen was blanked, and the next save
+        // wrote the blank. Not touching the list when nothing about it changed is what stops it.
+        var (settings, list) = New(Watching("Lumos", Path.GetTempPath()));
+
+        var resets = 0;
+        ((INotifyCollectionChanged)settings.RecentRemotePaths).CollectionChanged += (_, e) =>
+        {
+            if (e.Action == NotifyCollectionChangedAction.Reset)
+            {
+                resets++;
+            }
+        };
+
+        await list.AddCommand.ExecuteAsync(null);
+        await settings.EditConfigurationAsync(0);
+        await settings.SaveAsync();
+
+        resets.ShouldBe(0, "the recent destinations never changed, so the list was never replaced");
+    }
+
+    [Fact]
+    public async Task Adding_a_configuration_does_not_blank_the_destination_of_the_one_before_it()
+    {
+        // What the blanking cost, stated at the level it was reported: add a configuration, go
+        // back to the previous one, and its destination is gone.
+        var (settings, list) = New(Watching("Lumos", Path.GetTempPath()));
+
+        var before = settings.RemotePath;
+        before.ShouldNotBeNullOrWhiteSpace();
+
+        await list.AddCommand.ExecuteAsync(null);
+        await settings.EditConfigurationAsync(0);
+
+        settings.RemotePath.ShouldBe(before);
+        settings.Configurations[0].RemotePath.ShouldBe(before);
     }
 
     [Fact]
