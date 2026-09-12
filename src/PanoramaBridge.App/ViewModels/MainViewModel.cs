@@ -62,6 +62,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _transfers.RunStateChanged += OnRunStateChanged;
         _transfers.Swept += OnSwept;
         _transfers.MonitoringFailed += OnMonitoringFailed;
+        TransferStatus.OutstandingChanged += OnOutstandingChanged;
 
         ApplyUpdateStatus(_updates.Status);
     }
@@ -604,7 +605,36 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         _sweeps[sweep.Configuration] = sweep.Result;
 
+        // Described from the sweep's own count, because at this instant the files it found have
+        // not reached the queue yet and asking what is outstanding would answer none.
         var summary = Core.Monitoring.MonitoringSummary.Describe(_sweeps);
+
+        StatusLine = summary.Line;
+        ConnectionFailed = summary.Failed;
+    }
+
+    /// <summary>
+    /// Brings the status line up to date as the work a sweep found is done.
+    /// </summary>
+    /// <remarks>
+    /// A sweep speaks once, so "5 file(s) to transfer" stayed on screen with all five transferred
+    /// and verified and the window idle, until the next sweep fifteen minutes later. The count now
+    /// falls as the files go, and reads as up to date when they have gone.
+    /// <para>
+    /// Silent when nothing has swept, so it cannot overwrite "Ready." before anything has run or
+    /// "Stopped." after everything has; and silent during a manual scan, which reports its own
+    /// progress and should not be argued with.
+    /// </para>
+    /// </remarks>
+    private void OnOutstandingChanged()
+    {
+        if (_sweeps.Count == 0 || IsBusy)
+        {
+            return;
+        }
+
+        var summary = Core.Monitoring.MonitoringSummary.Describe(
+            _sweeps, TransferStatus.Outstanding);
 
         StatusLine = summary.Line;
         ConnectionFailed = summary.Failed;
@@ -708,6 +738,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _transfers.RunStateChanged -= OnRunStateChanged;
         _transfers.Swept -= OnSwept;
         _transfers.MonitoringFailed -= OnMonitoringFailed;
+        TransferStatus.OutstandingChanged -= OnOutstandingChanged;
 
         _shutdown.Cancel();
         _updateTimer?.Dispose();

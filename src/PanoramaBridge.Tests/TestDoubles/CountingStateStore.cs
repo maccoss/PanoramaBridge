@@ -77,6 +77,12 @@ public sealed class CountingStateStore : IStateStore, IAsyncDisposable
         _inner.SetStateAsync(key, state, lastError, cancellationToken);
 
     /// <inheritdoc />
+    public Task<bool> ForgetAsync(
+        LedgerKey key,
+        CancellationToken cancellationToken = default) =>
+        _inner.ForgetAsync(key, cancellationToken);
+
+    /// <inheritdoc />
     public Task SetErrorAsync(
         LedgerKey key,
         string? error,

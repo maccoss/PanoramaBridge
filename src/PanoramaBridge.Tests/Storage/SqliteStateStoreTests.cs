@@ -26,6 +26,54 @@ public sealed class SqliteStateStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_failure_can_be_forgotten()
+    {
+        // A failure can outlive every reason to retry it. Two sequence files failed against a
+        // server that could not answer in time; the application then learned to skip that kind of
+        // file, so nothing would ever attempt them again -- and nothing would ever clear them.
+        const string remote = "/_webdav/uploads/9f2c.sld";
+
+        var stamp = new LocalFileStamp(@"C:\data\9f2c.sld", 42, 1);
+        await _store.SaveAsync(UploadRecord.ForNewFile(stamp, remote));
+        await _store.SetErrorAsync(Key(stamp.Path, remote), "the operation was canceled");
+        await _store.SetStateAsync(Key(stamp.Path, remote), TransferState.Failed);
+
+        (await _store.ForgetAsync(Key(stamp.Path, remote))).ShouldBeTrue();
+        (await _store.GetAsync(Key(stamp.Path, remote))).ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(TransferState.Verified)]
+    [InlineData(TransferState.Uploaded)]
+    [InlineData(TransferState.Skipped)]
+    public async Task A_row_for_a_file_that_reached_the_server_is_never_forgotten(
+        TransferState state)
+    {
+        // The one that matters. This ledger is the record of what is on Panorama, and on a
+        // rebuilt machine it is the only evidence: a row saying a file is there must not be
+        // removable by a button meant for clearing failures. Enforced here and not only in the
+        // view model, because the view model is not what the next caller will go through.
+        var stamp = new LocalFileStamp(@"C:\data\run.raw", 42, 1);
+        await _store.SaveAsync(UploadRecord.ForNewFile(stamp, "/_webdav/uploads/run.raw"));
+        await _store.SetStateAsync(Key(stamp.Path), TransferState.Uploading);
+        await _store.SetStateAsync(Key(stamp.Path), state);
+
+        (await _store.ForgetAsync(Key(stamp.Path))).ShouldBeFalse();
+
+        var row = await _store.GetAsync(Key(stamp.Path));
+        row.ShouldNotBeNull();
+        row!.State.ShouldBe(state);
+    }
+
+    [Fact]
+    public async Task Forgetting_a_row_that_is_not_there_is_not_an_error()
+    {
+        // Two people looking at the same list, or a refresh in between. Nothing to remove is the
+        // outcome that was wanted, not a failure to report.
+        (await _store.ForgetAsync(Key(@"C:\data\never-existed.raw"))).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task A_saved_row_can_move_through_each_update_only_transition()
     {
         var stamp = new LocalFileStamp(@"C:\data\run.raw", 42, 1);

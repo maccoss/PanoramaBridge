@@ -42,6 +42,26 @@ public interface IStateStore
     /// from whatever snapshot the caller is holding, which on the recovery path is read before
     /// the workers start — so a worker's write could be undone by it.
     /// </remarks>
+    /// <summary>
+    /// Removes a row for a file that never reached the server, so it stops being asked about.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Refuses anything that did reach the server. This is a record of what is on Panorama, and a
+    /// row saying a file is there is the only evidence of it on a rebuilt machine -- losing one
+    /// would be losing the thing the ledger is for. Only Failed, Conflict and Superseded can be
+    /// forgotten, because none of those put bytes anywhere.
+    /// </para>
+    /// <para>
+    /// It exists because a failure can outlive any reason to retry it. An instrument was left with
+    /// two rows for sequence files the application later learned to skip: nothing would ever
+    /// attempt them again, so nothing would ever clear them, and they sat in "needs attention"
+    /// for good.
+    /// </para>
+    /// </remarks>
+    /// <returns>True when a row was removed.</returns>
+    Task<bool> ForgetAsync(LedgerKey key, CancellationToken cancellationToken = default);
+
     Task SetErrorAsync(
         LedgerKey key, string? error, CancellationToken cancellationToken = default);
 

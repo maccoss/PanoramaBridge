@@ -36,6 +36,43 @@ public sealed class MonitoringSummaryTests
     }
 
     [Fact]
+    public void The_count_is_what_is_still_waiting_when_the_caller_knows()
+    {
+        // Reported from an instrument: five files transferred and verified, the window idle, and
+        // the line still reading "5 file(s) to transfer" -- because a sweep speaks once and its
+        // Offered is a moment in the past as soon as the first file moves. It stayed wrong until
+        // the next sweep fifteen minutes later.
+        var swept = new Dictionary<string, SweepResult> { ["QE-HF"] = Fine(12, offered: 5) };
+
+        MonitoringSummary.Describe(swept, outstanding: 5).Line
+            .ShouldBe("Monitoring - 5 file(s) to transfer.", "none have gone yet");
+
+        MonitoringSummary.Describe(swept, outstanding: 2).Line
+            .ShouldBe("Monitoring - 2 file(s) to transfer.", "and the count falls as they go");
+
+        MonitoringSummary.Describe(swept, outstanding: 0).Line
+            .ShouldBe(
+                "Monitoring - 12 file(s) checked, all up to date.",
+                "which is the whole point: it stops claiming work that is finished");
+    }
+
+    [Fact]
+    public void A_failure_still_wins_over_whatever_is_outstanding()
+    {
+        // The rule this class exists for. A folder that cannot be read must not be replaced by a
+        // tidy count just because the queue happens to have drained.
+        var swept = new Dictionary<string, SweepResult>
+        {
+            ["QE-HF"] = Broken("The monitored directory does not exist: D:\\Data"),
+        };
+
+        var summary = MonitoringSummary.Describe(swept, outstanding: 0);
+
+        summary.Failed.ShouldBeTrue();
+        summary.Line.ShouldBe("The monitored directory does not exist: D:\\Data");
+    }
+
+    [Fact]
     public void A_single_broken_configuration_is_not_named_when_it_is_the_only_one()
     {
         var summary = MonitoringSummary.Describe(new Dictionary<string, SweepResult>

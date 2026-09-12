@@ -16,6 +16,15 @@
 
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <!--
+                        Only ever enabled for a row that needs attention, and the ledger refuses
+                        anything else besides. A failure can outlive every reason to retry it: a
+                        file the application later learned to skip is never attempted again, so
+                        nothing clears its row and it counts against "needs attention" for good.
+                    -->
+                    <Button Content="Dismiss" Style="{StaticResource ToolbarButton}"
+                            Command="{Binding DismissCommand}"
+                            ToolTip="Removes the selected row for a file that was never transferred. Nothing on Panorama changes, and a file still being monitored will be found again." />
                     <Button Content="Refresh" Style="{StaticResource ToolbarButton}"
                             Command="{Binding RefreshCommand}" />
                     <Button Content="Export CSV" Command="{Binding ExportCsvCommand}" />
@@ -45,6 +54,7 @@
                    Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibility}}" />
 
         <DataGrid ItemsSource="{Binding Rows}"
+                  SelectedItem="{Binding Selected}"
                   AutoGenerateColumns="False"
                   IsReadOnly="True"
                   HeadersVisibility="Column"
