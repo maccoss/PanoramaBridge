@@ -17,8 +17,12 @@ namespace PanoramaBridge.Core.Storage;
 /// </remarks>
 public interface IStateStore
 {
-    /// <summary>Returns the ledger row for a local path, or null when it is unknown.</summary>
-    Task<UploadRecord?> GetAsync(string localPath, CancellationToken cancellationToken = default);
+    /// <summary>Returns the ledger row for a file at a destination, or null when unknown.</summary>
+    /// <remarks>
+    /// Keyed by both halves since a file may have been sent to more than one destination by more
+    /// than one configuration. Asking by path alone cannot say which of those rows is meant.
+    /// </remarks>
+    Task<UploadRecord?> GetAsync(LedgerKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Inserts or replaces a ledger row.</summary>
     Task SaveAsync(UploadRecord record, CancellationToken cancellationToken = default);
@@ -39,17 +43,17 @@ public interface IStateStore
     /// the workers start — so a worker's write could be undone by it.
     /// </remarks>
     Task SetErrorAsync(
-        string localPath, string? error, CancellationToken cancellationToken = default);
+        LedgerKey key, string? error, CancellationToken cancellationToken = default);
 
     Task SetStateAsync(
-        string localPath,
+        LedgerKey key,
         TransferState state,
         string? lastError = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>Marks an existing row verified, recording how it was checked.</summary>
     Task MarkVerifiedAsync(
-        string localPath,
+        LedgerKey key,
         VerifyMethod method,
         DateTimeOffset verifiedUtc,
         CancellationToken cancellationToken = default);
@@ -57,6 +61,12 @@ public interface IStateStore
     /// <summary>
     /// Ledger rows for a batch of local paths, keyed by path.
     /// </summary>
+    /// <returns>
+    /// Every row for each path, which may be more than one: a file sent to two destinations by
+    /// two configurations has a row for each. The caller picks the row for the destination it is
+    /// asking about — or, when a path has no destination because it cannot be placed on the
+    /// server at all, considers them together.
+    /// </returns>
     /// <remarks>
     /// One statement per batch rather than one per file, because the reconciliation sweep asks
     /// this about every file in the monitored tree. At a hundred thousand files the difference
@@ -64,7 +74,7 @@ public interface IStateStore
     /// second and one that costs minutes of disk work on the volume an instrument is writing to.
     /// Paths absent from the ledger are simply absent from the result.
     /// </remarks>
-    Task<IReadOnlyDictionary<string, UploadRecord>> GetManyAsync(
+    Task<IReadOnlyDictionary<string, IReadOnlyList<UploadRecord>>> GetManyAsync(
         IReadOnlyCollection<string> localPaths,
         CancellationToken cancellationToken = default);
 

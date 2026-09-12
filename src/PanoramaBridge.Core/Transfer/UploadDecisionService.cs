@@ -81,7 +81,9 @@ public sealed class UploadDecisionService
         var encodedDestination = destination.ToEncodedString();
 
         // -- Tier 0: the ledger already knows -------------------------------------------------
-        var existing = await _store.GetAsync(stamp.Path, cancellationToken).ConfigureAwait(false);
+        var existing = await _store
+            .GetAsync(new LedgerKey(stamp.Path, encodedDestination), cancellationToken)
+            .ConfigureAwait(false);
 
         if (existing is not null && existing.IsSettledAt(stamp, encodedDestination))
         {

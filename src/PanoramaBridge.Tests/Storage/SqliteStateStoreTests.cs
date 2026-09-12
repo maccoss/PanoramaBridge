@@ -5,6 +5,12 @@ namespace PanoramaBridge.Tests.Storage;
 /// <summary>Contract tests for the update-only ledger transitions.</summary>
 public sealed class SqliteStateStoreTests : IAsyncLifetime
 {
+    /// <summary>The destination these tests save against, so a lookup can name the row.</summary>
+    private const string Uploaded = "/_webdav/uploads/run.raw";
+
+    private static LedgerKey Key(string localPath, string remote = Uploaded) =>
+        new(localPath, remote);
+
     private readonly SqliteStateStore _store = SqliteStateStore.InMemory();
 
     [Fact]
@@ -13,10 +19,10 @@ public sealed class SqliteStateStoreTests : IAsyncLifetime
         const string path = @"C:\data\unknown.raw";
 
         await Should.ThrowAsync<InvalidOperationException>(() =>
-            _store.SetStateAsync(path, TransferState.Uploading));
+            _store.SetStateAsync(Key(path), TransferState.Uploading));
 
         await Should.ThrowAsync<InvalidOperationException>(() =>
-            _store.MarkVerifiedAsync(path, VerifyMethod.ServerMd5, DateTimeOffset.UtcNow));
+            _store.MarkVerifiedAsync(Key(path), VerifyMethod.ServerMd5, DateTimeOffset.UtcNow));
     }
 
     [Fact]
@@ -25,13 +31,13 @@ public sealed class SqliteStateStoreTests : IAsyncLifetime
         var stamp = new LocalFileStamp(@"C:\data\run.raw", 42, 1);
         await _store.SaveAsync(UploadRecord.ForNewFile(stamp, "/_webdav/uploads/run.raw"));
 
-        await _store.SetStateAsync(stamp.Path, TransferState.Uploading);
-        (await _store.GetAsync(stamp.Path))!.Attempts.ShouldBe(1);
+        await _store.SetStateAsync(Key(stamp.Path), TransferState.Uploading);
+        (await _store.GetAsync(Key(stamp.Path)))!.Attempts.ShouldBe(1);
 
         var verifiedAt = DateTimeOffset.UtcNow;
-        await _store.MarkVerifiedAsync(stamp.Path, VerifyMethod.ServerMd5, verifiedAt);
+        await _store.MarkVerifiedAsync(Key(stamp.Path), VerifyMethod.ServerMd5, verifiedAt);
 
-        var row = await _store.GetAsync(stamp.Path);
+        var row = await _store.GetAsync(Key(stamp.Path));
         row!.State.ShouldBe(TransferState.Verified);
         row.VerifyMethod.ShouldBe(VerifyMethod.ServerMd5);
         row.VerifiedUtc!.Value.ToUnixTimeMilliseconds()
@@ -51,7 +57,20 @@ public sealed class SqliteStateStoreTests : IAsyncLifetime
         var renamed = new LocalFileStamp(@"C:\data\RUN.raw", 42, 1);
         await _store.SaveAsync(UploadRecord.ForNewFile(renamed, "/_webdav/uploads/RUN.raw"));
 
-        (await _store.GetAsync(@"C:\data\RUN.raw"))!.LocalPath.ShouldBe(@"C:\data\RUN.raw");
+        // Two rows now, not one, and that is a consequence of widening the key rather than a
+        // decision taken here. The local halves collapse under NOCASE as they always did, but the
+        // destinations differ by case and remote_path is compared exactly, because Panorama is
+        // case-sensitive. So the row for the new spelling is what a lookup finds, and the row for
+        // the old one is left behind.
+        //
+        // Nothing re-uploads: the sweep resolves the destination it would use now and finds the
+        // matching row. What is left is a stale row, visible in the Uploads table as a second
+        // entry for one file. Worth removing on save; not silently, which is why this says so.
+        (await _store.GetAsync(Key(@"C:\data\RUN.raw", "/_webdav/uploads/RUN.raw")))!
+            .LocalPath.ShouldBe(@"C:\data\RUN.raw");
+
+        (await _store.GetAsync(Key(@"C:\data\run.raw")))
+            .ShouldNotBeNull("the row for the pre-rename destination is still there");
     }
 
     // IAsyncLifetime, not IAsyncDisposable: xUnit v2 never calls IAsyncDisposable on a test

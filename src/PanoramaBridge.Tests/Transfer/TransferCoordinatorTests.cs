@@ -14,6 +14,62 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
     private readonly SqliteStateStore _store = SqliteStateStore.InMemory();
     private readonly FakeWebDavClient _server = new();
     private readonly string _local = Directory.CreateTempSubdirectory("pb-engine-").FullName;
+
+    /// <summary>
+    /// The ledger row for a local file at the destination these tests upload to.
+    /// </summary>
+    /// <remarks>
+    /// The ledger is keyed by file and destination together, so a lookup has to name both. Here
+    /// rather than at thirty call sites, and resolved the same way the coordinator resolves it.
+    /// </remarks>
+    /// <summary>The row for a file at a destination the test chose itself.</summary>
+    /// <remarks>
+    /// Some of these tests save a row under a deliberately simple destination rather than the one
+    /// the coordinator would resolve for that path. The ledger is keyed by both halves, so those
+    /// have to be read back under the destination they were written with.
+    /// </remarks>
+    private Task<UploadRecord?> RowAt(string localPath, string encodedDestination) =>
+        _store.GetAsync(new LedgerKey(localPath, encodedDestination));
+
+    private Task<UploadRecord?> RowFor(string localPath, RemotePath? destination = null)
+    {
+        string encoded;
+
+        try
+        {
+            encoded = PathSafety
+                .ResolveDestination(_local, localPath, destination ?? Destination)
+                .ToEncodedString();
+        }
+        catch (PathNotPlaceableException)
+        {
+            // A file the server has nowhere to put -- a semicolon in the name, a path outside the
+            // monitored folder -- never reaches a destination, so the coordinator records its
+            // failure against an empty one. That is the row these tests are asking for, and
+            // resolving a destination to look it up would throw the same exception the row exists
+            // to describe.
+            encoded = string.Empty;
+        }
+
+        return LookUpAsync();
+
+        async Task<UploadRecord?> LookUpAsync()
+        {
+            var atDestination = await _store.GetAsync(new LedgerKey(localPath, encoded));
+
+            if (atDestination is not null || encoded.Length == 0)
+            {
+                return atDestination;
+            }
+
+            // Nothing at that destination. A file the coordinator refused before it could send
+            // anything -- a directory, an unreachable folder -- has its failure recorded against
+            // an empty destination rather than the one it would have had, so that is where the
+            // row is. Checked second so a test asking about a real transfer still gets the real
+            // row and not a failure row that happens to share the path.
+            return await _store.GetAsync(new LedgerKey(localPath, string.Empty));
+        }
+    }
     private readonly List<TransferProgress> _reported = [];
 
     private TransferCoordinator NewCoordinator(
@@ -124,7 +180,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         {
             await RunWithAsync(NewCoordinator(), file);
 
-            var during = await _store.GetAsync(file);
+            var during = await RowFor(file);
             during?.RawCheck.ShouldBeNull(
                 "a file held open for writing must not be given a verdict");
         }
@@ -132,7 +188,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         // The same file, once released, is examined and found short.
         await RunWithAsync(NewCoordinator(), file);
 
-        var after = await _store.GetAsync(file);
+        var after = await RowFor(file);
         after!.RawCheck.ShouldNotBeNullOrEmpty();
         after.State.ShouldBe(TransferState.Conflict);
     }
@@ -156,7 +212,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         // Recorded rather than dropped with a debug line. Returning quietly left any ledger row
         // for the folder sitting wherever it was, to be re-offered and dropped again on every
         // pass, with the only trace in a log nobody opens.
-        var row = await _store.GetAsync(directory);
+        var row = await RowFor(directory);
         row.ShouldNotBeNull();
         row!.State.ShouldBe(TransferState.Failed);
         row.LastError!.ShouldContain("folder as a single archive has been removed");
@@ -224,7 +280,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         _server.Content(Destination.Append("cut-short.raw")).ShouldBeNull(
             "a file proven short must never reach the server");
 
-        var record = await _store.GetAsync(file);
+        var record = await RowFor(file);
         record.ShouldNotBeNull();
         record!.State.ShouldBe(TransferState.Conflict, "and it must be visible, not silently dropped");
         record.RawCheck.ShouldNotBeNullOrEmpty();
@@ -244,7 +300,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         _server.Content(Destination.Append("future.raw")).ShouldNotBeNull(
             "an unrecognized revision is not a reason to hold a file back");
 
-        var record = await _store.GetAsync(file);
+        var record = await RowFor(file);
         record!.RawCheck!.ShouldContain("70", customMessage:
             "and the record must name the revision, so the gap can be closed");
     }
@@ -258,7 +314,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
 
         _server.Content(Destination.Append("notes.txt")).ShouldNotBeNull();
 
-        var record = await _store.GetAsync(file);
+        var record = await RowFor(file);
         record!.RawCheck.ShouldBeNull("nothing was asked of it, so nothing should be claimed");
     }
 
@@ -307,7 +363,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
 
         var sidecar = _server.Text(Destination.Append("sample.raw.md5")).ShouldNotBeNull();
 
-        var record = (await _store.GetAsync(file)).ShouldNotBeNull();
+        var record = (await RowFor(file)).ShouldNotBeNull();
 
         sidecar.ShouldStartWith($"{record.Md5}  sample.raw");
         sidecar.ShouldContain("# acquired  2025-05-19T14:32:10Z");
@@ -342,7 +398,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         summary.Uploaded.ShouldBe(1);
         summary.Failed.ShouldBe(0);
 
-        var record = (await _store.GetAsync(file)).ShouldNotBeNull();
+        var record = (await RowFor(file)).ShouldNotBeNull();
         record.State.ShouldBe(TransferState.Verified);
     }
 
@@ -476,7 +532,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         summary.Uploaded.ShouldBe(1);
         summary.Failed.ShouldBe(0);
 
-        var record = await _store.GetAsync(file);
+        var record = await RowFor(file);
         record.ShouldNotBeNull();
         record!.State.ShouldBe(TransferState.Verified);
         record.VerifyMethod.ShouldBe(VerifyMethod.ServerMd5);
@@ -596,7 +652,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         summary.Skipped.ShouldBe(1);
         _server.UploadCalls.ShouldBe(0);
 
-        var record = await _store.GetAsync(file);
+        var record = await RowFor(file);
         record!.VerifyMethod.ShouldBe(VerifyMethod.ServerMd5);
     }
 
@@ -671,7 +727,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         summary.Failed.ShouldBe(1);
         summary.Uploaded.ShouldBe(0);
 
-        var record = await _store.GetAsync(file);
+        var record = await RowFor(file);
         record!.State.ShouldBe(TransferState.Failed);
         record.LastError.ShouldNotBeNull().ShouldContain("different content");
     }
@@ -685,7 +741,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         // The fake reports no per-file hash either once hashes are withheld.
         var summary = await RunWithAsync(NewCoordinator(), file);
 
-        var record = await _store.GetAsync(file);
+        var record = await RowFor(file);
         record!.VerifyMethod.ShouldNotBe(VerifyMethod.ServerMd5);
         summary.Uploaded.ShouldBe(0);
     }
@@ -700,7 +756,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         summary.Uploaded.ShouldBe(1);
         _server.FileHashCalls.ShouldBe(0);
 
-        var record = await _store.GetAsync(file);
+        var record = await RowFor(file);
         record!.State.ShouldBe(TransferState.Uploaded);
         record.VerifyMethod.ShouldBe(VerifyMethod.None);
 
@@ -720,7 +776,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         summary.Conflicts.ShouldBe(1);
         _server.UploadCalls.ShouldBe(0);
 
-        var record = await _store.GetAsync(file);
+        var record = await RowFor(file);
         record!.State.ShouldBe(TransferState.Conflict);
     }
 
@@ -805,7 +861,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
 
         requeued.ShouldBe(1);
         summary.Uploaded.ShouldBe(1);
-        (await _store.GetAsync(file))!.State.ShouldBe(TransferState.Verified);
+        (await RowFor(file))!.State.ShouldBe(TransferState.Verified);
     }
 
     [Fact]
@@ -820,7 +876,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         var coordinator = NewCoordinator();
 
         (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
-        (await _store.GetAsync(missing))!.State.ShouldBe(TransferState.Failed);
+        (await RowFor(missing))!.State.ShouldBe(TransferState.Failed);
     }
 
     [Fact]
@@ -849,7 +905,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
 
         (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
 
-        var row = await _store.GetAsync(missing);
+        var row = await RowAt(missing, Destination.Append("run.raw").ToEncodedString());
         row!.State.ShouldBe(TransferState.Uploading, "waiting for the share, not gone");
         row.LastError!.ShouldContain("cannot be seen");
     }
@@ -892,7 +948,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
 
         await RunWithAsync(NewCoordinator(), file);
 
-        var row = await _store.GetAsync(file);
+        var row = await RowFor(file);
         row!.State.ShouldBe(TransferState.Failed);
 
         row.LastError.ShouldNotBeNull();
@@ -915,7 +971,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         var file = await WriteRawHeaderAsync("cut-short.raw", formatVersion: 66, padding: 0);
 
         await RunWithAsync(NewCoordinator(), file);
-        (await _store.GetAsync(file))!.ConflictKind.ShouldBe(ConflictKind.LocalFileDamaged);
+        (await RowFor(file))!.ConflictKind.ShouldBe(ConflictKind.LocalFileDamaged);
 
         // Re-copied complete, as somebody would after seeing it flagged -- and then the upload
         // fails for a reason that has nothing to do with the file. That combination is the whole
@@ -928,7 +984,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
 
         await RunWithAsync(NewCoordinator(), repaired);
 
-        var row = await _store.GetAsync(repaired);
+        var row = await RowFor(repaired);
         row!.State.ShouldNotBe(TransferState.Verified, "the upload did fail");
         row.ConflictKind.ShouldBe(ConflictKind.Unknown, "but it is not held as damaged any more");
     }
@@ -949,7 +1005,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
 
         (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
 
-        var row = await _store.GetAsync(gone);
+        var row = await RowAt(gone, Destination.Append("run.raw").ToEncodedString());
         row!.State.ShouldBe(TransferState.Failed);
         row.LastError.ShouldNotBeNull();
     }
@@ -973,7 +1029,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
 
         (await coordinator.RecoverInterruptedAsync()).ShouldBe(0);
 
-        var row = await _store.GetAsync(elsewhere);
+        var row = await RowAt(elsewhere, Destination.Append("run.raw").ToEncodedString());
         row!.State.ShouldBe(TransferState.Uploading, "waiting for that drive, not gone");
 
         // The state is deliberately untouched so it resumes when the drive returns -- but a row
@@ -1019,7 +1075,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
                 "the row has to stay visible while it is held");
         }
 
-        var row = await _store.GetAsync(file);
+        var row = await RowFor(file);
         row!.State.ShouldBe(TransferState.Conflict);
         row.ConflictKind.ShouldBe(ConflictKind.LocalFileDamaged, "the marker survives");
     }
@@ -1051,7 +1107,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
         summary.Failed.ShouldBe(1);
         _server.UploadCalls.ShouldBe(0);
 
-        var row = await _store.GetAsync(folder);
+        var row = await RowAt(folder, Destination.Append("250314_HeLa.d.zip").ToEncodedString());
         row!.State.ShouldBe(TransferState.Failed);
         row.LastError!.ShouldContain("folder as a single archive has been removed");
         Directory.Exists(folder).ShouldBeTrue("the folder itself is untouched");
@@ -1067,7 +1123,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
 
         await RunWithAsync(NewCoordinator(), file);
 
-        var row = await _store.GetAsync(file);
+        var row = await RowFor(file);
         row!.State.ShouldBe(TransferState.Conflict);
         row.ConflictKind.ShouldBe(ConflictKind.LocalFileDamaged);
     }
@@ -1147,7 +1203,7 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
 
         await coordinator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
 
-        (await _store.GetAsync(file))!.State.ShouldBe(TransferState.Verified);
+        (await RowFor(file))!.State.ShouldBe(TransferState.Verified);
     }
 
     [Fact]
@@ -1231,13 +1287,13 @@ public sealed class TransferCoordinatorTests : IAsyncLifetime
 
         summary.Failed.ShouldBe(1);
         _server.UploadCalls.ShouldBe(0);
-        (await _store.GetAsync(file))?.State.ShouldBe(TransferState.Failed);
+        (await RowFor(file))?.State.ShouldBe(TransferState.Failed);
 
         // The message, not just the state. Asserting only Failed let a handler added for a
         // different rejection catch this one too and replace its text with a claim that the file
         // was outside the monitored folder -- false, and it threw away the one instruction that
         // fixes it. The row must still say what the server does and what to do about it.
-        var row = await _store.GetAsync(file);
+        var row = await RowFor(file);
         row!.LastError.ShouldNotBeNull();
         row.LastError!.ShouldContain("semicolon");
         row.LastError.ShouldContain("Rename it before uploading");

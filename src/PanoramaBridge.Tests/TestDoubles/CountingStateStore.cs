@@ -45,14 +45,14 @@ public sealed class CountingStateStore : IStateStore, IAsyncDisposable
     }
 
     /// <inheritdoc />
-    public Task<UploadRecord?> GetAsync(string localPath, CancellationToken cancellationToken = default)
+    public Task<UploadRecord?> GetAsync(LedgerKey key, CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _gets);
-        return _inner.GetAsync(localPath, cancellationToken);
+        return _inner.GetAsync(key, cancellationToken);
     }
 
     /// <inheritdoc />
-    public Task<IReadOnlyDictionary<string, UploadRecord>> GetManyAsync(
+    public Task<IReadOnlyDictionary<string, IReadOnlyList<UploadRecord>>> GetManyAsync(
         IReadOnlyCollection<string> localPaths,
         CancellationToken cancellationToken = default)
     {
@@ -70,26 +70,26 @@ public sealed class CountingStateStore : IStateStore, IAsyncDisposable
 
     /// <inheritdoc />
     public Task SetStateAsync(
-        string localPath,
+        LedgerKey key,
         TransferState state,
         string? lastError = null,
         CancellationToken cancellationToken = default) =>
-        _inner.SetStateAsync(localPath, state, lastError, cancellationToken);
+        _inner.SetStateAsync(key, state, lastError, cancellationToken);
 
     /// <inheritdoc />
     public Task SetErrorAsync(
-        string localPath,
+        LedgerKey key,
         string? error,
         CancellationToken cancellationToken = default) =>
-        _inner.SetErrorAsync(localPath, error, cancellationToken);
+        _inner.SetErrorAsync(key, error, cancellationToken);
 
     /// <inheritdoc />
     public Task MarkVerifiedAsync(
-        string localPath,
+        LedgerKey key,
         VerifyMethod method,
         DateTimeOffset verifiedUtc,
         CancellationToken cancellationToken = default) =>
-        _inner.MarkVerifiedAsync(localPath, method, verifiedUtc, cancellationToken);
+        _inner.MarkVerifiedAsync(key, method, verifiedUtc, cancellationToken);
 
     /// <inheritdoc />
     public Task<UploadRecord?> FindByContentAsync(

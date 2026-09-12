@@ -236,7 +236,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 // nothing left to do about it either way.
                 await _store
                     .SetStateAsync(
-                        record.LocalPath,
+                        record.Key,
                         TransferState.Failed,
                         "The local file no longer exists.",
                         cancellationToken)
@@ -438,7 +438,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         var encoded = destination.ToEncodedString();
 
-        var record = await _store.GetAsync(localPath, cancellationToken).ConfigureAwait(false)
+        var record = await _store.GetAsync(new LedgerKey(localPath, encoded), cancellationToken).ConfigureAwait(false)
             ?? UploadRecord.ForNewFile(stamp, encoded);
 
         // The same gate the sweep applies, applied again here because this is where every route
@@ -663,7 +663,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
         var encoded = record.RemotePath;
 
         await _store
-            .SetStateAsync(localPath, TransferState.Uploading, null, cancellationToken)
+            .SetStateAsync(new LedgerKey(localPath, encoded), TransferState.Uploading, null, cancellationToken)
             .ConfigureAwait(false);
 
         var sending = stamp.Length;
@@ -727,7 +727,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
         {
             await _store
                 .SetStateAsync(
-                    localPath,
+                    new LedgerKey(localPath, encoded),
                     TransferState.Superseded,
                     "The file changed while it was being uploaded.",
                     cancellationToken)
@@ -776,7 +776,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 "The server did not report a hash for the uploaded file, so it could not be verified.";
 
             await _store
-                .SetStateAsync(localPath, TransferState.Failed, Message, cancellationToken)
+                .SetStateAsync(new LedgerKey(localPath, encoded), TransferState.Failed, Message, cancellationToken)
                 .ConfigureAwait(false);
 
             Report(localPath, encoded, TransferState.Failed, "Not verified",
@@ -792,7 +792,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 + $"local {result.Hashes.Md5}).";
 
             await _store
-                .SetStateAsync(localPath, TransferState.Failed, message, cancellationToken)
+                .SetStateAsync(new LedgerKey(localPath, encoded), TransferState.Failed, message, cancellationToken)
                 .ConfigureAwait(false);
 
             _log.LogError("Verification of {Path} failed: {Message}", localPath, message);
@@ -805,7 +805,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
         Interlocked.Increment(ref _uploaded);
 
         await _store
-            .MarkVerifiedAsync(localPath, VerifyMethod.ServerMd5, DateTimeOffset.UtcNow, cancellationToken)
+            .MarkVerifiedAsync(new LedgerKey(localPath, encoded), VerifyMethod.ServerMd5, DateTimeOffset.UtcNow, cancellationToken)
             .ConfigureAwait(false);
 
         await WriteSidecarAsync(destination, stamp, result, acquired, cancellationToken)
@@ -955,7 +955,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
             // attempts from a snapshot taken before the workers started, so a worker's write
             // could be undone by this one.
             await _store
-                .SetErrorAsync(record.LocalPath, error, CancellationToken.None)
+                .SetErrorAsync(record.Key, error, CancellationToken.None)
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -964,12 +964,26 @@ public sealed class TransferCoordinator : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Records a failure against a file that could not be transferred at all.
+    /// </summary>
+    /// <remarks>
+    /// Every route here is a file that is not transferable by anyone -- a directory, a name the
+    /// server would mangle, an unexpected fault -- rather than one destination refusing it. So it
+    /// marks every row the file has, which under one configuration is the single row it has
+    /// always marked, and under several is each of them saying the same true thing.
+    /// </remarks>
     private async Task SafeSetStateAsync(string localPath, TransferState state, string? error)
     {
         try
         {
-            var existing = await _store.GetAsync(localPath, CancellationToken.None)
+            var rows = await _store
+                .GetManyAsync([localPath], CancellationToken.None)
                 .ConfigureAwait(false);
+
+            var existing = rows.TryGetValue(localPath, out var found) && found.Count > 0
+                ? found
+                : null;
 
             if (existing is null)
             {
@@ -999,8 +1013,11 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 return;
             }
 
-            await _store.SetStateAsync(localPath, state, error, CancellationToken.None)
-                .ConfigureAwait(false);
+            foreach (var row in existing)
+            {
+                await _store.SetStateAsync(row.Key, state, error, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
         }
         catch (Exception ex)
         {

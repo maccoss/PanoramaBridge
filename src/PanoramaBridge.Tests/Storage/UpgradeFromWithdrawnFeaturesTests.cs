@@ -76,7 +76,7 @@ public sealed class UpgradeFromWithdrawnFeaturesTests : IDisposable
 
         await using var store = new SqliteStateStore(path);
 
-        var row = await store.GetAsync(@"C:\data\run.raw");
+        var row = await store.GetAsync(new LedgerKey(@"C:\data\run.raw", "/_webdav/uploads/run.raw"));
         row!.State.ShouldBe(TransferState.Conflict);
         row.LastError!.ShouldContain(expected);
     }
@@ -115,7 +115,7 @@ public sealed class UpgradeFromWithdrawnFeaturesTests : IDisposable
 
         await using var store = new SqliteStateStore(path);
 
-        var row = await store.GetAsync(@"C:\data\run.raw");
+        var row = await store.GetAsync(new LedgerKey(@"C:\data\run.raw", "/_webdav/uploads/run.raw"));
         row!.State.ShouldBe(TransferState.Conflict);
         row.LastError!.ShouldContain(expected);
 
@@ -152,10 +152,12 @@ public sealed class UpgradeFromWithdrawnFeaturesTests : IDisposable
         // First open converts; the row is then answered by policy and moves on.
         await using (var store = new SqliteStateStore(path))
         {
-            (await store.GetAsync(@"C:\data\run.raw"))!.State.ShouldBe(TransferState.Conflict);
+            (await store.GetAsync(new LedgerKey(@"C:\data\run.raw", "/_webdav/uploads/run.raw")))!.State.ShouldBe(TransferState.Conflict);
 
             await store.SetStateAsync(
-                @"C:\data\run.raw", TransferState.Skipped, "Left alone by policy.");
+                new LedgerKey(@"C:\data\run.raw", "/_webdav/uploads/run.raw"),
+                TransferState.Skipped,
+                "Left alone by policy.");
         }
 
         SqliteConnection.ClearAllPools();
@@ -163,7 +165,7 @@ public sealed class UpgradeFromWithdrawnFeaturesTests : IDisposable
         // Second open must leave the answered row alone.
         await using (var reopened = new SqliteStateStore(path))
         {
-            var row = await reopened.GetAsync(@"C:\data\run.raw");
+            var row = await reopened.GetAsync(new LedgerKey(@"C:\data\run.raw", "/_webdav/uploads/run.raw"));
             row!.State.ShouldBe(TransferState.Skipped);
             row.LastError.ShouldBe("Left alone by policy.");
         }
