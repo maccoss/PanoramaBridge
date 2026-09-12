@@ -79,6 +79,16 @@
 
             <DataGrid.Columns>
                 <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="2*" />
+
+                <!--
+                    Which configuration a file belongs to. One table across all of them was the
+                    lab's own request, and without this column a row is a file moving with
+                    nothing to say which instrument it came from - and since two configurations
+                    may watch one folder, the file name cannot answer that either.
+                -->
+                <DataGridTextColumn Header="Configuration" Binding="{Binding Configuration}"
+                                    Width="140" />
+
                 <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="130" />
 
                 <DataGridTemplateColumn Header="Progress" Width="150">

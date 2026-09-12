@@ -22,6 +22,12 @@ namespace PanoramaBridge.Core.Transfer;
 /// <param name="BytesPerSecond">Recent throughput.</param>
 /// <param name="Verification">How the remote copy has been checked, if at all.</param>
 /// <param name="Message">Extra detail, such as why something was skipped or failed.</param>
+/// <param name="Configuration">
+/// Which configuration is moving it, for the column the transfer table shows. Empty when nothing
+/// tagged it, which is what a one-off scan started before configurations existed looks like.
+/// Attached as the report leaves the runner rather than worked out from the paths, because the
+/// runner knows and a lookup would only be guessing at what it already knew.
+/// </param>
 public sealed record TransferProgress(
     string LocalPath,
     string RemotePath,
@@ -31,7 +37,8 @@ public sealed record TransferProgress(
     long TotalBytes,
     double BytesPerSecond = 0,
     VerifyMethod Verification = VerifyMethod.None,
-    string? Message = null)
+    string? Message = null,
+    string Configuration = "")
 {
     /// <summary>Completion as a fraction, or null when the size is unknown.</summary>
     public double? Fraction => TotalBytes > 0

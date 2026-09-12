@@ -19,6 +19,19 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel>
 
+            <!--
+                Which configuration these settings belong to. Without it the tab is a page of
+                boxes with nothing to say whose they are, and with several configurations that is
+                how somebody edits the wrong instrument's folder.
+            -->
+            <TextBlock Margin="0,0,0,8" FontWeight="SemiBold"
+                       Text="{Binding EditingName, StringFormat='Editing: {0}'}" />
+
+            <GroupBox Header="Name"
+                      ToolTip="What this configuration is called on the Configurations tab and in the Transfer Status and Uploads columns. Leave it empty to be shown by the folder being watched.">
+                <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+            </GroupBox>
+
             <GroupBox Header="Directory to monitor">
                 <StackPanel>
                     <DockPanel Margin="{StaticResource RowMargin}" Style="{StaticResource HelpRow}"
@@ -151,24 +164,6 @@
                     <RadioButton GroupName="Conflict"
                                  Content="Replace the copy on the server"
                                  IsChecked="{Binding ConflictPolicy, Converter={StaticResource EnumMatch}, ConverterParameter=Overwrite}" />
-                </StackPanel>
-            </GroupBox>
-
-            <!--
-                Neither of these is a remote setting, and both sat under Remote Settings /
-                Advanced next to a trusted-root certificate path because there was nowhere else.
-                They describe how the program behaves on this machine, which is what this tab is,
-                so they live here rather than beside a TLS option they have nothing to do with.
-            -->
-            <GroupBox Header="This application">
-                <StackPanel>
-                    <CheckBox Content="Keep running in the notification area when closed"
-                              Margin="{StaticResource RowMargin}"
-                              IsChecked="{Binding MinimizeToTray}"
-                              ToolTip="Closing the window leaves PanoramaBridge running and, if it was monitoring, still watching. Click its icon to bring the window back, or use Exit on the icon's menu to stop it." />
-
-                    <CheckBox Content="Verbose logging" IsChecked="{Binding VerboseLogging}"
-                              ToolTip="Records every decision rather than the important ones. Useful when reporting a problem; it takes effect immediately, without a restart." />
                 </StackPanel>
             </GroupBox>
 

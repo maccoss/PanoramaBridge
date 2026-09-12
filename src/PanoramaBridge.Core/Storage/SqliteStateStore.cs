@@ -22,7 +22,7 @@ namespace PanoramaBridge.Core.Storage;
 /// </remarks>
 public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposable
 {
-    private const int CurrentSchemaVersion = 5;
+    private const int CurrentSchemaVersion = 6;
 
     /// <summary>
     /// The state value v26.3.0—v26.4.6 wrote for "a person chose to keep the copy on the
@@ -71,15 +71,27 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
 
     /// <inheritdoc />
     public async Task<UploadRecord?> GetAsync(
-        string localPath,
+        LedgerKey key,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(key.LocalPath);
+
+        // Not ThrowIfNullOrWhiteSpace on the destination: an empty one is a real value here. A
+        // file that failed before a destination could be resolved -- a name the server would
+        // mangle, a path outside the monitored folder -- has its failure recorded against an
+        // empty destination, and that row has to be findable or the failure is invisible.
+        ArgumentNullException.ThrowIfNull(key.RemotePath);
 
         await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"{SelectColumns} FROM uploads WHERE local_path = $path LIMIT 1;";
-        command.Parameters.AddWithValue("$path", localPath);
+
+        // Both halves, and no LIMIT needed: the pair is the primary key, so at most one row can
+        // match. LIMIT 1 on the path alone is what a build from before multiple configurations
+        // does, and why such a build picks an arbitrary destination row.
+        command.CommandText =
+            $"{SelectColumns} FROM uploads WHERE local_path = $path AND remote_path = $remote;";
+        command.Parameters.AddWithValue("$path", key.LocalPath);
+        command.Parameters.AddWithValue("$remote", key.RemotePath);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         return await reader.ReadAsync(cancellationToken).ConfigureAwait(false) ? Read(reader) : null;
@@ -94,8 +106,24 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         // cannot still carry a stale value a rolled-back build would act on. conflict_kind is
         // live again: it records why a row is held, which the sweep needs to know before
         // releasing it under a policy.
+        //
+        // The DELETE clears a row left behind by a rename that changed only case. local_path
+        // collapses case-insensitively but remote_path does not, so renaming run.raw to RUN.raw
+        // leaves the old destination's row beside the new one. Nothing re-uploads -- the sweep
+        // asks about the destination it would use now -- but the Uploads table would show one
+        // file twice, and the second entry would look like a transfer nobody could account for.
+        //
+        // The condition is deliberately narrow: same local file, a remote path that differs from
+        // this one exactly, yet matches it ignoring case. A genuinely different destination fails
+        // that second test and is left alone, which is what makes two configurations sharing a
+        // folder possible at all.
         await ExecuteWriteAsync(
             """
+            DELETE FROM uploads
+            WHERE local_path = $path
+              AND remote_path <> $remote
+              AND remote_path = $remote COLLATE NOCASE;
+
             INSERT INTO uploads
               (local_path, remote_path, size, mtime_utc, md5, sha256,
                state, verify_method, verified_utc, attempts, last_error, is_dataset,
@@ -103,7 +131,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             VALUES
               ($path, $remote, $size, $mtime, $md5, $sha256,
                $state, $verify, $verified, $attempts, $error, 0, $rawcheck, $kind)
-            ON CONFLICT(local_path) DO UPDATE SET
+            ON CONFLICT(local_path, remote_path) DO UPDATE SET
               local_path = $path, remote_path = $remote, size = $size, mtime_utc = $mtime,
               md5 = $md5, sha256 = $sha256, state = $state, verify_method = $verify,
               verified_utc = $verified, attempts = $attempts, last_error = $error,
@@ -135,12 +163,12 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     /// <inheritdoc />
     /// <inheritdoc />
     public async Task SetStateAsync(
-        string localPath,
+        LedgerKey key,
         TransferState state,
         string? lastError = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(key.LocalPath);
 
         // Attempts increments only when an upload actually starts, so the count reflects
         // transfers tried rather than state changes made.
@@ -150,46 +178,48 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                SET state = $state,
                    last_error = $error,
                    attempts = attempts + CASE WHEN $state = $uploading THEN 1 ELSE 0 END
-             WHERE local_path = $path;
+             WHERE local_path = $path AND remote_path = $remote;
             """,
             command =>
             {
-                command.Parameters.AddWithValue("$path", localPath);
+                command.Parameters.AddWithValue("$path", key.LocalPath);
+                command.Parameters.AddWithValue("$remote", key.RemotePath);
                 command.Parameters.AddWithValue("$state", (int)state);
                 command.Parameters.AddWithValue("$uploading", (int)TransferState.Uploading);
                 command.Parameters.AddWithValue("$error", lastError ?? (object)DBNull.Value);
             },
             cancellationToken).ConfigureAwait(false);
 
-        EnsureExistingRow(changed, localPath);
+        EnsureExistingRow(changed, key);
     }
 
     /// <inheritdoc />
     public async Task MarkVerifiedAsync(
-        string localPath,
+        LedgerKey key,
         VerifyMethod method,
         DateTimeOffset verifiedUtc,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(key.LocalPath);
 
         var changed = await ExecuteWriteAsync(
             """
             UPDATE uploads
                SET state = $state, verify_method = $verify, verified_utc = $verified,
                    last_error = NULL
-             WHERE local_path = $path;
+             WHERE local_path = $path AND remote_path = $remote;
             """,
             command =>
             {
-                command.Parameters.AddWithValue("$path", localPath);
+                command.Parameters.AddWithValue("$path", key.LocalPath);
+                command.Parameters.AddWithValue("$remote", key.RemotePath);
                 command.Parameters.AddWithValue("$state", (int)TransferState.Verified);
                 command.Parameters.AddWithValue("$verify", (int)method);
                 command.Parameters.AddWithValue("$verified", verifiedUtc.ToUnixTimeMilliseconds());
             },
             cancellationToken).ConfigureAwait(false);
 
-        EnsureExistingRow(changed, localPath);
+        EnsureExistingRow(changed, key);
     }
 
     /// <summary>
@@ -202,19 +232,24 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
     private const int LookupBatchSize = 500;
 
     /// <inheritdoc />
-    public async Task<IReadOnlyDictionary<string, UploadRecord>> GetManyAsync(
+    public async Task<IReadOnlyDictionary<string, IReadOnlyList<UploadRecord>>> GetManyAsync(
         IReadOnlyCollection<string> localPaths,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(localPaths);
 
-        // OrdinalIgnoreCase to match the column's NOCASE collation, so a caller that looks up
-        // the path it passed in finds the row whatever case the ledger recorded.
-        var found = new Dictionary<string, UploadRecord>(StringComparer.OrdinalIgnoreCase);
+        // OrdinalIgnoreCase to match the column NOCASE collation, so a caller that looks up the
+        // path it passed in finds the row whatever case the ledger recorded.
+        //
+        // A list per path, because a file sent to two destinations by two configurations has a
+        // row for each. Still one statement per batch: the query is unchanged and matches on the
+        // key leading column, so the extra rows are only the other destinations -- bounded by how
+        // many configurations watch the folder, not by how many files are in it.
+        var found = new Dictionary<string, List<UploadRecord>>(StringComparer.OrdinalIgnoreCase);
 
         if (localPaths.Count == 0)
         {
-            return found;
+            return Freeze(found);
         }
 
         await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -238,11 +273,34 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
                 var record = Read(reader);
-                found[record.LocalPath] = record;
+
+                if (!found.TryGetValue(record.LocalPath, out var rows))
+                {
+                    // One, nearly always: a second entry needs two configurations watching the
+                    // same folder. Sized for the common case rather than the possible one.
+                    rows = new List<UploadRecord>(1);
+                    found[record.LocalPath] = rows;
+                }
+
+                rows.Add(record);
             }
         }
 
-        return found;
+        return Freeze(found);
+
+        static IReadOnlyDictionary<string, IReadOnlyList<UploadRecord>> Freeze(
+            Dictionary<string, List<UploadRecord>> rows)
+        {
+            var frozen = new Dictionary<string, IReadOnlyList<UploadRecord>>(
+                rows.Count, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var pair in rows)
+            {
+                frozen[pair.Key] = pair.Value;
+            }
+
+            return frozen;
+        }
     }
 
     /// <inheritdoc />
@@ -277,12 +335,16 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
 
     /// <inheritdoc />
     public Task SetErrorAsync(
-        string localPath, string? error, CancellationToken cancellationToken = default) =>
+        LedgerKey key, string? error, CancellationToken cancellationToken = default) =>
         ExecuteWriteAsync(
-            "UPDATE uploads SET last_error = $error WHERE local_path = $path;",
+            """
+            UPDATE uploads SET last_error = $error
+             WHERE local_path = $path AND remote_path = $remote;
+            """,
             command =>
             {
-                command.Parameters.AddWithValue("$path", localPath);
+                command.Parameters.AddWithValue("$path", key.LocalPath);
+                command.Parameters.AddWithValue("$remote", key.RemotePath);
                 command.Parameters.AddWithValue("$error", (object?)error ?? DBNull.Value);
             },
             cancellationToken);
@@ -474,12 +536,15 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         CancellationToken cancellationToken) =>
         ExecuteWriteCountingAsync(sql, bind, cancellationToken);
 
-    private static void EnsureExistingRow(int changed, string localPath)
+    private static void EnsureExistingRow(int changed, LedgerKey key)
     {
         if (changed == 0)
         {
+            // Names the destination as well as the path. A row can exist for this file and still
+            // not be this one -- another configuration sending it somewhere else -- and naming
+            // only the path sends the reader looking for a row that is right there.
             throw new InvalidOperationException(
-                $"Cannot transition an unknown upload record: {localPath}. Save the row first.");
+                $"Cannot transition an unknown upload record: {key}. Save the row first.");
         }
     }
 
@@ -495,7 +560,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             PRAGMA foreign_keys = ON;
 
             CREATE TABLE IF NOT EXISTS uploads (
-              local_path    TEXT    PRIMARY KEY COLLATE NOCASE,
+              local_path    TEXT    NOT NULL COLLATE NOCASE,
               remote_path   TEXT    NOT NULL,
               size          INTEGER NOT NULL,
               mtime_utc     INTEGER NOT NULL,
@@ -510,7 +575,14 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
               raw_check     TEXT,
               resolution    INTEGER NOT NULL DEFAULT 0,
               rename_to     TEXT,
-              conflict_kind INTEGER NOT NULL DEFAULT 0
+              conflict_kind INTEGER NOT NULL DEFAULT 0,
+
+              -- Both halves, not the local path alone. Two configurations may watch one folder
+              -- and send it to different projects; keyed by path alone they overwrite each
+              -- other row, and each re-uploads every shared file on every sweep, to both
+              -- destinations, for ever. The collations differ on purpose and match the systems
+              -- they name: Windows ignores case in a path, a WebDAV server does not.
+              PRIMARY KEY (local_path, remote_path)
             );
 
             CREATE INDEX IF NOT EXISTS ix_uploads_state   ON uploads(state);
@@ -539,11 +611,24 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             // an older build keeps its old shape and a new column never arrives. Until now
             // nothing needed one, and the version stamp was recorded without ever being acted
             // on. Migrations are additive and each is guarded, so running twice is harmless.
+            // In one transaction with the stamp, which schema 6 made necessary. Every earlier
+            // migration was a single ALTER TABLE ADD COLUMN -- atomic on its own, and harmless to
+            // repeat. Schema 6 rebuilds the uploads table, and this database is the record of
+            // what has already been uploaded: a crash between the copy and the rename, or between
+            // the rename and the stamp, is the difference between an instrument carrying on and
+            // one re-sending every acquisition it has.
+            using var migration = _keepAlive.BeginTransaction();
+            command.Transaction = migration;
+
             Migrate(command, from: version);
 
             command.CommandText = "INSERT INTO schema_version (version) VALUES ($v);";
             command.Parameters.AddWithValue("$v", CurrentSchemaVersion);
             command.ExecuteNonQuery();
+            command.Parameters.Clear();
+
+            migration.Commit();
+            command.Transaction = null;
         }
 
         // After Migrate, which is where rename_to is added: the schema block above runs before
@@ -630,9 +715,21 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
 
     /// <summary>Brings an existing database up to the current shape.</summary>
     /// <remarks>
-    /// Additive only: no column is dropped or retyped, so a database stays readable by the build
+    /// <para>
+    /// Additive in columns: none is dropped or retyped, so a database stays readable by the build
     /// that wrote it. That matters because an update can be rolled back, and a ledger the previous
     /// version cannot open would take the upload history with it.
+    /// </para>
+    /// <para>
+    /// Schema 6 widens the primary key, which is the first change here that is not purely
+    /// additive, so it is worth being exact about what rolling back now means. Every column
+    /// survives and an older build opens the ledger and reads it normally. What it loses is the
+    /// ability to tell two destinations apart: its queries end in <c>WHERE local_path = $path
+    /// LIMIT 1</c>, so where a newer build recorded one file sent to two projects, the older one
+    /// sees whichever row SQLite hands back and may re-send the other. Nothing is corrupted and
+    /// no history is lost. A single-configuration ledger -- every ledger written before this --
+    /// has one row per path either way and behaves identically.
+    /// </para>
     /// </remarks>
     private static void Migrate(SqliteCommand command, int from)
     {
@@ -667,6 +764,110 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
             command.ExecuteNonQuery();
         }
 
+        if (from < 6 && !IsKeyedByDestination(command))
+        {
+            RebuildKeyedByDestination(command);
+        }
+    }
+
+    /// <summary>
+    /// Whether the uploads table is already keyed by local path and destination together.
+    /// </summary>
+    /// <remarks>
+    /// Asked of the table rather than inferred from the version stamp, for the reason the
+    /// conversion elsewhere in this file already learned the hard way: the stamp says what a build
+    /// intended, and rollback means a stamp can be ahead of the shape. The same guard every other
+    /// migration here uses, one level up -- ColumnExists asks whether the column is there, this
+    /// asks whether it is in the key.
+    /// </remarks>
+    private static bool IsKeyedByDestination(SqliteCommand command)
+    {
+        command.CommandText = "PRAGMA table_info(uploads);";
+        using var reader = command.ExecuteReader();
+
+        while (reader.Read())
+        {
+            // Columns: cid, name, type, notnull, dflt_value, pk. pk is 0 outside the key and the
+            // column 1-based position within it otherwise.
+            if (string.Equals(reader.GetString(1), "remote_path", StringComparison.OrdinalIgnoreCase))
+            {
+                return reader.GetInt32(5) > 0;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Rebuilds the uploads table with <c>(local_path, remote_path)</c> as its primary key.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// SQLite cannot alter a primary key, so this is the documented create-copy-drop-rename rather
+    /// than an ALTER. The caller runs it inside a transaction, which is what makes it safe: a
+    /// crash at any point rolls back to the table that was there before, and the version stamp is
+    /// written in the same transaction so it can never claim a rebuild that did not finish.
+    /// </para>
+    /// <para>
+    /// The copy cannot violate the new key. The old key was local_path alone, so each path appears
+    /// once and every pair is unique by construction -- there is nothing to deduplicate, and a
+    /// conflict clause would only hide it if that reasoning were ever wrong.
+    /// </para>
+    /// <para>
+    /// The indexes are recreated because dropping a table drops them with it. Not
+    /// <c>ix_uploads_renamed</c>, which Initialize creates after this returns -- it is conditional
+    /// on a column that may only just have been added.
+    /// </para>
+    /// </remarks>
+    private static void RebuildKeyedByDestination(SqliteCommand command)
+    {
+        command.CommandText =
+            """
+            -- A leftover from an attempt that did not finish. The transaction around this makes
+            -- one impossible from this build, but a ledger touched by a build without it would
+            -- otherwise fail to open for ever: CREATE TABLE would collide, every launch, with no
+            -- way out but deleting the upload history. Nothing else is ever called this.
+            DROP TABLE IF EXISTS uploads_rekeyed;
+
+            CREATE TABLE uploads_rekeyed (
+              local_path    TEXT    NOT NULL COLLATE NOCASE,
+              remote_path   TEXT    NOT NULL,
+              size          INTEGER NOT NULL,
+              mtime_utc     INTEGER NOT NULL,
+              md5           TEXT,
+              sha256        TEXT,
+              state         INTEGER NOT NULL,
+              verify_method INTEGER NOT NULL DEFAULT 0,
+              verified_utc  INTEGER,
+              attempts      INTEGER NOT NULL DEFAULT 0,
+              last_error    TEXT,
+              is_dataset    INTEGER NOT NULL DEFAULT 0,
+              raw_check     TEXT,
+              resolution    INTEGER NOT NULL DEFAULT 0,
+              rename_to     TEXT,
+              conflict_kind INTEGER NOT NULL DEFAULT 0,
+              PRIMARY KEY (local_path, remote_path)
+            );
+
+            INSERT INTO uploads_rekeyed (
+              local_path, remote_path, size, mtime_utc, md5, sha256, state, verify_method,
+              verified_utc, attempts, last_error, is_dataset, raw_check, resolution, rename_to,
+              conflict_kind)
+            SELECT
+              local_path, remote_path, size, mtime_utc, md5, sha256, state, verify_method,
+              verified_utc, attempts, last_error, is_dataset, raw_check, resolution, rename_to,
+              conflict_kind
+            FROM uploads;
+
+            DROP TABLE uploads;
+            ALTER TABLE uploads_rekeyed RENAME TO uploads;
+
+            CREATE INDEX IF NOT EXISTS ix_uploads_state   ON uploads(state);
+            CREATE INDEX IF NOT EXISTS ix_uploads_remote  ON uploads(remote_path);
+            CREATE INDEX IF NOT EXISTS ix_uploads_content ON uploads(size, md5);
+            """;
+
+        command.ExecuteNonQuery();
     }
 
     private static bool ColumnExists(SqliteCommand command, string table, string column)

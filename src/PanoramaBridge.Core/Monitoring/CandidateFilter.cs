@@ -30,9 +30,9 @@ public sealed class CandidateFilter
     /// </param>
     /// <param name="exclusions">
     /// Extensions the companion walk must not look past, with leading dots. Null takes
-    /// <see cref="AppSettings.DefaultExcludedExtensions"/>, so a caller that has never heard of
-    /// the setting still gets the safe behavior; an empty list means excluding nothing, which is
-    /// how somebody who wants every companion asks for it.
+    /// <see cref="MonitoringConfiguration.DefaultExcludedExtensions"/>, so a caller that has never
+    /// heard of the setting still gets the safe behavior; an empty list means excluding nothing,
+    /// which is how somebody who wants every companion asks for it.
     /// <para>
     /// This list only narrows the companion walk. It is not where a rule that protects the
     /// application belongs, because a user can empty it -- see <see cref="IsWorkingFile"/>.
@@ -43,7 +43,7 @@ public sealed class CandidateFilter
         ArgumentNullException.ThrowIfNull(extensions);
 
         _extensions = extensions.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        _exclusions = (exclusions ?? AppSettings.DefaultExcludedExtensions)
+        _exclusions = (exclusions ?? MonitoringConfiguration.DefaultExcludedExtensions)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 

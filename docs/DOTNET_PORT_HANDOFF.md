@@ -527,6 +527,46 @@ These measurements deliberately exclude the ledger lookup, because a filter matc
 used so that no credential was needed. That lookup is one indexed SQLite statement per five
 hundred files, asserted in `ReconciliationScannerTests`.
 
+> The filter trick was how a credential was avoided; `pbctl watch --no-upload` is how it is
+> avoided now, and it contacts no server whatever the filter matches. `--for MINUTES` ends the
+> run and prints the report without anyone pressing Ctrl+C, so a measurement can be repeated
+> exactly. Both arrived with the multiple-configuration work below.
+
+### What several configurations cost
+
+The question the feature had to answer before it could ship: each configuration gets its own
+watcher and its own sweep timer, so does the idle cost multiply?
+
+Same machine, five minutes, **every minute** again, with 500 files in each folder so the sweep is
+doing real work rather than measuring an empty walk:
+
+```bash
+pbctl watch <dir> --also <dir> ... --no-upload --ext .raw --every 1 --for 5
+```
+
+| Folders | Files swept per minute | Processor | Per folder | Working set |
+|---|---|---|---|---|
+| 1 | 500 | 1.1 s = **0.359% of one core** | 0.359% | 52.9 MB |
+| 3 | 1,500 | 2.7 s = **0.885%** | 0.295% | 59.5 MB |
+| 8 | 4,000 | 7.6 s = **2.547%** | 0.318% | 66.3 MB |
+
+**The per-folder figure is flat.** The cost tracks how many files are swept, not how many
+configurations there are — eight folders cost about what one folder with eight times the files
+would. A watcher and a sweep timer, sitting there, cost nothing measurable on their own: eight
+folders with a filter matching nothing came in at 0.061% against one folder's 0.104%, which is to
+say both were below the resolution of the measurement and neither was distinguishable from idle.
+
+And this is at a one-minute interval. At the default fifteen it is **0.17% of one core for eight
+configurations watching four thousand files**, which is back at idle.
+
+Memory is the one thing that does grow: roughly 1.7 MB per configuration, from its own connection
+pool and engine. Eight configurations is about 13 MB over one.
+
+So the answer to §"What could make this not worth doing" in
+[`MULTIPLE_CONFIGURATIONS.md`](MULTIPLE_CONFIGURATIONS.md) is that it is worth doing. The cost to
+watch for is a configuration pointed at something enormous — the guidance not to point this at
+the root of a file server applies per configuration, and now there can be eight of them.
+
 Against the live share, the SMB suite also reports a sweep of a 25-file folder at 21 ms cold and
 8 ms warm, and confirms that this server does deliver change notifications — three per file, as
 before.

@@ -1,0 +1,75 @@
+<UserControl x:Class="PanoramaBridge.App.Views.ApplicationView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PanoramaBridge.App.ViewModels"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:SettingsViewModel}">
+
+    <!--
+        Everything here describes this computer rather than any one folder-to-destination
+        pairing, which is why it is a tab of its own rather than a group on Local Monitoring or
+        Remote Settings. Those two now edit whichever configuration is selected, so a setting
+        shown beside them reads as belonging to that configuration, and a screen that says a
+        machine-wide setting is per-configuration is a screen that lies.
+    -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="4">
+
+            <GroupBox Header="Transfers">
+                <StackPanel>
+                    <!--
+                        ConcurrencyAdvice stays on screen rather than moving into a tooltip: it
+                        changes as the slider moves, and advice you have to stop and hover for is
+                        advice you get after choosing rather than while choosing.
+                    -->
+                    <Grid Margin="{StaticResource RowMargin}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="180" />
+                            <ColumnDefinition Width="40" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}"
+                                   Text="Files at once" />
+                        <Slider Grid.Column="1" Minimum="1" Maximum="8" TickFrequency="1"
+                                IsSnapToTickEnabled="True" VerticalAlignment="Center"
+                                Value="{Binding MaxConcurrentTransfers}"
+                                ToolTip="Shared across every configuration, not applied to each one. The limit describes this disk and this network link, so five configurations still move this many files at once rather than five times as many." />
+                        <TextBlock Grid.Column="2" Style="{StaticResource FieldValue}"
+                                   Text="{Binding MaxConcurrentTransfers}" />
+                        <TextBlock Grid.Column="3" Style="{StaticResource Hint}" Margin="12,0,0,0"
+                                   Text="{Binding ConcurrencyAdvice}" />
+                    </Grid>
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="This application">
+                <StackPanel>
+                    <CheckBox Content="Keep running in the notification area when closed"
+                              Margin="{StaticResource RowMargin}"
+                              IsChecked="{Binding MinimizeToTray}"
+                              ToolTip="Closing the window leaves PanoramaBridge running and, if it was monitoring, still watching. Click its icon to bring the window back, or use Exit on the icon's menu to stop it." />
+
+                    <CheckBox Content="Verbose logging" IsChecked="{Binding VerboseLogging}"
+                              ToolTip="Records every decision rather than the important ones. Useful when reporting a problem; it takes effect immediately, without a restart." />
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="Advanced"
+                      ToolTip="Optional additional root certificate, trusted in addition to the ones Windows already trusts. One certificate for the whole machine: a proxy that inspects TLS intercepts everything leaving it, whichever server a configuration talks to.">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,4"
+                               Text="Additional trusted root certificate" />
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="Browse..." Margin="8,0,0,0"
+                                Command="{Binding BrowseCertificateCommand}" />
+                        <TextBox Text="{Binding TrustedRootCertificatePath, UpdateSourceTrigger=PropertyChanged}" />
+                    </DockPanel>
+                </StackPanel>
+            </GroupBox>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

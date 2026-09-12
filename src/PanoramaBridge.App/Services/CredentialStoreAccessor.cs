@@ -24,11 +24,11 @@ public sealed class CredentialStoreAccessor : ICredentialStoreAccessor
     }
 
     /// <inheritdoc />
-    public void Remember(string serverUrl, string userName, string secret)
+    public void Remember(string serverUrl, string userName, string secret, string account = "")
     {
         try
         {
-            _store.Write(serverUrl, new StoredCredential(userName, secret));
+            _store.Write(serverUrl, new StoredCredential(userName, secret), account);
 
             // Note what was stored, never the secret itself.
             _log.LogInformation("Stored the credential for {Server} as {User}.", serverUrl, userName);
@@ -40,11 +40,11 @@ public sealed class CredentialStoreAccessor : ICredentialStoreAccessor
     }
 
     /// <inheritdoc />
-    public void Forget(string serverUrl)
+    public void Forget(string serverUrl, string account = "")
     {
         try
         {
-            _store.Delete(serverUrl);
+            _store.Delete(serverUrl, account);
         }
         catch (Exception ex)
         {

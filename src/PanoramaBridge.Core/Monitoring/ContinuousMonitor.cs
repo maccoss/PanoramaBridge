@@ -38,27 +38,27 @@ public sealed record MonitorOptions
     /// <summary>How many failed attempts before the sweep stops offering a file.</summary>
     public int MaxUploadAttempts { get; init; } = 5;
 
-    /// <summary>Reads the settings the user actually edits.</summary>
-    public static MonitorOptions FromSettings(AppSettings settings)
+    /// <summary>Reads one configuration as the settings screen edits it.</summary>
+    public static MonitorOptions FromConfiguration(MonitoringConfiguration configuration)
     {
-        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(configuration);
 
         return new MonitorOptions
         {
-            Root = settings.LocalDirectory,
-            DestinationRoot = RemotePath.Parse(settings.RemotePath),
-            Filter = new CandidateFilter(settings.Extensions, settings.ExcludedExtensions),
-            IncludeSubdirectories = settings.IncludeSubdirectories,
-            ConflictPolicy = settings.ConflictPolicy,
-            StabilityPeriod = TimeSpan.FromSeconds(Math.Max(0, settings.StabilitySeconds)),
+            Root = configuration.LocalDirectory,
+            DestinationRoot = RemotePath.Parse(configuration.RemotePath),
+            Filter = new CandidateFilter(configuration.Extensions, configuration.ExcludedExtensions),
+            IncludeSubdirectories = configuration.IncludeSubdirectories,
+            ConflictPolicy = configuration.ConflictPolicy,
+            StabilityPeriod = TimeSpan.FromSeconds(Math.Max(0, configuration.StabilitySeconds)),
 
             // A zero or negative interval would turn the safety net into a busy loop. One minute
             // is the floor, which is still far more often than anything here needs.
-            ReconcileInterval = TimeSpan.FromMinutes(Math.Max(1, settings.ReconcileMinutes)),
+            ReconcileInterval = TimeSpan.FromMinutes(Math.Max(1, configuration.ReconcileMinutes)),
 
             LockedFiles = new LockedFilePolicy(
-                TimeSpan.FromSeconds(Math.Max(1, settings.LockedFileRetryIntervalSeconds)),
-                Math.Max(1, settings.LockedFileMaxRetries)),
+                TimeSpan.FromSeconds(Math.Max(1, configuration.LockedFileRetryIntervalSeconds)),
+                Math.Max(1, configuration.LockedFileMaxRetries)),
         };
     }
 }

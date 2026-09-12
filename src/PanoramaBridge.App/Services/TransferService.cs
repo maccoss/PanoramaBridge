@@ -25,12 +25,20 @@ public readonly record struct ConnectionCheck(
     bool CanUploadToDestination = false);
 
 /// <summary>
-/// Owns the transfer engine on behalf of the UI.
+/// Owns the transfer engines on behalf of the UI.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The view models talk to this and never to the WebDAV client or the ledger directly, so all
-/// the awkward lifetime questions -- when the HTTP client is rebuilt, when a run can be
-/// cancelled, which credential is in force -- live in one place.
+/// the awkward lifetime questions -- when a client is rebuilt, when a run can be canceled,
+/// which credential is in force -- live in one place.
+/// </para>
+/// <para>
+/// One <see cref="ConfigurationRunner"/> per enabled configuration, each with its own connection,
+/// engine and monitor, because configurations may watch different folders and address different
+/// servers as different people. What they share is the concurrency limit, which describes the
+/// disk and the link rather than any one pairing -- see <see cref="TransferBudget"/>.
+/// </para>
 /// </remarks>
 public sealed class TransferService : IAsyncDisposable, IDisposable
 {
@@ -40,16 +48,33 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<TransferService> _log;
 
-    private HttpClient? _http;
-    private WebDavClient? _client;
-    private string? _connectedTo;
-    private CancellationTokenSource? _run;
+    /// <summary>
+    /// The running configurations.
+    /// </summary>
+    /// <remarks>
+    /// Replaced wholesale rather than mutated, so a reader on any thread sees a complete set --
+    /// the status properties below are read from the UI thread and from timer callbacks while
+    /// monitoring is being started or stopped.
+    /// </remarks>
+    private volatile ConfigurationRunner[] _runners = [];
 
-    private ContinuousMonitor? _monitor;
-    private TransferCoordinator? _monitorEngine;
+    private TransferBudget? _budget;
     private CancellationTokenSource? _monitoring;
-    private Task? _monitorLoop;
-    private Task? _monitorTransfers;
+    private CancellationTokenSource? _run;
+    private SweepResult? _lastSweep;
+
+    /// <summary>
+    /// The connection the settings screen tested, kept for the remote folder browser.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately separate from the runners' connections. The browser shows the server the
+    /// person is editing, which is not necessarily one that is running -- and with configurations
+    /// on different servers, "the connected client" is otherwise an ambiguous thing to ask for.
+    /// </remarks>
+    private HttpClient? _browseHttp;
+    private WebDavClient? _browseClient;
+    private string? _browseConnectedTo;
+
     private bool _disposed;
 
     public TransferService(
@@ -71,8 +96,37 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// <summary>True while a scan or transfer run is in flight.</summary>
     public bool IsRunning => _run is { IsCancellationRequested: false };
 
-    /// <summary>True while the monitored folder is being watched.</summary>
-    public bool IsMonitoring => _monitoring is { IsCancellationRequested: false };
+    /// <summary>
+    /// True while any configuration is still being watched.
+    /// </summary>
+    /// <remarks>
+    /// Asks the runners rather than only the token, because a runner whose monitor died cancels
+    /// its own linked token and that does not cancel this one. Reporting true when every runner
+    /// has stopped would leave the window saying it was monitoring folders nobody was looking
+    /// at, with the button still offering to stop something that had already stopped.
+    /// </remarks>
+    public bool IsMonitoring =>
+        _monitoring is { IsCancellationRequested: false } && MonitoredConfigurations > 0;
+
+    /// <summary>How many configurations are currently being watched.</summary>
+    /// <remarks>Counted rather than taken from the length, so one that has given up drops out.</remarks>
+    public int MonitoredConfigurations
+    {
+        get
+        {
+            var running = 0;
+
+            foreach (var runner in _runners)
+            {
+                if (runner.IsRunning)
+                {
+                    running++;
+                }
+            }
+
+            return running;
+        }
+    }
 
     /// <summary>
     /// True while any file has bytes moving, however that transfer was started.
@@ -81,7 +135,7 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// <see cref="IsRunning"/> is not this. It tracks <c>_run</c>, which only a manual scan
     /// creates; a file uploaded by monitoring leaves it null, so asking <see cref="IsRunning"/>
     /// "is a transfer in progress" answers no for the ordinary case -- an unattended machine
-    /// uploading an acquisition. Both paths report into <see cref="Progress"/>, which is why
+    /// uploading an acquisition. Every path reports into <see cref="Progress"/>, which is why
     /// this asks that instead.
     ///
     /// Only <see cref="TransferState.Uploading"/> counts. Uploaded-but-unverified is deliberately
@@ -92,19 +146,50 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     public bool HasTransferInFlight =>
         Progress.Snapshot().Any(p => p.State == TransferState.Uploading);
 
-    /// <summary>What monitoring is doing, or null when it is not running.</summary>
-    public MonitorStatus? Monitor => _monitor?.Status;
+    /// <summary>
+    /// What monitoring is doing across every running configuration, or null when none is.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="MonitorStatus.WatchingForChanges"/> is true only when it is true of all of them.
+    /// Change notifications are a convenience and the periodic sweep is the safety net, so the
+    /// honest summary of "some of these folders are getting notifications" is that this machine
+    /// is relying on its sweeps.
+    /// </remarks>
+    public MonitorStatus? Monitor
+    {
+        get
+        {
+            var runners = _runners;
+
+            if (runners.Length == 0)
+            {
+                return null;
+            }
+
+            var settling = 0;
+            var watching = true;
+
+            foreach (var runner in runners)
+            {
+                var status = runner.Status;
+                settling += status.Settling;
+                watching &= status.WatchingForChanges;
+            }
+
+            return new MonitorStatus(watching, settling, _lastSweep);
+        }
+    }
 
     /// <summary>Raised when a run starts or finishes, so commands can re-evaluate.</summary>
     public event Action? RunStateChanged;
 
-    /// <summary>Raised after each walk of the monitored folder.</summary>
-    public event Action<SweepResult>? Swept;
+    /// <summary>Raised after each walk of a monitored folder, naming the configuration.</summary>
+    public event Action<ConfigurationSweep>? Swept;
 
     /// <summary>Raised whenever a file is examined and found not ready to read.</summary>
     public event Action<GateReport>? Waiting;
 
-    /// <summary>Raised when monitoring stops for a reason nobody asked for.</summary>
+    /// <summary>Raised when a configuration stops for a reason nobody asked for.</summary>
     public event Action<string>? MonitoringFailed;
 
     /// <summary>
@@ -114,9 +199,15 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// Reports whether the chosen destination is writable, rather than letting the user discover
     /// a permissions problem hours into a transfer.
     /// </remarks>
+    /// <param name="edited">
+    /// The configuration the settings tabs are showing, which is the one to test and the one the
+    /// typed secret belongs to. Null falls back to the first, which is what a caller with only
+    /// one configuration means.
+    /// </param>
     public async Task<ConnectionCheck> TestConnectionAsync(
         AppSettings settings,
         string? secret,
+        MonitoringConfiguration? edited = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -127,27 +218,29 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             return new ConnectionCheck(false, problems[0]);
         }
 
+        var configuration = edited ?? EditedConfiguration(settings) ?? new MonitoringConfiguration();
+
         try
         {
-            var credential = ResolveCredential(settings, secret);
+            var credential = ResolveCredential(configuration, secret);
             if (credential is null)
             {
                 return new ConnectionCheck(
                     false,
-                    settings.AuthMode == AuthMode.ApiKey
+                    configuration.AuthMode == AuthMode.ApiKey
                         ? "Enter an API key, or generate one from Panorama's External Tool Access page."
                         : "Enter your Panorama password.");
             }
 
-            Connect(settings, credential);
+            var client = ConnectForBrowsing(settings, configuration, credential);
 
-            var destination = RemotePath.Parse(settings.RemotePath);
-            var capabilities = await _client!
+            var destination = RemotePath.Parse(configuration.RemotePath);
+            var capabilities = await client
                 .GetCapabilitiesAsync(destination, cancellationToken)
                 .ConfigureAwait(false);
 
             // Listing the parent tells us the permissions on the destination itself.
-            var siblings = await _client
+            var siblings = await client
                 .ListAsync(destination.Parent, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -157,15 +250,15 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             var writable = folder?.Permissions.CanUpload ?? capabilities.Allows("PUT");
 
             var detail = folder is null
-                ? $"{settings.RemotePath} does not exist yet; it will be created on the first upload."
+                ? $"{configuration.RemotePath} does not exist yet; it will be created on the first upload."
                 : writable
-                    ? $"You can upload to {settings.RemotePath}."
-                    : $"{settings.RemotePath} is read-only for this account. A Panorama "
+                    ? $"You can upload to {configuration.RemotePath}."
+                    : $"{configuration.RemotePath} is read-only for this account. A Panorama "
                       + "administrator needs to grant write access.";
 
             return new ConnectionCheck(
                 true,
-                $"Connected to {capabilities.ServerName ?? settings.ServerUrl}.",
+                $"Connected to {capabilities.ServerName ?? configuration.ServerUrl}.",
                 detail,
                 writable);
         }
@@ -177,7 +270,8 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Connection test failed.");
-            return new ConnectionCheck(false, $"Could not reach {settings.ServerUrl}: {ex.Message}");
+            return new ConnectionCheck(
+                false, $"Could not reach {configuration.ServerUrl}: {ex.Message}");
         }
     }
 
@@ -192,7 +286,7 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     private static readonly TimeSpan ManualScanPatience = TimeSpan.FromMinutes(2);
 
     /// <summary>
-    /// Walks the monitored directory once and transfers whatever needs transferring.
+    /// Walks every enabled configuration's directory once and transfers what needs transferring.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -206,10 +300,21 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// file is never uploaded -- and during an acquisition is precisely when someone would press
     /// it.
     /// </para>
+    /// <para>
+    /// Configurations are scanned at the same time rather than one after another. The transfers
+    /// they produce are gated by one shared budget either way, so taking them in turn would not
+    /// reduce the load on the disk -- it would only mean the second folder waited out the first
+    /// one's two-minute patience for a file still being written before it was looked at at all.
+    /// </para>
     /// </remarks>
+    /// <param name="edited">
+    /// The configuration the settings tabs are showing, so the typed secret reaches the
+    /// credential slot it was typed for. See <see cref="SecretFor"/>.
+    /// </param>
     public async Task<TransferSummary> ScanAndUploadAsync(
         AppSettings settings,
         string? secret,
+        MonitoringConfiguration? edited = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -222,90 +327,45 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         if (IsMonitoring)
         {
             throw new InvalidOperationException(
-                "The folder is being monitored; ask for a check rather than starting a second scan.");
+                "The folders are being monitored; ask for a check rather than starting a second scan.");
         }
 
-        var credential = ResolveCredential(settings, secret)
-            ?? throw new InvalidOperationException("No credential is available for this server.");
+        var problems = settings.Validate();
+        if (problems.Count > 0)
+        {
+            throw new InvalidOperationException(problems[0]);
+        }
 
-        Connect(settings, credential);
+        var configurations = settings.EnabledConfigurations.ToArray();
+
+        // One budget for the whole scan, so pressing Upload now with five configurations moves as
+        // many files at once as the slider says rather than five times as many.
+        using var budget = new TransferBudget(settings.MaxConcurrentTransfers);
 
         _run = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         RunStateChanged?.Invoke();
 
         try
         {
-            await using var coordinator = NewCoordinator(settings);
+            var scans = configurations
+                .Select(c => ScanOneAsync(
+                    settings, c, SecretFor(settings, c, secret, edited), budget, _run.Token))
+                .ToArray();
 
-            await coordinator.RecoverInterruptedAsync(_run.Token).ConfigureAwait(false);
+            var summaries = await Task.WhenAll(scans).ConfigureAwait(false);
 
-            // Started before anything is offered, so a file that settles early begins moving
-            // while the rest of the folder is still being walked.
-            var transfers = coordinator.RunAsync(_run.Token);
+            return summaries.Aggregate(
+                new TransferSummary(0, 0, 0, 0, 0, TimeSpan.Zero),
+                (total, one) => new TransferSummary(
+                    total.Uploaded + one.Uploaded,
+                    total.Skipped + one.Skipped,
+                    total.Conflicts + one.Conflicts,
+                    total.Failed + one.Failed,
+                    total.BytesUploaded + one.BytesUploaded,
 
-            var monitorOptions = MonitorOptions.FromSettings(settings);
-
-            var scanner = new ReconciliationScanner(
-                _store,
-                new ReconciliationOptions
-                {
-                    Root = monitorOptions.Root,
-                    DestinationRoot = monitorOptions.DestinationRoot,
-                    Filter = monitorOptions.Filter,
-                    IncludeSubdirectories = monitorOptions.IncludeSubdirectories,
-                    ConflictPolicy = monitorOptions.ConflictPolicy,
-                    MaxUploadAttempts = monitorOptions.MaxUploadAttempts,
-                },
-                _loggerFactory.CreateLogger<ReconciliationScanner>());
-
-            var candidates = new List<string>();
-
-            var sweep = await scanner
-                .SweepAsync(
-                    (path, _) =>
-                    {
-                        candidates.Add(path);
-                        return Task.CompletedTask;
-                    },
-                    _run.Token)
-                .ConfigureAwait(false);
-
-            if (sweep.Failed)
-            {
-                throw new InvalidOperationException(sweep.Problem);
-            }
-
-            var gate = new ReadinessGate(
-                new FileStabilityTracker(monitorOptions.StabilityPeriod),
-                lockedFiles: LockedFilePolicy.None,
-                log: _loggerFactory.CreateLogger<ReadinessGate>());
-
-            var outcome = await gate
-                .PumpAsync(
-                    candidates,
-                    path => coordinator.EnqueueAsync(path, _run.Token),
-                    onWaiting: (path, readiness) =>
-                        Waiting?.Invoke(new GateReport(path, readiness, readiness.IsWorthRetrying)),
-                    giveUpAfter: ManualScanPatience,
-                    cancellationToken: _run.Token)
-                .ConfigureAwait(false);
-
-            coordinator.CompleteAdding();
-
-            _log.LogInformation(
-                "Offered {Count} of {Examined} file(s); {Settled} were already on the server and "
-                + "{Waiting} were still in use.",
-                outcome.Released.Count,
-                sweep.Examined,
-                sweep.AlreadyAccountedFor,
-                outcome.StillWaiting.Count);
-
-            var summary = await transfers.ConfigureAwait(false);
-
-            // Files the ledger settled never reached the engine, so they are not in its counts.
-            // They were still skipped, and saying so is what keeps "nothing needed transferring"
-            // distinguishable from "there was nothing there".
-            return summary with { Skipped = summary.Skipped + sweep.AlreadyAccountedFor };
+                    // The longest, not the sum. They ran at the same time, so adding them would
+                    // report a wall-clock time that never elapsed.
+                    total.Elapsed > one.Elapsed ? total.Elapsed : one.Elapsed));
         }
         finally
         {
@@ -319,19 +379,63 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         }
     }
 
+    private async Task<TransferSummary> ScanOneAsync(
+        AppSettings settings,
+        MonitoringConfiguration configuration,
+        string? secret,
+        TransferBudget budget,
+        CancellationToken cancellationToken)
+    {
+        var credential = ResolveCredential(configuration, secret)
+            ?? throw new InvalidOperationException(
+                $"{configuration.DisplayName}: no credential is available for "
+                + $"{configuration.ServerUrl}.");
+
+        await using var runner = new ConfigurationRunner(
+            configuration, settings, credential, _store, budget, _loggerFactory);
+
+        runner.Progress += Progress.Report;
+        runner.Waiting += OnWaiting;
+
+        try
+        {
+            return await runner
+                .ScanOnceAsync(ManualScanPatience, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            runner.Progress -= Progress.Report;
+            runner.Waiting -= OnWaiting;
+        }
+    }
+
     /// <summary>Stops the current manual run. In-flight uploads are abandoned, not corrupted.</summary>
     public void Cancel() => _run?.Cancel();
 
     /// <summary>
-    /// Starts watching the monitored folder, transferring files as they finish being written.
+    /// Starts watching every enabled configuration, transferring files as they finish being
+    /// written.
     /// </summary>
     /// <remarks>
-    /// The engine is started once and left running, so its workers block on an empty queue rather
-    /// than being torn down and rebuilt around every file.
+    /// Each engine is started once and left running, so its workers block on an empty queue
+    /// rather than being torn down and rebuilt around every file.
+    /// <para>
+    /// A configuration that will not start takes the whole attempt down with it, and the ones
+    /// already started are stopped again. Starting four of five and reporting success would leave
+    /// the window saying it was monitoring while one instrument quietly filled its disk -- and
+    /// several configurations is precisely the situation in which nobody can see at a glance that
+    /// one folder is uncovered.
+    /// </para>
     /// </remarks>
+    /// <param name="edited">
+    /// The configuration the settings tabs are showing, so the typed secret reaches the
+    /// credential slot it was typed for. See <see cref="SecretFor"/>.
+    /// </param>
     public async Task StartMonitoringAsync(
         AppSettings settings,
         string? secret,
+        MonitoringConfiguration? edited = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -347,59 +451,74 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
                 "A scan is already running. Wait for it to finish before starting monitoring.");
         }
 
+        // IsMonitoring is false once every runner has given up, but the runners themselves are
+        // still here holding a connection, an engine and a monitor each. Starting again without
+        // winding them down would simply drop them, leaking an HttpClient and a set of worker
+        // tasks per configuration, every time somebody pressed the button after a failure.
+        if (_monitoring is not null)
+        {
+            await StopMonitoringAsync().ConfigureAwait(false);
+        }
+
         var problems = settings.Validate();
         if (problems.Count > 0)
         {
             throw new InvalidOperationException(problems[0]);
         }
 
-        var credential = ResolveCredential(settings, secret)
-            ?? throw new InvalidOperationException("No credential is available for this server.");
-
-        Connect(settings, credential);
-
         var monitoring = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var engine = NewCoordinator(settings);
+        var budget = new TransferBudget(settings.MaxConcurrentTransfers);
+        var started = new List<ConfigurationRunner>();
 
         try
         {
-            await engine.RecoverInterruptedAsync(monitoring.Token).ConfigureAwait(false);
+            foreach (var configuration in settings.EnabledConfigurations)
+            {
+                var credential = ResolveCredential(
+                        configuration, SecretFor(settings, configuration, secret, edited))
+                    ?? throw new InvalidOperationException(
+                        $"{configuration.DisplayName}: no credential is available for "
+                        + $"{configuration.ServerUrl}.");
+
+                var runner = new ConfigurationRunner(
+                    configuration, settings, credential, _store, budget, _loggerFactory);
+
+                runner.Progress += Progress.Report;
+                runner.Swept += OnSwept;
+                runner.Waiting += OnWaiting;
+                runner.Failed += OnRunnerFailed;
+
+                started.Add(runner);
+
+                await runner.StartAsync(monitoring.Token).ConfigureAwait(false);
+            }
         }
         catch
         {
-            // Recovery can start worker tasks before it fails partway through the ledger. Left
-            // unhandled, engine and monitoring were never assigned to a field, so nothing would
-            // ever complete the queue those workers are blocked reading from.
-            await engine.DisposeAsync().ConfigureAwait(false);
+            foreach (var runner in started)
+            {
+                Detach(runner);
+                await runner.DisposeAsync().ConfigureAwait(false);
+            }
+
             monitoring.Dispose();
+            budget.Dispose();
             throw;
         }
 
-        var monitor = new ContinuousMonitor(
-            _store,
-            MonitorOptions.FromSettings(settings),
-            _loggerFactory);
-
-        monitor.Swept += OnSwept;
-        monitor.Waiting += OnWaiting;
-
+        _budget = budget;
         _monitoring = monitoring;
-        _monitorEngine = engine;
-        _monitor = monitor;
-
-        _monitorTransfers = engine.RunAsync(monitoring.Token);
-        _monitorLoop = WatchAsync(monitor, engine, monitoring);
+        _runners = [.. started];
 
         _log.LogInformation(
-            "Monitoring {Root} into {Destination}, re-checking every {Minutes} minute(s).",
-            settings.LocalDirectory,
-            settings.RemotePath,
-            settings.ReconcileMinutes);
+            "Monitoring {Count} configuration(s), {Concurrency} transfer(s) at once across all of them.",
+            started.Count,
+            budget.Capacity);
 
         RunStateChanged?.Invoke();
     }
 
-    /// <summary>Stops monitoring and waits for the engine to wind down.</summary>
+    /// <summary>Stops every configuration and waits for the engines to wind down.</summary>
     public async Task StopMonitoringAsync()
     {
         var monitoring = _monitoring;
@@ -410,29 +529,21 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         }
 
         await monitoring.CancelAsync().ConfigureAwait(false);
-        await AwaitQuietlyAsync(_monitorLoop).ConfigureAwait(false);
 
-        _monitorEngine?.CompleteAdding();
-        await AwaitQuietlyAsync(_monitorTransfers).ConfigureAwait(false);
+        var runners = _runners;
+        _runners = [];
 
-        if (_monitor is not null)
+        foreach (var runner in runners)
         {
-            _monitor.Swept -= OnSwept;
-            _monitor.Waiting -= OnWaiting;
-            await _monitor.DisposeAsync().ConfigureAwait(false);
+            Detach(runner);
+            await runner.DisposeAsync().ConfigureAwait(false);
         }
 
-        if (_monitorEngine is not null)
-        {
-            await _monitorEngine.DisposeAsync().ConfigureAwait(false);
-        }
-
-        _monitor = null;
-        _monitorEngine = null;
-        _monitorLoop = null;
-        _monitorTransfers = null;
         _monitoring = null;
         monitoring.Dispose();
+
+        _budget?.Dispose();
+        _budget = null;
 
         _log.LogInformation("Monitoring stopped.");
 
@@ -441,81 +552,188 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
-    /// Asks monitoring to walk the folder now rather than at its next turn.
+    /// Asks every monitored configuration to walk its folder now rather than at its next turn.
     /// </summary>
     /// <returns>False when nothing is being monitored, so the caller can scan instead.</returns>
     public bool RequestSweep(string reason)
     {
-        if (_monitor is null)
+        var runners = _runners;
+
+        if (runners.Length == 0)
         {
             return false;
         }
 
-        _monitor.RequestSweep(reason);
+        foreach (var runner in runners)
+        {
+            runner.RequestSweep(reason);
+        }
+
         return true;
     }
 
-    /// <summary>
-    /// Runs the monitor, and stands down visibly if it ever stops for a reason nobody asked for.
-    /// </summary>
-    /// <remarks>
-    /// Monitoring that has quietly died is worse than monitoring that never started: the window
-    /// would go on saying it was watching the folder, and an instrument would fill it up
-    /// unnoticed. Any unexpected failure cancels the run so the button goes back to "Start
-    /// monitoring" and the status line says what happened.
-    /// </remarks>
-    private async Task WatchAsync(
-        ContinuousMonitor monitor,
-        TransferCoordinator engine,
-        CancellationTokenSource monitoring)
+    /// <summary>The connection the settings screen tested, for the remote folder browser.</summary>
+    public IWebDavClient? Client => _browseClient;
+
+    /// <inheritdoc />
+    public async ValueTask DisposeAsync()
     {
-        try
-        {
-            await monitor
-                .RunAsync(path => engine.EnqueueAsync(path, monitoring.Token), monitoring.Token)
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            // Asked to stop.
-        }
-        catch (Exception ex)
-        {
-            _log.LogError(ex, "Monitoring stopped unexpectedly.");
-
-            await monitoring.CancelAsync().ConfigureAwait(false);
-
-            MonitoringFailed?.Invoke(
-                $"Monitoring stopped: {ex.Message} Start it again once the cause is dealt with.");
-
-            RunStateChanged?.Invoke();
-        }
-    }
-
-    private async Task AwaitQuietlyAsync(Task? task)
-    {
-        if (task is null)
+        if (_disposed)
         {
             return;
         }
 
-        try
-        {
-            await task.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            // How a cancelled run is supposed to end.
-        }
-        catch (Exception ex)
-        {
-            // Already stopping. Leaving the service half torn down would be worse than the
-            // failure itself, so record it and carry on shutting down.
-            _log.LogWarning(ex, "Something failed while monitoring was being stopped.");
-        }
+        _disposed = true;
+
+        _run?.Cancel();
+        _run?.Dispose();
+        _run = null;
+
+        await StopMonitoringAsync().ConfigureAwait(false);
+
+        _browseHttp?.Dispose();
     }
 
-    private void OnSwept(SweepResult result) => Swept?.Invoke(result);
+    /// <summary>
+    /// Synchronous teardown, for the service container.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="IAsyncDisposable"/> alone is not enough: a container disposed synchronously --
+    /// which is what happens when <c>Main</c> returns -- refuses to dispose a service that only
+    /// implements the async interface, and throws rather than skipping it. So both are here.
+    /// </para>
+    /// <para>
+    /// This one cancels and does not wait. The process is on its way out, and waiting for a
+    /// multi-gigabyte upload to notice would only hold the window open. An abandoned upload is
+    /// already a case the design covers: every state change is written to the ledger before the
+    /// action it describes, so the next run finds the row still marked Uploading and re-offers
+    /// it. Use <see cref="StopMonitoringAsync"/> when a graceful stop is actually wanted.
+    /// </para>
+    /// </remarks>
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
+        _run?.Cancel();
+        _run?.Dispose();
+        _run = null;
+
+        _monitoring?.Cancel();
+        _monitoring?.Dispose();
+        _monitoring = null;
+
+        foreach (var runner in _runners)
+        {
+            Detach(runner);
+            runner.Abandon();
+        }
+
+        _runners = [];
+
+        // Deliberately not disposed here, unlike in StopMonitoringAsync. Abandoning cancels
+        // without waiting, so a worker may still be inside AcquireAsync -- and disposing the
+        // semaphore underneath it turns an orderly cancellation into an ObjectDisposedException
+        // logged as a transfer failure on the way out of the process. Nothing is leaked by
+        // leaving it: the budget holds no handle, and the process is exiting.
+        _budget = null;
+
+        _browseHttp?.Dispose();
+    }
+
+    /// <summary>
+    /// The configuration the settings tabs are showing.
+    /// </summary>
+    /// <remarks>
+    /// Only a fallback for a caller that did not say. The tabs can be showing any of them, and
+    /// <c>SettingsViewModel.Edited</c> is what actually knows which -- so every caller that has a
+    /// view model passes it, and this covers the one-configuration case and the tests.
+    /// Deliberately not "the first enabled one": testing the connection has to test what the
+    /// person is looking at, and the tabs go on showing a configuration after it is switched off.
+    /// </remarks>
+    private static MonitoringConfiguration? EditedConfiguration(AppSettings settings) =>
+        settings.Configurations.FirstOrDefault();
+
+    /// <summary>
+    /// The secret from the password box, for the configurations it is actually the credential for.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// There is one password box and it belongs to the configuration the tabs are showing. Handing
+    /// what was typed there to every configuration would sign one in to a different server with
+    /// another's key -- and, worse, make it ignore the credential it has of its own, because a
+    /// secret typed this session deliberately takes precedence over a stored one. Those fall back
+    /// to Windows Credential Manager, which is where their own lives.
+    /// </para>
+    /// <para>
+    /// It does reach any configuration that would read the same credential slot, which is the
+    /// same server as the same account. Two folders on one instrument going to two projects on
+    /// one Panorama is the ordinary reason to want a second configuration at all, and those two
+    /// share a credential -- refusing the second the key that is demonstrably its own, until
+    /// somebody had saved it, would be a rule with nothing behind it.
+    /// </para>
+    /// <para>
+    /// The slot is asked for rather than worked out here, so this cannot drift from the rule that
+    /// actually decides which credential gets read.
+    /// </para>
+    /// </remarks>
+    private static string? SecretFor(
+        AppSettings settings,
+        MonitoringConfiguration configuration,
+        string? secret,
+        MonitoringConfiguration? editing)
+    {
+        if ((editing ?? EditedConfiguration(settings)) is not { } edited)
+        {
+            return null;
+        }
+
+        var slot = WindowsCredentialStore.TargetFor(configuration.ServerUrl, configuration.Account);
+        var typedFor = WindowsCredentialStore.TargetFor(edited.ServerUrl, edited.Account);
+
+        return string.Equals(slot, typedFor, StringComparison.OrdinalIgnoreCase) ? secret : null;
+    }
+
+    private void Detach(ConfigurationRunner runner)
+    {
+        runner.Progress -= Progress.Report;
+        runner.Swept -= OnSwept;
+        runner.Waiting -= OnWaiting;
+        runner.Failed -= OnRunnerFailed;
+    }
+
+    private void OnSwept(ConfigurationSweep sweep)
+    {
+        _lastSweep = sweep.Result;
+        Swept?.Invoke(sweep);
+    }
+
+    /// <summary>
+    /// Reports a configuration that stopped watching for a reason nobody asked for.
+    /// </summary>
+    /// <remarks>
+    /// Reported as a failed sweep as well as through <see cref="MonitoringFailed"/>. The window
+    /// composes its status line from the last sweep of each configuration, so without this the
+    /// message would be on screen only until the next healthy configuration swept and replaced
+    /// it -- a folder that had stopped being watched, announced once and then gone.
+    /// </remarks>
+    private void OnRunnerFailed(ConfigurationRunner runner, string problem)
+    {
+        OnSwept(new ConfigurationSweep(
+            runner.Name,
+            new SweepResult(0, 0, 0, TimeSpan.Zero, problem)));
+
+        MonitoringFailed?.Invoke($"{runner.Name}: {problem}");
+
+        // So the button and the count re-read: this runner has stopped, and if it was the last
+        // one then IsMonitoring is now false.
+        RunStateChanged?.Invoke();
+    }
 
     /// <summary>
     /// Puts a file that is not ready yet into the transfer list, with the reason.
@@ -561,142 +779,71 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         Waiting?.Invoke(report);
     }
 
-    private TransferCoordinator NewCoordinator(AppSettings settings)
-    {
-        var coordinator = new TransferCoordinator(
-            _client!,
-            _store,
-            new TransferEngineOptions
-            {
-                LocalBaseDirectory = settings.LocalDirectory,
-                DestinationRoot = RemotePath.Parse(settings.RemotePath),
-                MaxConcurrentTransfers = settings.MaxConcurrentTransfers,
-                ConflictPolicy = settings.ConflictPolicy,
-                VerifyUploads = settings.VerifyUploads,
-                WriteChecksumSidecars = settings.WriteChecksumSidecars,
-            },
-            log: _loggerFactory.CreateLogger<TransferCoordinator>());
-
-        coordinator.Progress += Progress.Report;
-        return coordinator;
-    }
-
-    private PanoramaCredential? ResolveCredential(AppSettings settings, string? secret)
+    private PanoramaCredential? ResolveCredential(
+        MonitoringConfiguration configuration,
+        string? secret)
     {
         if (!string.IsNullOrWhiteSpace(secret))
         {
-            return settings.AuthMode == AuthMode.ApiKey
+            return configuration.AuthMode == AuthMode.ApiKey
                 ? PanoramaCredential.ApiKey(secret)
-                : PanoramaCredential.UserNameAndPassword(settings.UserName, secret);
+                : PanoramaCredential.UserNameAndPassword(configuration.UserName, secret);
         }
 
-        // Nothing typed this session, so fall back to what was saved.
-        var stored = _credentials.Read(settings.ServerUrl);
+        // Nothing typed this session, so fall back to what was saved. Read under this
+        // configuration's account, so two of them on one server do not read each other's.
+        var stored = _credentials.Read(configuration.ServerUrl, configuration.Account);
         if (stored is null)
         {
             return null;
         }
 
-        return settings.AuthMode == AuthMode.ApiKey
+        return configuration.AuthMode == AuthMode.ApiKey
             ? PanoramaCredential.ApiKey(stored.Value.Secret)
             : PanoramaCredential.UserNameAndPassword(stored.Value.UserName, stored.Value.Secret);
     }
 
     /// <summary>
-    /// Rebuilds the HTTP client when the server or credential changes, and reuses it otherwise.
+    /// Rebuilds the browsing client when the server or credential changes, and reuses it
+    /// otherwise.
     /// </summary>
     /// <remarks>
-    /// One client for the process is what keeps TLS handshakes from being repeated per file, so
-    /// it is deliberately not rebuilt per operation. The identity string is compared rather than
-    /// the credential itself so a secret is never held longer than needed.
+    /// Not rebuilt per operation, so repeated trips through the folder browser do not repeat the
+    /// TLS handshake. The identity string is compared rather than the credential itself, so a
+    /// secret is never held longer than needed.
     /// </remarks>
-    private void Connect(AppSettings settings, PanoramaCredential credential)
+    private WebDavClient ConnectForBrowsing(
+        AppSettings settings,
+        MonitoringConfiguration configuration,
+        PanoramaCredential credential)
     {
-        var identity = $"{settings.ServerUrl}|{credential.UserName}|{credential.Secret.GetHashCode()}";
+        var identity =
+            $"{configuration.ServerUrl}|{credential.UserName}|{credential.Secret.GetHashCode()}";
 
-        if (_client is not null && _connectedTo == identity)
+        if (_browseClient is not null && _browseConnectedTo == identity)
         {
-            return;
+            return _browseClient;
         }
 
-        _http?.Dispose();
+        _browseHttp?.Dispose();
 
         var options = new WebDavClientOptions
         {
-            BaseAddress = new Uri(settings.ServerUrl, UriKind.Absolute),
+            BaseAddress = new Uri(configuration.ServerUrl, UriKind.Absolute),
             Credential = credential,
             MaxConcurrentTransfers = settings.MaxConcurrentTransfers,
             TrustedRootCertificatePath = settings.TrustedRootCertificatePath,
             RecordSha256 = settings.RecordSha256,
         };
 
-        _http = options.CreateHttpClient();
-        _client = new WebDavClient(_http, options, _loggerFactory.CreateLogger<WebDavClient>());
-        _connectedTo = identity;
+        _browseHttp = options.CreateHttpClient();
+        _browseClient = new WebDavClient(
+            _browseHttp, options, _loggerFactory.CreateLogger<WebDavClient>());
+        _browseConnectedTo = identity;
 
         _log.LogInformation(
-            "Using {Server} as {Credential}.", settings.ServerUrl, credential.ToString());
-    }
+            "Using {Server} as {Credential}.", configuration.ServerUrl, credential.ToString());
 
-    /// <summary>The connected client, for the remote folder browser.</summary>
-    public IWebDavClient? Client => _client;
-
-    /// <inheritdoc />
-    public async ValueTask DisposeAsync()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _disposed = true;
-
-        _run?.Cancel();
-        _run?.Dispose();
-
-        await StopMonitoringAsync().ConfigureAwait(false);
-
-        _http?.Dispose();
-    }
-
-    /// <summary>
-    /// Synchronous teardown, for the service container.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <see cref="IAsyncDisposable"/> alone is not enough: a container disposed synchronously --
-    /// which is what happens when <c>Main</c> returns -- refuses to dispose a service that only
-    /// implements the async interface, and throws rather than skipping it. So both are here.
-    /// </para>
-    /// <para>
-    /// This one cancels and does not wait. The process is on its way out, and waiting for a
-    /// multi-gigabyte upload to notice would only hold the window open. An abandoned upload is
-    /// already a case the design covers: every state change is written to the ledger before the
-    /// action it describes, so the next run finds the row still marked Uploading and re-offers
-    /// it. Use <see cref="StopMonitoringAsync"/> when a graceful stop is actually wanted.
-    /// </para>
-    /// </remarks>
-    public void Dispose()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _disposed = true;
-
-        _run?.Cancel();
-        _run?.Dispose();
-        _run = null;
-
-        _monitoring?.Cancel();
-        _monitoring?.Dispose();
-        _monitoring = null;
-
-        _monitor?.Dispose();
-        _monitor = null;
-        _monitorEngine = null;
-
-        _http?.Dispose();
+        return _browseClient;
     }
 }

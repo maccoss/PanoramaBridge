@@ -22,8 +22,25 @@ public sealed class TransferEngineOptions
     /// <summary>What to do when a different file already occupies a destination.</summary>
     public ConflictPolicy ConflictPolicy { get; init; } = ConflictPolicy.Ask;
 
-    /// <summary>How many files move at once.</summary>
+    /// <summary>
+    /// How many files this engine moves at once.
+    /// </summary>
+    /// <remarks>
+    /// The number of workers started. With several engines running -- one per configuration --
+    /// this is no longer the limit the user set: see <see cref="Budget"/>, which is.
+    /// </remarks>
     public int MaxConcurrentTransfers { get; init; } = 3;
+
+    /// <summary>
+    /// The limit shared with every other engine, or null when this one runs alone.
+    /// </summary>
+    /// <remarks>
+    /// Null means the worker count is the limit, which is what it was before configurations
+    /// existed and is still true of a one-off scan. Supplying a budget is how several engines
+    /// add up to the number of concurrent transfers the user asked for rather than to a multiple
+    /// of it. The engine never owns it: one budget outlives the engines that share it.
+    /// </remarks>
+    public TransferBudget? Budget { get; init; }
 
     /// <summary>
     /// Queue depth. Bounded so pointing the app at a directory of two hundred thousand files
@@ -236,7 +253,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 // nothing left to do about it either way.
                 await _store
                     .SetStateAsync(
-                        record.LocalPath,
+                        record.Key,
                         TransferState.Failed,
                         "The local file no longer exists.",
                         cancellationToken)
@@ -308,6 +325,14 @@ public sealed class TransferCoordinator : IAsyncDisposable
         {
             try
             {
+                // Taken around the whole of the work, not just the upload: reading a file to
+                // hash it competes for the same disk head as sending it, which is the cost the
+                // limit exists to control. Inside the try so that being canceled while waiting
+                // for a permit reports the same "Interrupted" row as being canceled mid-upload.
+                using var permit = _options.Budget is null
+                    ? null
+                    : await _options.Budget.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
                 await ProcessAsync(localPath, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -338,7 +363,12 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 Interlocked.Increment(ref _failed);
                 _log.LogError(ex, "Transfer of {Path} failed.", localPath);
 
-                await SafeSetStateAsync(localPath, TransferState.Failed, ex.Message).ConfigureAwait(false);
+                // This engine's destination only. The catch is deliberately broad -- one bad
+                // file must not take the run down -- so a WebDAV fault from this server arrives
+                // here, and that says nothing about anyone else's.
+                await SafeSetStateAsync(
+                        localPath, TransferState.Failed, ex.Message, FailureScope.ThisDestination)
+                    .ConfigureAwait(false);
                 Report(localPath, "?", TransferState.Failed, "Failed", 0, 0, message: ex.Message);
             }
             finally
@@ -379,7 +409,9 @@ public sealed class TransferCoordinator : IAsyncDisposable
             // — both built from reports — with no sign of it at all.
             Interlocked.Increment(ref _failed);
 
-            await SafeSetStateAsync(localPath, TransferState.Failed, Reason)
+            // Every destination: a folder is not a file for anyone.
+            await SafeSetStateAsync(
+                    localPath, TransferState.Failed, Reason, FailureScope.EveryDestination)
                 .ConfigureAwait(false);
 
             Report(localPath, string.Empty, TransferState.Failed,
@@ -427,7 +459,14 @@ public sealed class TransferCoordinator : IAsyncDisposable
                     + "while the setting is as it is."
                 : ex.UserMessage;
 
-            await SafeSetStateAsync(localPath, TransferState.Failed, reason)
+            // A name the server would mangle is mangled for everyone; being outside the
+            // monitored folder is this configuration's own arrangement, and the same file may sit
+            // well inside another one's.
+            var scope = ex.Reason == PathRejectionReason.OutsideMonitoredFolder
+                ? FailureScope.ThisDestination
+                : FailureScope.EveryDestination;
+
+            await SafeSetStateAsync(localPath, TransferState.Failed, reason, scope)
                 .ConfigureAwait(false);
 
             // No remote path to report: working one out is exactly what just failed.
@@ -438,7 +477,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
 
         var encoded = destination.ToEncodedString();
 
-        var record = await _store.GetAsync(localPath, cancellationToken).ConfigureAwait(false)
+        var record = await _store.GetAsync(new LedgerKey(localPath, encoded), cancellationToken).ConfigureAwait(false)
             ?? UploadRecord.ForNewFile(stamp, encoded);
 
         // The same gate the sweep applies, applied again here because this is where every route
@@ -663,7 +702,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
         var encoded = record.RemotePath;
 
         await _store
-            .SetStateAsync(localPath, TransferState.Uploading, null, cancellationToken)
+            .SetStateAsync(new LedgerKey(localPath, encoded), TransferState.Uploading, null, cancellationToken)
             .ConfigureAwait(false);
 
         var sending = stamp.Length;
@@ -727,7 +766,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
         {
             await _store
                 .SetStateAsync(
-                    localPath,
+                    new LedgerKey(localPath, encoded),
                     TransferState.Superseded,
                     "The file changed while it was being uploaded.",
                     cancellationToken)
@@ -776,7 +815,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 "The server did not report a hash for the uploaded file, so it could not be verified.";
 
             await _store
-                .SetStateAsync(localPath, TransferState.Failed, Message, cancellationToken)
+                .SetStateAsync(new LedgerKey(localPath, encoded), TransferState.Failed, Message, cancellationToken)
                 .ConfigureAwait(false);
 
             Report(localPath, encoded, TransferState.Failed, "Not verified",
@@ -792,7 +831,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 + $"local {result.Hashes.Md5}).";
 
             await _store
-                .SetStateAsync(localPath, TransferState.Failed, message, cancellationToken)
+                .SetStateAsync(new LedgerKey(localPath, encoded), TransferState.Failed, message, cancellationToken)
                 .ConfigureAwait(false);
 
             _log.LogError("Verification of {Path} failed: {Message}", localPath, message);
@@ -805,7 +844,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
         Interlocked.Increment(ref _uploaded);
 
         await _store
-            .MarkVerifiedAsync(localPath, VerifyMethod.ServerMd5, DateTimeOffset.UtcNow, cancellationToken)
+            .MarkVerifiedAsync(new LedgerKey(localPath, encoded), VerifyMethod.ServerMd5, DateTimeOffset.UtcNow, cancellationToken)
             .ConfigureAwait(false);
 
         await WriteSidecarAsync(destination, stamp, result, acquired, cancellationToken)
@@ -938,6 +977,34 @@ public sealed class TransferCoordinator : IAsyncDisposable
     /// "Uploading" is a row claiming an upload is under way, and it shows under neither Verified
     /// nor Needs attention. The reason belongs where somebody can read it.
     /// </remarks>
+    /// <summary>
+    /// Whether a ledger row records something this engine sent, or would send.
+    /// </summary>
+    /// <remarks>
+    /// Matched on the destination root rather than on the exact path, because the failure being
+    /// recorded is often the reason the exact path could not be worked out. An empty destination
+    /// counts as this engine's: it is what a failure recorded before any destination was resolved
+    /// carries, and there is nothing else it could belong to.
+    /// </remarks>
+    private bool IsMine(UploadRecord row)
+    {
+        if (string.IsNullOrEmpty(row.RemotePath))
+        {
+            return true;
+        }
+
+        var root = _options.DestinationRoot.ToEncodedString().TrimEnd('/');
+
+        if (!row.RemotePath.StartsWith(root, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // Boundary-aware, or a configuration sending to /@files/QC would claim every row under
+        // /@files/QCArchive and mark those failed too.
+        return row.RemotePath.Length == root.Length || row.RemotePath[root.Length] == '/';
+    }
+
     private async Task SafeSetErrorAsync(UploadRecord record, string error)
     {
         // Takes the row rather than the path: the only caller is holding it already, and reading
@@ -955,7 +1022,7 @@ public sealed class TransferCoordinator : IAsyncDisposable
             // attempts from a snapshot taken before the workers started, so a worker's write
             // could be undone by this one.
             await _store
-                .SetErrorAsync(record.LocalPath, error, CancellationToken.None)
+                .SetErrorAsync(record.Key, error, CancellationToken.None)
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -964,12 +1031,59 @@ public sealed class TransferCoordinator : IAsyncDisposable
         }
     }
 
-    private async Task SafeSetStateAsync(string localPath, TransferState state, string? error)
+    /// <summary>How far a recorded failure reaches.</summary>
+    /// <remarks>
+    /// It used to reach everywhere, on the reasoning that every route to a failure here is a file
+    /// nobody can transfer. Two of the three are; the third is the catch-all around a transfer,
+    /// and a WebDAV fault arrives there. Marking every row for a server that returned 507 would
+    /// overwrite another configuration's Verified row with this one's error -- showing a file as
+    /// failed when its copy is on the server and fine, and making the next sweep send it again.
+    /// </remarks>
+    private enum FailureScope
+    {
+        /// <summary>Only where this engine sends. Another destination may be perfectly well.</summary>
+        ThisDestination,
+
+        /// <summary>
+        /// Every destination this file has a row for, because nothing could transfer it.
+        /// </summary>
+        /// <remarks>
+        /// A directory, or a name no server will accept. True for every destination alike, and
+        /// recording it once per row is what stops each configuration rediscovering it.
+        /// </remarks>
+        EveryDestination,
+    }
+
+    /// <summary>
+    /// Records a failure against a file, as far as the failure actually reaches.
+    /// </summary>
+    private async Task SafeSetStateAsync(
+        string localPath,
+        TransferState state,
+        string? error,
+        FailureScope scope)
     {
         try
         {
-            var existing = await _store.GetAsync(localPath, CancellationToken.None)
+            var rows = await _store
+                .GetManyAsync([localPath], CancellationToken.None)
                 .ConfigureAwait(false);
+
+            var found = rows.TryGetValue(localPath, out var all) && all.Count > 0
+                ? all
+                : null;
+
+            var existing = found is null || scope == FailureScope.EveryDestination
+                ? found
+                : found.Where(IsMine).ToArray();
+
+            if (existing is { Count: 0 })
+            {
+                // Rows exist, but none of them is this engine's. Another configuration recorded
+                // them and they are its business; writing this engine's error onto them is the
+                // defect this scope exists to prevent.
+                return;
+            }
 
             if (existing is null)
             {
@@ -999,8 +1113,11 @@ public sealed class TransferCoordinator : IAsyncDisposable
                 return;
             }
 
-            await _store.SetStateAsync(localPath, state, error, CancellationToken.None)
-                .ConfigureAwait(false);
+            foreach (var row in existing)
+            {
+                await _store.SetStateAsync(row.Key, state, error, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
         }
         catch (Exception ex)
         {

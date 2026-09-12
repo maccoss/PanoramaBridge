@@ -91,9 +91,17 @@ never from a file in the repository or a command-line argument.
 `caps`, `ls`, `mkdir`, `md5`, `put`, `sync`, `watch`, `status`, `rm`. Exercises the transport,
 the engine and continuous monitoring against a real server without any XAML.
 
-`watch` is also how idle cost is measured — it reports the processor time monitoring used. Give
-it a filter matching nothing and it walks the folder without contacting the server at all, so no
-credential is involved. See §7 of the handoff for the numbers.
+`watch` is also how idle cost is measured — it reports the processor time monitoring used. Add
+`--no-upload` and it contacts no server at all, so it runs with no credential set; add
+`--for MINUTES` and it stops and reports on its own, so the measurement does not depend on
+somebody pressing Ctrl+C at the right moment. `--also <dir>` watches another folder alongside,
+repeatable, which is how the cost of several configurations is measured — each one gets its own
+watcher and its own sweep timer, and whether that multiplies is the question. See §7 of the
+handoff for the numbers.
+
+```bash
+pbctl watch D:\Data --also E:\Data --no-upload --ext .raw --every 1 --for 5
+```
 
 > From Git Bash, set `MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'` first, or MSYS rewrites
 > `/_webdav/...` into a local path and every request 404s. It looks exactly like a server fault.

@@ -12,6 +12,14 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel>
 
+            <!--
+                Which configuration these settings belong to. Without it the tab is a page of
+                boxes with nothing to say whose they are, and with several configurations that is
+                how somebody edits the wrong instrument's folder.
+            -->
+            <TextBlock Margin="0,0,0,8" FontWeight="SemiBold"
+                       Text="{Binding EditingName, StringFormat='Editing: {0}'}" />
+
             <GroupBox Header="Panorama server"
                       ToolTip="Certificates are always validated. If your site uses a TLS-inspecting proxy, add its root certificate under Advanced rather than turning checking off — there is no option to do that.">
                 <TextBox Text="{Binding ServerUrl, UpdateSourceTrigger=PropertyChanged}" />
@@ -82,29 +90,6 @@
 
             <GroupBox Header="Transfers">
                 <StackPanel>
-                    <!--
-                        ConcurrencyAdvice stays on screen rather than moving into a tooltip: it
-                        changes as the slider moves, and advice you have to stop and hover for is
-                        advice you get after choosing rather than while choosing.
-                    -->
-                    <Grid Margin="{StaticResource RowMargin}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="150" />
-                            <ColumnDefinition Width="180" />
-                            <ColumnDefinition Width="40" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}"
-                                   Text="Files at once" />
-                        <Slider Grid.Column="1" Minimum="1" Maximum="8" TickFrequency="1"
-                                IsSnapToTickEnabled="True" VerticalAlignment="Center"
-                                Value="{Binding MaxConcurrentTransfers}" />
-                        <TextBlock Grid.Column="2" Style="{StaticResource FieldValue}"
-                                   Text="{Binding MaxConcurrentTransfers}" />
-                        <TextBlock Grid.Column="3" Style="{StaticResource Hint}" Margin="12,0,0,0"
-                                   Text="{Binding ConcurrencyAdvice}" />
-                    </Grid>
-
                     <CheckBox Content="Check every upload against the server's own hash"
                               Margin="{StaticResource RowMargin}"
                               IsChecked="{Binding VerifyUploads}"
@@ -114,15 +99,6 @@
                               IsChecked="{Binding WriteChecksumSidecars}"
                               ToolTip="A small text file next to each uploaded file, holding its checksum and the date the instrument wrote it, in the format md5sum reads. It is the only record that travels with the data: PanoramaBridge's own database stays on this computer, and Panorama stamps an uploaded file with the time it arrived rather than the time it was collected." />
                 </StackPanel>
-            </GroupBox>
-
-            <GroupBox Header="Advanced"
-                      ToolTip="Optional additional root certificate, trusted in addition to the ones Windows already trusts.">
-                <DockPanel>
-                    <Button DockPanel.Dock="Right" Content="Browse..." Margin="8,0,0,0"
-                            Command="{Binding BrowseCertificateCommand}" />
-                    <TextBox Text="{Binding TrustedRootCertificatePath, UpdateSourceTrigger=PropertyChanged}" />
-                </DockPanel>
             </GroupBox>
 
         </StackPanel>

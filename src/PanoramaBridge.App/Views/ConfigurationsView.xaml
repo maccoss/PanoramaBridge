@@ -1,0 +1,114 @@
+<UserControl x:Class="PanoramaBridge.App.Views.ConfigurationsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PanoramaBridge.App.ViewModels"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:ConfigurationsViewModel}">
+
+    <!--
+        The list the lab asked for by name, showing what AutoQC Loader shows: what each pairing
+        is called, who it signs in as, when it was added, and whether it will run. Selecting a row
+        points the Local Monitoring and Remote Settings tabs at it, so those two are the editor
+        for whatever is selected here.
+    -->
+    <DockPanel Margin="4">
+
+        <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}" Margin="0,0,0,8"
+                   Text="{Binding Summary}" />
+
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
+            <Button Content="Add" MinWidth="90" Command="{Binding AddCommand}"
+                    ToolTip="Adds an empty configuration and opens it on the Local Monitoring tab." />
+            <Button Content="Copy" MinWidth="90" Margin="8,0,0,0" Command="{Binding CopyCommand}"
+                    ToolTip="Duplicates the selected configuration. A second instrument sending the same file types to the same Panorama folder differs from the first by one directory." />
+            <Button Content="Remove" MinWidth="90" Margin="8,0,0,0" Command="{Binding DeleteCommand}"
+                    ToolTip="Removes the selected configuration. Nothing already uploaded is affected, and the stored sign-in is left alone in case another configuration shares it." />
+
+            <TextBlock Style="{StaticResource Hint}" Margin="16,0,0,0" VerticalAlignment="Center"
+                       Text="Edit the selected configuration on the Local Monitoring and Remote Settings tabs." />
+        </StackPanel>
+
+        <DataGrid ItemsSource="{Binding Rows}"
+                  SelectedIndex="{Binding SelectedIndex}"
+                  AutoGenerateColumns="False"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  CanUserReorderColumns="False"
+                  HeadersVisibility="Column"
+                  GridLinesVisibility="Horizontal"
+                  SelectionMode="Single"
+                  IsReadOnly="False">
+            <DataGrid.Columns>
+                <!--
+                    The tick is the only editable cell. Everything else is edited on the two
+                    tabs, and a grid that lets a folder be typed into a cell as well would be two
+                    ways to change one thing.
+                -->
+                <DataGridCheckBoxColumn Header="On" Width="40"
+                                        Binding="{Binding Enabled, UpdateSourceTrigger=PropertyChanged}" />
+
+                <!--
+                    The five fixed columns are kept tight on purpose. Folder and Sends to are the
+                    only ones that flex, so every pixel spent here comes straight out of them,
+                    and at the window's 820 px minimum that left Folder at 96 px for a path sixty
+                    characters long. Folder gets the larger share of what is left, because two
+                    configurations on one instrument are told apart by their folder before
+                    anything else.
+                -->
+                <DataGridTextColumn Header="Name" Width="150" IsReadOnly="True"
+                                    Binding="{Binding Name}" />
+
+                <DataGridTextColumn Header="Folder" Width="3*" IsReadOnly="True"
+                                    Binding="{Binding LocalDirectory}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="ToolTip" Value="{Binding LocalDirectory}" />
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+
+                <DataGridTextColumn Header="Sends to" Width="2*" IsReadOnly="True"
+                                    Binding="{Binding RemotePath}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <!-- The server as well: two rows can show the same folder on
+                                 different Panorama instances, and the path alone would not say
+                                 which. -->
+                            <Setter Property="ToolTip" Value="{Binding ServerUrl}" />
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+
+                <DataGridTextColumn Header="User" Width="90" IsReadOnly="True"
+                                    Binding="{Binding User}" />
+
+                <DataGridTextColumn Header="Created" Width="115" IsReadOnly="True"
+                                    Binding="{Binding Created}" />
+
+                <DataGridTextColumn Header="Status" Width="110" IsReadOnly="True"
+                                    Binding="{Binding Status}">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="ToolTip" Value="{Binding StatusDetail}" />
+                            <Style.Triggers>
+                                <!--
+                                    Only the one that needs doing something about is colored.
+                                    Marking Ready green as well would make the column a wash of
+                                    color with nothing standing out, which is the opposite of
+                                    what a status column is for.
+                                -->
+                                <DataTrigger Binding="{Binding Status}" Value="Needs attention">
+                                    <Setter Property="Foreground" Value="#B3261E" />
+                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+    </DockPanel>
+</UserControl>

@@ -59,7 +59,10 @@ public partial class MainWindow : Window
             if (_transfers.Client is null)
             {
                 var check = await _transfers
-                    .TestConnectionAsync(_viewModel.Settings.ToSettings(), RemoteSettings.Secret)
+                    .TestConnectionAsync(
+                        _viewModel.Settings.ToSettings(),
+                        RemoteSettings.Secret,
+                        _viewModel.Settings.Edited)
                     .ConfigureAwait(true);
 
                 if (!check.Succeeded)

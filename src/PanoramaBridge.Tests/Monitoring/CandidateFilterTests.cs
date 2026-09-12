@@ -215,7 +215,7 @@ public sealed class CandidateFilterTests
         // Two defaults that can drift are worse than one in the wrong place: the screen would
         // show a list the filter does not use. AppSettings owns it; the filter falls back to it.
         new CandidateFilter([".raw"]).Exclusions
-            .ShouldBe(AppSettings.DefaultExcludedExtensions, ignoreOrder: true);
+            .ShouldBe(MonitoringConfiguration.DefaultExcludedExtensions, ignoreOrder: true);
     }
 
     [Fact]

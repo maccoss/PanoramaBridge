@@ -20,7 +20,7 @@ namespace PanoramaBridge.Cli;
 internal sealed record CommandOptions
 {
     /// <summary>The settings screen's own defaults, read once rather than per option.</summary>
-    private static readonly AppSettings Defaults = new();
+    private static readonly MonitoringConfiguration Defaults = new();
 
     /// <summary>Files in flight at once.</summary>
     public int Concurrency { get; init; } = 3;
@@ -56,6 +56,43 @@ internal sealed record CommandOptions
     public IReadOnlyList<string> Paths { get; init; } = [];
 
     /// <summary>
+    /// Extra directories to watch alongside the first, one per <c>--also</c>.
+    /// </summary>
+    /// <remarks>
+    /// A named switch rather than more positional arguments, because <c>watch</c> already takes an
+    /// optional remote directory second: a variadic list of locals would make
+    /// <c>pbctl watch A B</c> mean two different things depending on whether B happened to look
+    /// like a remote path.
+    /// <para>
+    /// This is how the cost of several configurations is measured. Each directory gets its own
+    /// watcher and its own sweep timer, which is exactly what the application does and exactly
+    /// what multiplies.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<string> AlsoWatch { get; init; } = [];
+
+    /// <summary>
+    /// Whether to walk and report without transferring anything.
+    /// </summary>
+    /// <remarks>
+    /// Contacts no server, so it needs no credential -- which is what makes it usable for
+    /// measuring idle cost on a machine that has none, and on one where nobody wants a real
+    /// upload starting by accident. What a run would have offered is still counted and printed.
+    /// </remarks>
+    public bool NoUpload { get; init; }
+
+    /// <summary>
+    /// Minutes to watch before stopping and reporting, or zero to watch until interrupted.
+    /// </summary>
+    /// <remarks>
+    /// Ctrl+C is what produces the report, which makes the idle-cost measurement something a
+    /// person has to sit and do. A run that stops itself is repeatable, scriptable, and gives the
+    /// same number to whoever asks later -- and the numbers here have been wrong by two orders of
+    /// magnitude before, so being able to re-measure cheaply is the point.
+    /// </remarks>
+    public int ForMinutes { get; init; }
+
+    /// <summary>
     /// Reads the switches out of <paramref name="args"/>.
     /// </summary>
     /// <param name="args">Arguments after the local directory.</param>
@@ -72,6 +109,9 @@ internal sealed record CommandOptions
         var extensions = Defaults.Extensions;
         var excluded = Defaults.ExcludedExtensions;
         var paths = new List<string>();
+        var alsoWatch = new List<string>();
+        var noUpload = false;
+        var forMinutes = 0;
         var filtersGiven = false;
 
         problem = null;
@@ -134,6 +174,29 @@ internal sealed record CommandOptions
                     verify = false;
                     break;
 
+                case "--no-upload":
+                    noUpload = true;
+                    break;
+
+                case "--for":
+                    if (!TryNumber(args, ref i, out forMinutes, out problem))
+                    {
+                        options = new CommandOptions();
+                        return false;
+                    }
+
+                    break;
+
+                case "--also":
+                    if (!TryPath(args, ref i, out var also, out problem))
+                    {
+                        options = new CommandOptions();
+                        return false;
+                    }
+
+                    alsoWatch.Add(also);
+                    break;
+
                 default:
                     if (args[i].StartsWith("--", StringComparison.Ordinal))
                     {
@@ -157,6 +220,9 @@ internal sealed record CommandOptions
             ExcludedExtensions = excluded,
             FiltersGiven = filtersGiven,
             Paths = paths,
+            AlsoWatch = alsoWatch,
+            NoUpload = noUpload,
+            ForMinutes = forMinutes,
         };
 
         return true;
@@ -200,6 +266,39 @@ internal sealed record CommandOptions
         }
 
         value = AppSettings.ParseExtensions(text);
+        problem = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Reads a directory, refusing one that looks like another switch.
+    /// </summary>
+    /// <remarks>
+    /// The same trap <see cref="TryList"/> guards: <c>--also --no-upload</c> passes a bare "is
+    /// there a next argument?" check and then watches a directory named "--no-upload" while
+    /// silently not applying the switch.
+    /// </remarks>
+    private static bool TryPath(string[] args, ref int i, out string value, out string? problem)
+    {
+        var name = args[i];
+
+        value = string.Empty;
+
+        if (i + 1 >= args.Length)
+        {
+            problem = $"{name} needs a directory";
+            return false;
+        }
+
+        var text = args[++i];
+
+        if (text.StartsWith("--", StringComparison.Ordinal))
+        {
+            problem = $"{name} needs a directory, but got the option '{text}'";
+            return false;
+        }
+
+        value = text;
         problem = null;
         return true;
     }

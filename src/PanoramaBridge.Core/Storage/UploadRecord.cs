@@ -180,6 +180,9 @@ public sealed record UploadRecord(
         && VerifyMethod == VerifyMethod.ServerMd5
         && stamp.Matches(Length, LastWriteUnixMs);
 
+    /// <summary>What identifies this row: the file and where it was sent.</summary>
+    public LedgerKey Key => new(LocalPath, RemotePath);
+
     /// <summary>
     /// True when this file is settled <em>and</em> settled at the destination it would be sent
     /// to now.

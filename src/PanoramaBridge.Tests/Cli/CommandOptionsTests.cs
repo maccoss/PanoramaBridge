@@ -37,6 +37,61 @@ public sealed class CommandOptionsTests
         options.Paths.ShouldBeEmpty();
         options.Extensions.ShouldContain(".raw", "the defaults are the ones the settings screen uses");
         options.ExcludedExtensions.ShouldContain(".skyd", "so does the exclusion list");
+        options.AlsoWatch.ShouldBeEmpty("one folder unless another is asked for");
+        options.NoUpload.ShouldBeFalse("watch transfers unless told not to");
+        options.ForMinutes.ShouldBe(0, "zero means watch until interrupted");
+    }
+
+    [Fact]
+    public void Several_folders_can_be_watched_at_once()
+    {
+        // How the cost of several configurations is measured: each folder gets its own watcher
+        // and its own sweep timer, which is what the application does and what multiplies.
+        var options = Parse("--also", @"E:\Data", "--also", @"F:\Data");
+
+        options.AlsoWatch.ShouldBe([@"E:\Data", @"F:\Data"]);
+    }
+
+    [Fact]
+    public void An_extra_folder_is_not_confused_with_the_remote_path()
+    {
+        // watch takes an optional remote directory second, so extra locals have to be named
+        // rather than positional -- otherwise pbctl watch A B means two different things
+        // depending on whether B happens to look like a remote path.
+        var options = Parse("/_webdav/MacCoss/maccoss/@files/", "--also", @"E:\Data");
+
+        options.Paths.ShouldBe(["/_webdav/MacCoss/maccoss/@files/"]);
+        options.AlsoWatch.ShouldBe([@"E:\Data"]);
+    }
+
+    [Fact]
+    public void A_folder_switch_with_no_folder_is_refused()
+    {
+        Reject("--also").ShouldContain("needs a directory");
+    }
+
+    [Fact]
+    public void A_folder_switch_does_not_swallow_the_next_switch()
+    {
+        // The same trap --exclude guards. Left unchecked this watches a directory named
+        // "--no-upload" and silently does not apply the switch, so the run contacts a server
+        // somebody had just said not to contact.
+        Reject("--also", "--no-upload").ShouldContain("--no-upload");
+    }
+
+    [Fact]
+    public void Walking_without_uploading_is_asked_for_by_name()
+    {
+        Parse("--no-upload").NoUpload.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void A_run_can_stop_itself()
+    {
+        // So the idle-cost measurement is repeatable rather than something a person has to sit
+        // and interrupt at the right moment.
+        Parse("--for", "5").ForMinutes.ShouldBe(5);
+        Reject("--for").ShouldContain("needs a number");
     }
 
     [Fact]

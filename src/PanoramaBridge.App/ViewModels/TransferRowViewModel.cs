@@ -49,6 +49,16 @@ public sealed partial class TransferRowViewModel : ObservableObject
     /// <summary>File name alone, for the narrow first column.</summary>
     public string FileName { get; }
 
+    /// <summary>
+    /// Which configuration is moving this file.
+    /// </summary>
+    /// <remarks>
+    /// Observable rather than fixed at construction: a file can be offered by one configuration
+    /// and, after the settings change, by another, and the row is reused rather than rebuilt.
+    /// </remarks>
+    [ObservableProperty]
+    private string _configuration = string.Empty;
+
     [ObservableProperty]
     private string _remotePath = string.Empty;
 
@@ -123,6 +133,14 @@ public sealed partial class TransferRowViewModel : ObservableObject
 
         RemotePath = progress.RemotePath;
         State = progress.State;
+
+        // Only when the report carries one. A readiness report about a file nothing has claimed
+        // yet has none, and blanking the column each time one arrived would make the name flicker
+        // in and out while an acquisition was being written.
+        if (!string.IsNullOrEmpty(progress.Configuration))
+        {
+            Configuration = progress.Configuration;
+        }
 
         // The phase is what the engine is doing at this instant; the state is only where the
         // file stands. Preferring the phase is what stops a row reading "Queued" while the

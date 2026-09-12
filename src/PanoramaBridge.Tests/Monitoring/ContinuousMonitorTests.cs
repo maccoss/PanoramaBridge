@@ -35,10 +35,10 @@ public sealed class ContinuousMonitorTests : IAsyncLifetime
     [Fact]
     public void The_exclusion_setting_reaches_the_filter_the_monitor_uses()
     {
-        // FromSettings is the only place the settings screen meets the sweep and the watcher, so
-        // a setting dropped here is a setting that appears to work and does nothing. The .skyd
-        // fix is worthless if the box on the screen never arrives.
-        var options = MonitorOptions.FromSettings(new AppSettings
+        // FromConfiguration is the only place the settings screen meets the sweep and the
+        // watcher, so a setting dropped here is a setting that appears to work and does nothing.
+        // The .skyd fix is worthless if the box on the screen never arrives.
+        var options = MonitorOptions.FromConfiguration(new MonitoringConfiguration
         {
             LocalDirectory = _watched,
             Extensions = [".raw"],
@@ -192,7 +192,7 @@ public sealed class ContinuousMonitorTests : IAsyncLifetime
 
         _server.Content(Destination.Append("run1.raw")).ShouldBe(content);
 
-        var record = (await _store.GetAsync(path)).ShouldNotBeNull();
+        var record = (await _store.GetAsync(new LedgerKey(path, PathSafety.ResolveDestination(_watched, path, Destination).ToEncodedString()))).ShouldNotBeNull();
         record.State.ShouldBe(TransferState.Verified);
         record.VerifyMethod.ShouldBe(VerifyMethod.ServerMd5);
     }

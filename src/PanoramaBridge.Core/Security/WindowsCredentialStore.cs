@@ -42,19 +42,26 @@ public sealed class WindowsCredentialStore : ICredentialStore
     /// Keyed on scheme and host only. Including the path would create a separate entry for every
     /// destination folder on the same server, which is not how anyone thinks about a login.
     /// </remarks>
-    public static string TargetFor(string serverUrl)
+    public static string TargetFor(string serverUrl, string account = "")
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serverUrl);
 
-        return Uri.TryCreate(serverUrl, UriKind.Absolute, out var uri)
-            ? $"{TargetPrefix}:{uri.Scheme}://{uri.Host}"
-            : $"{TargetPrefix}:{serverUrl.Trim().TrimEnd('/')}";
+        var host = Uri.TryCreate(serverUrl, UriKind.Absolute, out var uri)
+            ? $"{uri.Scheme}://{uri.Host}"
+            : serverUrl.Trim().TrimEnd('/');
+
+        // An empty account produces exactly the name used before accounts existed. That is the
+        // whole migration: every credential already stored is found where it has always been, and
+        // a rolled-back build still finds it because nothing was moved or rewritten.
+        return string.IsNullOrEmpty(account)
+            ? $"{TargetPrefix}:{host}"
+            : $"{TargetPrefix}:{host}#{account}";
     }
 
     /// <inheritdoc />
-    public StoredCredential? Read(string serverUrl)
+    public StoredCredential? Read(string serverUrl, string account = "")
     {
-        var target = TargetFor(serverUrl);
+        var target = TargetFor(serverUrl, account);
 
         if (!CredReadW(target, CredentialType.Generic, 0, out var handle))
         {
@@ -88,12 +95,12 @@ public sealed class WindowsCredentialStore : ICredentialStore
     }
 
     /// <inheritdoc />
-    public void Write(string serverUrl, StoredCredential credential)
+    public void Write(string serverUrl, StoredCredential credential, string account = "")
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(credential.UserName);
         ArgumentNullException.ThrowIfNull(credential.Secret);
 
-        var target = TargetFor(serverUrl);
+        var target = TargetFor(serverUrl, account);
         var blob = Encoding.Unicode.GetBytes(credential.Secret);
 
         // The documented ceiling is 512 bytes for the blob, i.e. 256 UTF-16 characters. An API
@@ -142,9 +149,9 @@ public sealed class WindowsCredentialStore : ICredentialStore
     }
 
     /// <inheritdoc />
-    public void Delete(string serverUrl)
+    public void Delete(string serverUrl, string account = "")
     {
-        var target = TargetFor(serverUrl);
+        var target = TargetFor(serverUrl, account);
 
         if (CredDeleteW(target, CredentialType.Generic, 0))
         {

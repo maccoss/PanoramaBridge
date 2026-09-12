@@ -111,11 +111,25 @@
         </Border>
 
         <TabControl Margin="8" Padding="12">
+            <TabItem Header="Configurations">
+                <views:ConfigurationsView DataContext="{Binding Configurations}" />
+            </TabItem>
+            <!--
+                These two edit whichever configuration is selected on the Configurations tab.
+                Which one that is, is said at the top of each view rather than in the tab header:
+                a header carrying a name has no width to spare, and the name is a folder, so it
+                can be arbitrarily long. An earlier attempt bound it here with a StringFormat and
+                got two tabs both reading just the configuration name. TabItem.Header is typed
+                object, and WPF silently ignores StringFormat when the target is not a string.
+            -->
             <TabItem Header="Local Monitoring">
                 <views:LocalMonitoringView DataContext="{Binding Settings}" />
             </TabItem>
             <TabItem Header="Remote Settings">
                 <views:RemoteSettingsView x:Name="RemoteSettings" DataContext="{Binding Settings}" />
+            </TabItem>
+            <TabItem Header="Application">
+                <views:ApplicationView DataContext="{Binding Settings}" />
             </TabItem>
             <TabItem Header="Transfer Status">
                 <views:TransferStatusView DataContext="{Binding TransferStatus}" />

@@ -348,9 +348,13 @@ public sealed class ReconciliationScanner
     /// network that was down overnight.
     /// </para>
     /// </remarks>
-    private bool IsAccountedFor(LocalFileStamp stamp, UploadRecord? record)
+    /// <param name="rows">
+    /// Every ledger row for this file, which is one under a single configuration and one per
+    /// destination under several.
+    /// </param>
+    private bool IsAccountedFor(LocalFileStamp stamp, IReadOnlyList<UploadRecord>? rows)
     {
-        if (record is null)
+        if (rows is null || rows.Count == 0)
         {
             return false;
         }
@@ -376,8 +380,22 @@ public sealed class ReconciliationScanner
             // every sweep for ever, failing identically each time and adding to the failure count
             // each time. A row already recorded as failing for this, on a file that has not
             // changed since, has nothing new to learn.
-            return record is { State: TransferState.Failed }
-                && stamp.Matches(record.Length, record.LastWriteUnixMs);
+            // No destination, so no row is "the" row. Any of them recording this same failure
+            // against a file that has not changed is the answer, because a name the server would
+            // mangle is mangled for every destination alike.
+            return rows.Any(row =>
+                row is { State: TransferState.Failed }
+                && stamp.Matches(row.Length, row.LastWriteUnixMs));
+        }
+
+        // The row for where this file would go now. Another configuration's row for the same file
+        // says nothing about this one: that is the whole reason the ledger is keyed by both.
+        var record = rows.FirstOrDefault(
+            row => string.Equals(row.RemotePath, destination, StringComparison.Ordinal));
+
+        if (record is null)
+        {
+            return false;
         }
 
         if (record.IsSettledAt(stamp, destination))

@@ -30,19 +30,135 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly ISettingsStore _store;
     private AppSettings _saved;
 
-    public SettingsViewModel(ISettingsStore store, AppSettings initial)
+    private int _configurationIndex;
+
+    /// <param name="configurationIndex">
+    /// Which configuration to edit. The Configurations tab changes it through
+    /// <see cref="EditConfigurationAsync"/>; the first one is what the window opens on.
+    /// </param>
+    public SettingsViewModel(ISettingsStore store, AppSettings initial, int configurationIndex = 0)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _saved = (initial ?? throw new ArgumentNullException(nameof(initial)))
             .NormalizeWithdrawnValues();
 
+        _configurationIndex = configurationIndex;
+
         LoadFrom(_saved);
+    }
+
+    /// <summary>Raised when the configurations, or which one is being edited, have changed.</summary>
+    /// <remarks>
+    /// The Configurations tab is a view over what this owns rather than a second owner of it --
+    /// two objects holding the same settings is exactly the trap this class's own remarks warn
+    /// about -- so it rebuilds its list from here when this fires.
+    /// </remarks>
+    public event Action? ConfigurationsChanged;
+
+    /// <summary>Which configuration the Local Monitoring and Remote Settings tabs are editing.</summary>
+    public int ConfigurationIndex => _configurationIndex;
+
+    /// <summary>The saved configurations, with the current edits folded into the selected one.</summary>
+    public IReadOnlyList<MonitoringConfiguration> Configurations => ToSettings().Configurations;
+
+    /// <summary>
+    /// The configuration the editor tabs are showing, including edits not yet saved.
+    /// </summary>
+    /// <remarks>
+    /// The password box, the Save credentials tickbox and the Test connection button all belong
+    /// to this one and not to the first in the list. Exposed rather than re-derived by each
+    /// caller, because a caller that guesses at it writes one configuration's key into another
+    /// configuration's credential slot -- silently, and with no way to tell from the screen.
+    /// </remarks>
+    public MonitoringConfiguration Edited => ConfigurationIn(ToSettings());
+
+    /// <summary>What the editor tabs are showing, for their headers.</summary>
+    public string EditingName => Edited.DisplayName;
+
+    /// <summary>
+    /// Points the editor tabs at a different configuration.
+    /// </summary>
+    /// <remarks>
+    /// Saves first. Switching away from half-typed edits and silently discarding them would be
+    /// the worst of the options: the boxes would simply be different when you came back and
+    /// nothing would say why. Saving is cheap, reversible, and already what pressing Start
+    /// monitoring does.
+    /// </remarks>
+    public async Task EditConfigurationAsync(
+        int index,
+        CancellationToken cancellationToken = default)
+    {
+        if (index == _configurationIndex)
+        {
+            return;
+        }
+
+        var settings = await SaveAsync(cancellationToken).ConfigureAwait(true);
+
+        _configurationIndex = index;
+
+        LoadFrom(settings);
+        OnPropertyChanged(nameof(HasUnsavedChanges));
+        OnPropertyChanged(nameof(ConfigurationIndex));
+        OnPropertyChanged(nameof(EditingName));
+
+        ConfigurationsChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Replaces the whole set of configurations, and says which one to edit afterwards.
+    /// </summary>
+    /// <remarks>
+    /// The single seam the Configurations tab writes through. Adding, copying, deleting and
+    /// ticking Enabled all come down to a new list plus an index, and routing them all through
+    /// one method is what keeps this class the only thing that owns the settings.
+    /// </remarks>
+    public async Task<AppSettings> ReplaceConfigurationsAsync(
+        IReadOnlyList<MonitoringConfiguration> configurations,
+        int index,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(configurations);
+
+        // From ToSettings, so an edit in progress on the selected configuration is carried rather
+        // than thrown away by a tick in the list beside it.
+        var settings = ToSettings() with { Configurations = configurations };
+
+        await _store.SaveAsync(settings, cancellationToken).ConfigureAwait(true);
+
+        _saved = settings;
+        _configurationIndex = Math.Clamp(index, 0, Math.Max(0, configurations.Count - 1));
+
+        LoadFrom(settings);
+        OnPropertyChanged(nameof(HasUnsavedChanges));
+        OnPropertyChanged(nameof(ConfigurationIndex));
+        OnPropertyChanged(nameof(EditingName));
+
+        ConfigurationsChanged?.Invoke();
+
+        return settings;
     }
 
     // -- Local monitoring ---------------------------------------------------------------------
 
+    /// <summary>
+    /// What this configuration is called in the list.
+    /// </summary>
+    /// <remarks>
+    /// Empty is allowed and common: an unnamed configuration is shown by the folder it watches,
+    /// which is what people call them anyway. It is editable because the alternative was that
+    /// nothing could set it at all -- two instruments whose folders are both called Data were
+    /// then two rows with the same name, two identical tab headers, and one entry between them
+    /// in the window's status line.
+    /// </remarks>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
+    [NotifyPropertyChangedFor(nameof(EditingName))]
+    private string _name = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasUnsavedChanges))]
+    [NotifyPropertyChangedFor(nameof(EditingName))]
     private string _localDirectory = string.Empty;
 
     [ObservableProperty]
@@ -162,32 +278,66 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>Problems that would prevent a transfer, or empty when the settings are usable.</summary>
     public IReadOnlyList<string> Problems => ToSettings().Validate();
 
+    /// <summary>The configuration being edited, as saved.</summary>
+    /// <remarks>
+    /// An empty one when there is nothing at that index, which is how a settings file with no
+    /// configurations at all still gives the tabs something to edit rather than throwing on the
+    /// way to showing the window.
+    /// </remarks>
+    private MonitoringConfiguration Saved => ConfigurationIn(_saved);
+
+    /// <summary>The configuration under edit within a particular settings record.</summary>
+    private MonitoringConfiguration ConfigurationIn(AppSettings settings) =>
+        _configurationIndex >= 0 && _configurationIndex < settings.Configurations.Count
+            ? settings.Configurations[_configurationIndex]
+            : new MonitoringConfiguration();
+
     /// <summary>The current edits as a settings record.</summary>
-    public AppSettings ToSettings() => _saved with
+    public AppSettings ToSettings()
     {
-        LocalDirectory = LocalDirectory,
-        IncludeSubdirectories = IncludeSubdirectories,
-        Extensions = AppSettings.ParseExtensions(ExtensionsText),
-        ExcludedExtensions = AppSettings.ParseExtensions(ExcludedExtensionsText),
-        StabilitySeconds = StabilitySeconds,
-        ReconcileMinutes = ReconcileMinutes,
-        LockedFileRetryIntervalSeconds = LockedFileRetryIntervalSeconds,
-        LockedFileMaxRetries = LockedFileMaxRetries,
-        MaxConcurrentTransfers = MaxConcurrentTransfers,
-        ConflictPolicy = ConflictPolicy,
-        VerifyUploads = VerifyUploads,
-        WriteChecksumSidecars = WriteChecksumSidecars,
-        ServerUrl = ServerUrl.Trim(),
-        AuthMode = AuthMode,
-        UserName = UserName.Trim(),
-        SaveCredentials = SaveCredentials,
-        RemotePath = RemotePath.Trim(),
-        TrustedRootCertificatePath = string.IsNullOrWhiteSpace(TrustedRootCertificatePath)
-            ? null
-            : TrustedRootCertificatePath,
-        VerboseLogging = VerboseLogging,
-        MinimizeToTray = MinimizeToTray,
-    };
+        var edited = Saved with
+        {
+            Name = Name.Trim(),
+            LocalDirectory = LocalDirectory,
+            IncludeSubdirectories = IncludeSubdirectories,
+            Extensions = AppSettings.ParseExtensions(ExtensionsText),
+            ExcludedExtensions = AppSettings.ParseExtensions(ExcludedExtensionsText),
+            StabilitySeconds = StabilitySeconds,
+            ReconcileMinutes = ReconcileMinutes,
+            LockedFileRetryIntervalSeconds = LockedFileRetryIntervalSeconds,
+            LockedFileMaxRetries = LockedFileMaxRetries,
+            ConflictPolicy = ConflictPolicy,
+            VerifyUploads = VerifyUploads,
+            WriteChecksumSidecars = WriteChecksumSidecars,
+            ServerUrl = ServerUrl.Trim(),
+            AuthMode = AuthMode,
+            UserName = UserName.Trim(),
+            SaveCredentials = SaveCredentials,
+            RemotePath = RemotePath.Trim(),
+        };
+
+        var configurations = _saved.Configurations.ToArray();
+
+        if (_configurationIndex >= 0 && _configurationIndex < configurations.Length)
+        {
+            configurations[_configurationIndex] = edited;
+        }
+        else
+        {
+            configurations = [.. configurations, edited];
+        }
+
+        return _saved with
+        {
+            Configurations = configurations,
+            MaxConcurrentTransfers = MaxConcurrentTransfers,
+            TrustedRootCertificatePath = string.IsNullOrWhiteSpace(TrustedRootCertificatePath)
+                ? null
+                : TrustedRootCertificatePath,
+            VerboseLogging = VerboseLogging,
+            MinimizeToTray = MinimizeToTray,
+        };
+    }
 
     /// <summary>Persists the current edits.</summary>
     public async Task<AppSettings> SaveAsync(CancellationToken cancellationToken = default)
@@ -203,6 +353,11 @@ public sealed partial class SettingsViewModel : ObservableObject
         _saved = settings;
         LoadFrom(settings);
         OnPropertyChanged(nameof(HasUnsavedChanges));
+        OnPropertyChanged(nameof(EditingName));
+
+        // The list shows the monitored folder, and an unnamed configuration is named after it,
+        // so saving can change what the Configurations tab should be displaying.
+        ConfigurationsChanged?.Invoke();
 
         // Immediately, because someone turning this on is trying to capture something that is
         // happening now.
@@ -248,11 +403,11 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     [RelayCommand]
     private void RestoreDefaultExtensions() =>
-        ExtensionsText = new AppSettings().FormatExtensions();
+        ExtensionsText = new MonitoringConfiguration().FormatExtensions();
 
     [RelayCommand]
     private void RestoreDefaultExcludedExtensions() =>
-        ExcludedExtensionsText = new AppSettings().FormatExcludedExtensions();
+        ExcludedExtensionsText = new MonitoringConfiguration().FormatExcludedExtensions();
 
     [RelayCommand]
     private static void OpenApiKeyPage()
@@ -269,23 +424,27 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private void LoadFrom(AppSettings settings)
     {
-        LocalDirectory = settings.LocalDirectory;
-        IncludeSubdirectories = settings.IncludeSubdirectories;
-        ExtensionsText = settings.FormatExtensions();
-        ExcludedExtensionsText = settings.FormatExcludedExtensions();
-        StabilitySeconds = settings.StabilitySeconds;
-        ReconcileMinutes = settings.ReconcileMinutes;
-        LockedFileRetryIntervalSeconds = settings.LockedFileRetryIntervalSeconds;
-        LockedFileMaxRetries = settings.LockedFileMaxRetries;
+        var configuration = ConfigurationIn(settings);
+
+        Name = configuration.Name;
+        LocalDirectory = configuration.LocalDirectory;
+        IncludeSubdirectories = configuration.IncludeSubdirectories;
+        ExtensionsText = configuration.FormatExtensions();
+        ExcludedExtensionsText = configuration.FormatExcludedExtensions();
+        StabilitySeconds = configuration.StabilitySeconds;
+        ReconcileMinutes = configuration.ReconcileMinutes;
+        LockedFileRetryIntervalSeconds = configuration.LockedFileRetryIntervalSeconds;
+        LockedFileMaxRetries = configuration.LockedFileMaxRetries;
+        ConflictPolicy = configuration.ConflictPolicy;
+        VerifyUploads = configuration.VerifyUploads;
+        WriteChecksumSidecars = configuration.WriteChecksumSidecars;
+        ServerUrl = configuration.ServerUrl;
+        AuthMode = configuration.AuthMode;
+        UserName = configuration.UserName;
+        SaveCredentials = configuration.SaveCredentials;
+        RemotePath = configuration.RemotePath;
+
         MaxConcurrentTransfers = settings.MaxConcurrentTransfers;
-        ConflictPolicy = settings.ConflictPolicy;
-        VerifyUploads = settings.VerifyUploads;
-        WriteChecksumSidecars = settings.WriteChecksumSidecars;
-        ServerUrl = settings.ServerUrl;
-        AuthMode = settings.AuthMode;
-        UserName = settings.UserName;
-        SaveCredentials = settings.SaveCredentials;
-        RemotePath = settings.RemotePath;
         TrustedRootCertificatePath = settings.TrustedRootCertificatePath;
         VerboseLogging = settings.VerboseLogging;
         MinimizeToTray = settings.MinimizeToTray;

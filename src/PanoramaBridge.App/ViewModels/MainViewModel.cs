@@ -37,6 +37,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel(
         SettingsViewModel settings,
+        ConfigurationsViewModel configurations,
         TransferStatusViewModel transferStatus,
         UploadsViewModel uploads,
         TransferService transfers,
@@ -47,6 +48,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ILogger<MainViewModel> log)
     {
         Settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        Configurations = configurations ?? throw new ArgumentNullException(nameof(configurations));
         TransferStatus = transferStatus ?? throw new ArgumentNullException(nameof(transferStatus));
         Uploads = uploads ?? throw new ArgumentNullException(nameof(uploads));
         _transfers = transfers ?? throw new ArgumentNullException(nameof(transfers));
@@ -65,6 +67,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     public SettingsViewModel Settings { get; }
+
+    /// <summary>The list of folder-to-destination pairings, and which one the tabs are editing.</summary>
+    public ConfigurationsViewModel Configurations { get; }
 
     public TransferStatusViewModel TransferStatus { get; }
 
@@ -219,7 +224,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             RememberCredential(settings);
 
             var summary = await _transfers
-                .ScanAndUploadAsync(settings, SecretProvider?.Invoke(), _shutdown.Token)
+                .ScanAndUploadAsync(
+                    settings, SecretProvider?.Invoke(), Settings.Edited, _shutdown.Token)
                 .ConfigureAwait(true);
 
             StatusLine = Describe(summary);
@@ -255,6 +261,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         if (_transfers.IsMonitoring)
         {
+            // Whatever the stopped configurations last reported stops being true the moment they
+            // stop being watched. Left behind, a failure from one of them would survive into the
+            // next session's status line and never clear.
+            _sweeps.Clear();
+
             StatusLine = "Stopping monitoring...";
 
             await _transfers.StopMonitoringAsync().ConfigureAwait(true);
@@ -280,12 +291,21 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             RememberCredential(settings);
 
             await _transfers
-                .StartMonitoringAsync(settings, SecretProvider?.Invoke(), _shutdown.Token)
+                .StartMonitoringAsync(
+                    settings, SecretProvider?.Invoke(), Settings.Edited, _shutdown.Token)
                 .ConfigureAwait(true);
 
             IsMonitoring = true;
             ConnectionFailed = false;
-            StatusLine = $"Monitoring {settings.LocalDirectory}.";
+
+            var count = _transfers.MonitoredConfigurations;
+
+            // The folder of the one actually being watched, not of the one the tabs happen to
+            // show: with a single configuration they are the same, and with several the count is
+            // what is worth saying.
+            StatusLine = count == 1
+                ? $"Monitoring {settings.EnabledConfigurations.First().LocalDirectory}."
+                : $"Monitoring {count} configurations.";
         }
         catch (Exception ex)
         {
@@ -314,7 +334,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ConnectionDetail = null;
 
         var result = await _transfers
-            .TestConnectionAsync(settings, SecretProvider?.Invoke(), _shutdown.Token)
+            .TestConnectionAsync(
+                settings, SecretProvider?.Invoke(), Settings.Edited, _shutdown.Token)
             .ConfigureAwait(true);
 
         StatusLine = result.Summary;
@@ -401,24 +422,34 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             MessageBoxImage.Information);
 
     /// <summary>Stores or clears the credential according to the user's choice.</summary>
+    /// <remarks>
+    /// Only for the configuration being edited, and asked of the settings view model rather than
+    /// assumed to be the first in the list. There is one password box and one Save credentials
+    /// tickbox; they describe whichever configuration the tabs are showing. Taking the first
+    /// instead wrote one configuration's key into another's credential slot, and an unticked box
+    /// deleted a credential belonging to a configuration nobody was looking at.
+    /// </remarks>
     private void RememberCredential(AppSettings settings)
     {
         var secret = SecretProvider?.Invoke();
+        var configuration = Settings.Edited;
 
-        if (!settings.SaveCredentials)
+        if (!configuration.SaveCredentials)
         {
             // Unticking the box has to actually remove what was stored earlier, not merely stop
-            // adding to it.
-            _credentials.Forget(settings.ServerUrl);
+            // adding to it. Only this configuration's own credential: another one signed in to
+            // the same server as somebody else must stay signed in.
+            _credentials.Forget(configuration.ServerUrl, configuration.Account);
             return;
         }
 
         if (!string.IsNullOrWhiteSpace(secret))
         {
             _credentials.Remember(
-                settings.ServerUrl,
-                settings.AuthMode == AuthMode.ApiKey ? "apikey" : settings.UserName,
-                secret);
+                configuration.ServerUrl,
+                configuration.AuthMode == AuthMode.ApiKey ? "apikey" : configuration.UserName,
+                secret,
+                configuration.Account);
         }
     }
 
@@ -481,17 +512,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// runs. Saying so in the status line is what makes a monitor that has nothing to do
     /// distinguishable from one that has stopped working.
     /// </remarks>
-    private void OnSwept(Core.Monitoring.SweepResult result)
+    private void OnSwept(Services.ConfigurationSweep sweep)
     {
         var dispatcher = Application.Current?.Dispatcher;
 
         if (dispatcher is not null && !dispatcher.CheckAccess())
         {
-            dispatcher.InvokeAsync(() => ApplySweep(result));
+            dispatcher.InvokeAsync(() => ApplySweep(sweep));
             return;
         }
 
-        ApplySweep(result);
+        ApplySweep(sweep);
     }
 
     private void OnMonitoringFailed(string message)
@@ -514,20 +545,25 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         IsMonitoring = _transfers.IsMonitoring;
     }
 
-    private void ApplySweep(Core.Monitoring.SweepResult result)
+    /// <summary>
+    /// The most recent sweep from each configuration, so the status line describes all of them.
+    /// </summary>
+    /// <remarks>
+    /// What the line then says is <see cref="Core.Monitoring.MonitoringSummary"/>'s decision, not
+    /// this view model's: it is the only part of the status line that has to weigh several
+    /// answers against each other, and it belongs somewhere it can be tested without a dispatcher.
+    /// </remarks>
+    private readonly Dictionary<string, Core.Monitoring.SweepResult> _sweeps =
+        new(StringComparer.Ordinal);
+
+    private void ApplySweep(Services.ConfigurationSweep sweep)
     {
-        if (result.Failed)
-        {
-            StatusLine = result.Problem ?? "The folder could not be checked.";
-            ConnectionFailed = true;
-            return;
-        }
+        _sweeps[sweep.Configuration] = sweep.Result;
 
-        ConnectionFailed = false;
+        var summary = Core.Monitoring.MonitoringSummary.Describe(_sweeps);
 
-        StatusLine = result.Offered > 0
-            ? $"Monitoring - {result.Offered} file(s) to transfer."
-            : $"Monitoring - {result.Examined} file(s) checked, all up to date.";
+        StatusLine = summary.Line;
+        ConnectionFailed = summary.Failed;
     }
 
     private async Task RunUpdateLoopAsync(CancellationToken cancellationToken)
@@ -646,7 +682,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 /// </remarks>
 public interface ICredentialStoreAccessor
 {
-    void Remember(string serverUrl, string userName, string secret);
+    /// <param name="account">
+    /// Which credential for this server is meant. Empty is the one held for the server as a
+    /// whole, which is where every credential stored before configurations existed still lives.
+    /// </param>
+    void Remember(string serverUrl, string userName, string secret, string account = "");
 
-    void Forget(string serverUrl);
+    /// <inheritdoc cref="Remember" />
+    void Forget(string serverUrl, string account = "");
 }

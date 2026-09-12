@@ -100,7 +100,15 @@ public static class Program
         }
     }
 
-    private static ServiceProvider BuildServiceProvider(AppPaths paths, ResourceGovernor governor)
+    /// <summary>
+    /// Wires everything the window needs.
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than private so a test can build it. Every registration here compiles
+    /// whatever it resolves to, so a missing one, a cycle, or a view model whose constructor
+    /// throws is a window that will not open and nothing else would go red.
+    /// </remarks>
+    internal static ServiceProvider BuildServiceProvider(AppPaths paths, ResourceGovernor governor)
     {
         var services = new ServiceCollection();
 
@@ -167,7 +175,10 @@ public static class Program
         services.AddSingleton(provider => new TransferStatusViewModel(
             provider.GetRequiredService<TransferService>().Progress));
 
-        services.AddSingleton<UploadsViewModel>();
+        services.AddSingleton<ConfigurationsViewModel>();
+        services.AddSingleton(provider => new UploadsViewModel(
+            provider.GetRequiredService<IStateStore>(),
+            () => provider.GetRequiredService<SettingsViewModel>().Configurations));
         services.AddSingleton<MainViewModel>();
         services.AddSingleton<MainWindow>();
 
