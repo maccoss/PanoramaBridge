@@ -97,14 +97,20 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [NotifyCanExecuteChangedFor(nameof(CancelCommand))]
     private bool _isBusy;
 
-    /// <summary>Whether the monitored folder is being watched.</summary>
+    /// <summary>Whether anything is being watched.</summary>
+    /// <remarks>
+    /// The NotifyCanExecuteChangedFor is what makes Stop all usable, and leaving it off is not a
+    /// missing nicety: CommunityToolkit's RelayCommand does not listen to
+    /// CommandManager.RequerySuggested, so a command's CanExecute is asked once when the binding
+    /// attaches and then only when something raises CanExecuteChanged. This property starts false,
+    /// so without this attribute the button is evaluated once as disabled and stays that way for
+    /// the life of the window -- with nothing to see, because a button that is greyed out from the
+    /// start looks like a button that has nothing to do.
+    /// </remarks>
     [ObservableProperty]
-
     [NotifyPropertyChangedFor(nameof(UploadNowButtonText))]
+    [NotifyCanExecuteChangedFor(nameof(StopAllCommand))]
     private bool _isMonitoring;
-
-    /// <summary>Label on the monitoring button, so one button serves both states.</summary>
-
 
     /// <summary>
     /// Label on the scan button.
@@ -247,13 +253,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private bool CanUploadNow() => !IsBusy && !UploadsBlocked;
 
     /// <summary>
-    /// Starts or stops watching the monitored folder.
-    /// </summary>
-    /// <remarks>
-    /// Stopping is always allowed, including while the version floor blocks new uploads: a build
-    /// that may not start new work still has to be able to stand down cleanly.
-    /// </remarks>
-    /// <summary>
     /// Stops every configuration that is running.
     /// </summary>
     /// <remarks>
@@ -263,8 +262,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// ran only when both agreed.
     /// <para>
     /// Stopping stayed global because there is a real use for it that no per-row button covers:
-    /// stand everything down at once, before a reboot or when something is wrong. It is also what
-    /// the tray's Exit and the updater's restart already call.
+    /// stand everything down at once, before a reboot or when something is wrong. Shutdown does
+    /// not come through here -- it reaches <see cref="TransferService.StopMonitoringAsync"/> by
+    /// way of DisposeAsync -- so this is the button and nothing else.
+    /// </para>
+    /// <para>
+    /// Always allowed while anything is running, including while the version floor blocks new
+    /// uploads: a build that may not start new work still has to be able to stand down cleanly.
     /// </para>
     /// </remarks>
     [RelayCommand(CanExecute = nameof(IsMonitoring))]

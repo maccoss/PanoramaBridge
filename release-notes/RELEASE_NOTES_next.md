@@ -21,6 +21,10 @@ time and update the heading; see `README.md` in this directory for the process.
 
 ## Bug Fixes
 
+- **Stop all never became pressable.** Splitting Start onto each row left the toolbar button with
+  nothing to tell it that something had started, so it was greyed out from launch and stayed that
+  way -- and with starting now per configuration, there was no other way to stand everything down
+  before a reboot.
 - A settings file that was briefly in use by something else -- antivirus opening it, or a backup
   agent walking your profile -- was treated as though its contents were bad: moved aside and
   replaced with defaults, so the monitored folder, the destination and the sign-in all appeared to

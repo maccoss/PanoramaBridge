@@ -195,6 +195,35 @@ public sealed class MainViewModelTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Stop_all_becomes_pressable_when_something_starts()
+    {
+        // CanExecuteChanged, not CanExecute. Asking the command directly evaluates the predicate
+        // there and then, so it answers correctly whether or not anything was ever raised -- which
+        // is why the test above passed against a button nobody could press. A WPF button asks once
+        // when the binding attaches, and after that only when this event tells it to; with
+        // IsMonitoring false at that moment, an event that never comes means a button that is
+        // greyed out for the life of the window.
+        using var shell = NewShell();
+
+        var raised = 0;
+        shell.StopAllCommand.CanExecuteChanged += (_, _) => raised++;
+
+        shell.StopAllCommand.CanExecute(null).ShouldBeFalse("nothing is running yet");
+
+        await _transfers.StartConfigurationAsync(
+            shell.Settings.ToSettings(),
+            shell.Settings.Configurations[0],
+            "an-api-key");
+
+        raised.ShouldBeGreaterThan(0, "the button is told to ask again");
+        shell.StopAllCommand.CanExecute(null).ShouldBeTrue("and the answer has changed");
+
+        await shell.StopAllCommand.ExecuteAsync(null);
+
+        shell.StopAllCommand.CanExecute(null).ShouldBeFalse("there is nothing left to stop");
+    }
+
+    [Fact]
     public async Task Upload_now_becomes_a_folder_check_and_reports_what_it_found()
     {
         // While monitoring, the button asks the running engine to walk the folder now rather
