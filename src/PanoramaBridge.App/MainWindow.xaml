@@ -68,8 +68,13 @@
                 Padding="12,10">
             <DockPanel>
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
-                    <Button Content="{Binding MonitoringButtonText}" Style="{StaticResource MonitoringButton}"
-                            Command="{Binding ToggleMonitoringCommand}" />
+                    <!--
+                        Stop all, and no Start: starting is per configuration, on its own row.
+                        Stopping stayed here because nothing on a row covers standing everything
+                        down at once, before a reboot or when something is wrong.
+                    -->
+                    <Button Content="Stop all" Style="{StaticResource MonitoringButton}"
+                            Command="{Binding StopAllCommand}" />
                     <Button Content="{Binding UploadNowButtonText}" Style="{StaticResource ToolbarButton}"
                             Command="{Binding UploadNowCommand}" IsDefault="True" />
                     <Button Content="Stop" Style="{StaticResource ToolbarButton}"

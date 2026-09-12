@@ -34,10 +34,12 @@ public readonly record struct ConnectionCheck(
 /// which credential is in force -- live in one place.
 /// </para>
 /// <para>
-/// One <see cref="ConfigurationRunner"/> per enabled configuration, each with its own connection,
-/// engine and monitor, because configurations may watch different folders and address different
-/// servers as different people. What they share is the concurrency limit, which describes the
-/// disk and the link rather than any one pairing -- see <see cref="TransferBudget"/>.
+/// One <see cref="ConfigurationRunner"/> per running configuration, each with its own engine and
+/// monitor. Two things are deliberately shared rather than owned by a runner: the concurrency
+/// limit, which describes the disk and the link rather than any one pairing
+/// (<see cref="TransferBudget"/>), and the connection, which is keyed by server and sign-in
+/// (<see cref="WebDavClientCache"/>) so configurations talking to one Panorama as one account use
+/// one pool between them. A runner must never dispose either.
 /// </para>
 /// </remarks>
 public sealed class TransferService : IAsyncDisposable, IDisposable
@@ -61,19 +63,38 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     private TransferBudget? _budget;
     private CancellationTokenSource? _monitoring;
     private CancellationTokenSource? _run;
+
+    /// <summary>
+    /// The manual scan in flight, so teardown can wait for it.
+    /// </summary>
+    /// <remarks>
+    /// Cancelling it is not enough. A scan borrows a client from the cache, and disposing the
+    /// cache while the scan is still unwinding pulls the HttpClient out from under a request on
+    /// its way to being cancelled -- turning an orderly stop into disposal failures in the log,
+    /// on the way out of the process.
+    /// </remarks>
+    private Task? _scanning;
     private SweepResult? _lastSweep;
 
     /// <summary>
-    /// The connection the settings screen tested, kept for the remote folder browser.
+    /// Every connection this service holds, one per server and sign-in.
     /// </summary>
     /// <remarks>
-    /// Deliberately separate from the runners' connections. The browser shows the server the
-    /// person is editing, which is not necessarily one that is running -- and with configurations
-    /// on different servers, "the connected client" is otherwise an ambiguous thing to ask for.
+    /// Shared by the runners, the one-off scans and the folder browser, so a configuration and the
+    /// settings screen talking to the same server as the same account use one pool between them
+    /// rather than one each.
     /// </remarks>
-    private HttpClient? _browseHttp;
-    private WebDavClient? _browseClient;
-    private string? _browseConnectedTo;
+    private readonly WebDavClientCache _clients;
+
+    /// <summary>
+    /// The connection the settings screen last tested, for the remote folder browser.
+    /// </summary>
+    /// <remarks>
+    /// A reference into the cache rather than a client of its own. The browser shows the server
+    /// the person is editing, which is not necessarily one that is running -- and with
+    /// configurations on different servers, "the connected client" is otherwise ambiguous.
+    /// </remarks>
+    private IWebDavClient? _browseClient;
 
     private bool _disposed;
 
@@ -88,7 +109,11 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         _governor = governor ?? throw new ArgumentNullException(nameof(governor));
         _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
         _log = loggerFactory.CreateLogger<TransferService>();
+        _clients = new WebDavClientCache(_loggerFactory);
     }
+
+    /// <summary>How many distinct server connections are open, for tests that assert the cost.</summary>
+    public int OpenConnections => _clients.Count;
 
     /// <summary>Collects progress for the UI to drain on its own schedule.</summary>
     public TransferProgressAggregator Progress { get; } = new();
@@ -212,13 +237,16 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     {
         ArgumentNullException.ThrowIfNull(settings);
 
-        var problems = settings.Validate();
-        if (problems.Count > 0)
+        var configuration = edited ?? EditedConfiguration(settings) ?? new MonitoringConfiguration();
+
+        // This configuration and then the file as a whole. Asking the settings first would report
+        // a fault on some other row while the person is looking at this one.
+        var problems = (string[])[.. configuration.Validate(), .. settings.Validate()];
+
+        if (problems.Length > 0)
         {
             return new ConnectionCheck(false, problems[0]);
         }
-
-        var configuration = edited ?? EditedConfiguration(settings) ?? new MonitoringConfiguration();
 
         try
         {
@@ -232,7 +260,8 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
                         : "Enter your Panorama password.");
             }
 
-            var client = ConnectForBrowsing(settings, configuration, credential);
+            var client = _clients.For(settings, configuration, credential);
+            _browseClient = client;
 
             var destination = RemotePath.Parse(configuration.RemotePath);
             var capabilities = await client
@@ -311,11 +340,26 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// The configuration the settings tabs are showing, so the typed secret reaches the
     /// credential slot it was typed for. See <see cref="SecretFor"/>.
     /// </param>
-    public async Task<TransferSummary> ScanAndUploadAsync(
+    public Task<TransferSummary> ScanAndUploadAsync(
         AppSettings settings,
         string? secret,
         MonitoringConfiguration? edited = null,
         CancellationToken cancellationToken = default)
+    {
+        // Kept so teardown can wait for it. A method cannot hold its own task, so the public entry
+        // point is this wrapper and the work is below.
+        var scan = ScanCoreAsync(settings, secret, edited, cancellationToken);
+
+        _scanning = scan;
+
+        return scan;
+    }
+
+    private async Task<TransferSummary> ScanCoreAsync(
+        AppSettings settings,
+        string? secret,
+        MonitoringConfiguration? edited,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(settings);
 
@@ -336,7 +380,10 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             throw new InvalidOperationException(problems[0]);
         }
 
-        var configurations = settings.EnabledConfigurations.ToArray();
+        // What could actually transfer. A configuration nobody has filled in is skipped
+            // rather than taking the whole scan down with it, the same way it no longer stops the
+            // others being started.
+            var configurations = settings.UsableConfigurations.ToArray();
 
         // One budget for the whole scan, so pressing Upload now with five configurations moves as
         // many files at once as the slider says rather than five times as many.
@@ -392,7 +439,11 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
                 + $"{configuration.ServerUrl}.");
 
         await using var runner = new ConfigurationRunner(
-            configuration, settings, credential, _store, budget, _loggerFactory);
+            configuration,
+            _clients.For(settings, configuration, credential),
+            _store,
+            budget,
+            _loggerFactory);
 
         runner.Progress += Progress.Report;
         runner.Waiting += OnWaiting;
@@ -432,91 +483,255 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// The configuration the settings tabs are showing, so the typed secret reaches the
     /// credential slot it was typed for. See <see cref="SecretFor"/>.
     /// </param>
-    public async Task StartMonitoringAsync(
+    /// <remarks>
+    /// Deliberately takes no CancellationToken. It had one, inherited from the whole-set API this
+    /// replaced, and it was honored for whichever configuration happened to start first and
+    /// silently dropped for every one after -- because the session's source is created once, from
+    /// that first caller's token. A per-configuration token with no per-configuration meaning is
+    /// worse than none: stopping is <see cref="StopConfigurationAsync"/>, standing everything down
+    /// is <see cref="StopMonitoringAsync"/>, and shutdown reaches the latter through DisposeAsync.
+    /// </remarks>
+    public async Task StartConfigurationAsync(
         AppSettings settings,
+        MonitoringConfiguration configuration,
         string? secret,
-        MonitoringConfiguration? edited = null,
-        CancellationToken cancellationToken = default)
+        MonitoringConfiguration? edited = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
-
-        if (IsMonitoring)
-        {
-            return;
-        }
+        ArgumentNullException.ThrowIfNull(configuration);
 
         if (IsRunning)
         {
             throw new InvalidOperationException(
-                "A scan is already running. Wait for it to finish before starting monitoring.");
+                "A scan is already running. Wait for it to finish before starting a configuration.");
         }
 
-        // IsMonitoring is false once every runner has given up, but the runners themselves are
-        // still here holding a connection, an engine and a monitor each. Starting again without
-        // winding them down would simply drop them, leaking an HttpClient and a set of worker
-        // tasks per configuration, every time somebody pressed the button after a failure.
-        if (_monitoring is not null)
+        if (RunnerFor(configuration) is not null)
         {
-            await StopMonitoringAsync().ConfigureAwait(false);
+            return;
         }
 
-        var problems = settings.Validate();
+        // This configuration only. Starting is per configuration now, so one that is not set up
+        // yet is its own problem and not everybody else's -- which is what the whole-settings
+        // check made it, by refusing on the first fault it found anywhere.
+        var problems = configuration.Validate();
+
         if (problems.Count > 0)
         {
             throw new InvalidOperationException(problems[0]);
         }
 
-        var monitoring = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var budget = new TransferBudget(settings.MaxConcurrentTransfers);
-        var started = new List<ConfigurationRunner>();
+        // Asked of the settings rather than restated here. The bound and its wording had been
+        // copied, so the two could disagree about what is allowed and only one of them would be
+        // the message anybody read.
+        if (settings.Validate() is { Count: > 0 } faults)
+        {
+            throw new InvalidOperationException(faults[0]);
+        }
+
+        var credential = ResolveCredential(
+                configuration, SecretFor(settings, configuration, secret, edited))
+            ?? throw new InvalidOperationException(
+                $"{configuration.DisplayName}: no credential is available for "
+                + $"{configuration.ServerUrl}.");
+
+        // One cancellation source and one budget for the whole session rather than per
+        // configuration: the budget is the limit across all of them, and the source is what Stop
+        // all and shutdown pull. Both are created by whichever configuration starts first, and
+        // both are released by whichever one stops last -- see DiscardSessionIfIdle. Keeping them
+        // past the last runner is what made a changed concurrency limit disappear: ??= then held
+        // on to the old budget, so raising the slider between a Stop and a Run left transfers
+        // throttled at the previous number with nothing on screen saying so.
+        _monitoring ??= new CancellationTokenSource();
+        _budget ??= new TransferBudget(settings.MaxConcurrentTransfers);
+
+        var runner = new ConfigurationRunner(
+            configuration,
+            _clients.For(settings, configuration, credential),
+            _store,
+            _budget,
+            _loggerFactory);
+
+        runner.Progress += Progress.Report;
+        runner.Swept += OnSwept;
+        runner.Waiting += OnWaiting;
+        runner.Failed += OnRunnerFailed;
 
         try
         {
-            foreach (var configuration in settings.EnabledConfigurations)
-            {
-                var credential = ResolveCredential(
-                        configuration, SecretFor(settings, configuration, secret, edited))
-                    ?? throw new InvalidOperationException(
-                        $"{configuration.DisplayName}: no credential is available for "
-                        + $"{configuration.ServerUrl}.");
-
-                var runner = new ConfigurationRunner(
-                    configuration, settings, credential, _store, budget, _loggerFactory);
-
-                runner.Progress += Progress.Report;
-                runner.Swept += OnSwept;
-                runner.Waiting += OnWaiting;
-                runner.Failed += OnRunnerFailed;
-
-                started.Add(runner);
-
-                await runner.StartAsync(monitoring.Token).ConfigureAwait(false);
-            }
+            await runner.StartAsync(_monitoring.Token).ConfigureAwait(false);
         }
         catch
         {
-            foreach (var runner in started)
-            {
-                Detach(runner);
-                await runner.DisposeAsync().ConfigureAwait(false);
-            }
-
-            monitoring.Dispose();
-            budget.Dispose();
+            Detach(runner);
+            await runner.DisposeAsync().ConfigureAwait(false);
             throw;
         }
 
-        _budget = budget;
-        _monitoring = monitoring;
-        _runners = [.. started];
+        _runners = [.. _runners, runner];
 
         _log.LogInformation(
-            "Monitoring {Count} configuration(s), {Concurrency} transfer(s) at once across all of them.",
-            started.Count,
-            budget.Capacity);
+            "{Configuration} started; {Count} running, {Concurrency} transfer(s) at once across "
+            + "all of them.",
+            configuration.DisplayName,
+            MonitoredConfigurations,
+            _budget.Capacity);
 
         RunStateChanged?.Invoke();
     }
+
+    /// <summary>Stops one configuration and waits for its engine to wind down.</summary>
+    /// <remarks>
+    /// The shared budget and cancellation source are left alone while anything else is running.
+    /// They belong to the session rather than to any one configuration, and pulling them here
+    /// would stop the others as a side effect of stopping this one.
+    /// </remarks>
+    public async Task StopConfigurationAsync(MonitoringConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        if (RunnerFor(configuration) is not { } runner)
+        {
+            return;
+        }
+
+        _runners = [.. _runners.Where(r => !ReferenceEquals(r, runner))];
+
+        Detach(runner);
+        await runner.DisposeAsync().ConfigureAwait(false);
+
+        _log.LogInformation("{Configuration} stopped.", configuration.DisplayName);
+
+        DiscardSessionIfIdle();
+
+        RunStateChanged?.Invoke();
+        _governor.ReleaseIdleMemory();
+    }
+
+    /// <summary>
+    /// Stops any runner the settings no longer describe.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A runner is tied to a folder, a destination and a server, because that triple is what it
+    /// actually watches. Change any of them on a configuration that is running, or delete the
+    /// configuration outright, and nothing in the list refers to that runner any more -- it goes
+    /// on sweeping the old folder and transferring to the old destination, with no row left that
+    /// could stop it. Deleting a running configuration did exactly that, and so did editing one:
+    /// the row flipped back to green Run, Stop became a no-op, and pressing Run started a second
+    /// runner beside the first.
+    /// </para>
+    /// <para>
+    /// So the saved list is the authority, and anything running that it does not describe is
+    /// stopped. Stopped rather than re-pointed: a monitor is built around its folder, and quietly
+    /// moving a running one to a folder somebody has just typed -- possibly mid-word -- would
+    /// start watching somewhere nobody has finished choosing. The row goes back to Run, which is
+    /// the truth.
+    /// </para>
+    /// </remarks>
+    /// <returns>How many were stopped, so a caller can say so.</returns>
+    public async Task<int> ReconcileAsync(AppSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        var orphaned = _runners
+            .Where(r => !settings.Configurations.Any(c => Describes(r, c)))
+            .ToArray();
+
+        if (orphaned.Length == 0)
+        {
+            return 0;
+        }
+
+        foreach (var runner in orphaned)
+        {
+            _runners = [.. _runners.Where(r => !ReferenceEquals(r, runner))];
+
+            Detach(runner);
+            await runner.DisposeAsync().ConfigureAwait(false);
+
+            _log.LogInformation(
+                "{Configuration} stopped: the settings no longer describe it.", runner.Name);
+        }
+
+        DiscardSessionIfIdle();
+
+        RunStateChanged?.Invoke();
+        _governor.ReleaseIdleMemory();
+
+        return orphaned.Length;
+    }
+
+    /// <summary>
+    /// Releases the session's budget and cancellation source once nothing is running.
+    /// </summary>
+    /// <remarks>
+    /// They belong to the session rather than to any one configuration, so they are left alone
+    /// while anything else is still running -- pulling them when one configuration stops would
+    /// stop the others as a side effect. Once the last one has gone there is no session left for
+    /// them to belong to, and holding them would carry the old concurrency limit into the next.
+    /// </remarks>
+    private void DiscardSessionIfIdle()
+    {
+        if (_runners.Length > 0)
+        {
+            return;
+        }
+
+        _monitoring?.Dispose();
+        _monitoring = null;
+
+        _budget?.Dispose();
+        _budget = null;
+    }
+
+    /// <summary>Whether this configuration is being watched right now.</summary>
+    public bool IsConfigurationRunning(MonitoringConfiguration configuration) =>
+        RunnerFor(configuration) is { IsRunning: true };
+
+    /// <summary>
+    /// The runner serving this configuration, matched on the folder and destination together.
+    /// </summary>
+    /// <remarks>
+    /// Not on the name, which is a label a person can change while it runs, and not on the record,
+    /// which is replaced by value on every edit. The pairing is what a runner actually is.
+    /// </remarks>
+    private ConfigurationRunner? RunnerFor(MonitoringConfiguration configuration) =>
+        _runners.FirstOrDefault(r => Describes(r, configuration));
+
+    /// <summary>Whether this configuration is the one that runner was started for.</summary>
+    /// <remarks>
+    /// The folder compared case-insensitively because Windows paths are; the destination exactly,
+    /// because a WebDAV path is case-sensitive and two that differ only in case are two places.
+    /// </remarks>
+    private static bool Describes(
+        ConfigurationRunner runner, MonitoringConfiguration configuration) =>
+        string.Equals(
+            runner.Configuration.LocalDirectory,
+            configuration.LocalDirectory,
+            StringComparison.OrdinalIgnoreCase)
+        && string.Equals(
+            runner.Configuration.RemotePath,
+            configuration.RemotePath,
+            StringComparison.Ordinal)
+        && string.Equals(
+            runner.Configuration.ServerUrl,
+            configuration.ServerUrl,
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>What each running configuration is called, so stale reports can be dropped.</summary>
+    public IReadOnlyCollection<string> RunningConfigurationNames =>
+        [.. _runners.Select(r => r.Name)];
+
+    /// <summary>
+    /// How many transfers the running session allows at once, or null when nothing is running.
+    /// </summary>
+    /// <remarks>
+    /// Exposed for the test that the limit is taken afresh once everything has stopped. The
+    /// budget is shared across configurations, so it survives any one of them stopping, and the
+    /// only way to see which one is in force is to ask.
+    /// </remarks>
+    public int? TransferLimit => _budget?.Capacity;
 
     /// <summary>Stops every configuration and waits for the engines to wind down.</summary>
     public async Task StopMonitoringAsync()
@@ -586,12 +801,19 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         _disposed = true;
 
         _run?.Cancel();
+
+        // Waited for, not merely cancelled: the scan is using a client the cache is about to
+        // dispose, and pulling it out from under a request that is still unwinding turns an
+        // orderly stop into disposal failures.
+        await AwaitQuietlyAsync(_scanning).ConfigureAwait(false);
+        _scanning = null;
+
         _run?.Dispose();
         _run = null;
 
         await StopMonitoringAsync().ConfigureAwait(false);
 
-        _browseHttp?.Dispose();
+        _clients.Dispose();
     }
 
     /// <summary>
@@ -643,7 +865,11 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         // leaving it: the budget holds no handle, and the process is exiting.
         _budget = null;
 
-        _browseHttp?.Dispose();
+        // The cache is deliberately not disposed here, unlike in the asynchronous path. This one
+        // cancels without waiting, so a scan may still be unwinding and still holding a borrowed
+        // client; closing its pool underneath it would turn the way out of the process into a
+        // page of disposal failures. The process is exiting and the sockets go with it.
+        _scanning = null;
     }
 
     /// <summary>
@@ -697,6 +923,34 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         var typedFor = WindowsCredentialStore.TargetFor(edited.ServerUrl, edited.Account);
 
         return string.Equals(slot, typedFor, StringComparison.OrdinalIgnoreCase) ? secret : null;
+    }
+
+    /// <summary>
+    /// Waits for something that is already being torn down, and does not let it stop the teardown.
+    /// </summary>
+    /// <remarks>
+    /// A cancelled scan ends by throwing, which is how it is supposed to end. Anything else is
+    /// worth recording but not worth leaving the service half disposed over.
+    /// </remarks>
+    private async Task AwaitQuietlyAsync(Task? task)
+    {
+        if (task is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await task.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // How a cancelled run is supposed to end.
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Something failed while the service was being disposed.");
+        }
     }
 
     private void Detach(ConfigurationRunner runner)
@@ -801,49 +1055,5 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         return configuration.AuthMode == AuthMode.ApiKey
             ? PanoramaCredential.ApiKey(stored.Value.Secret)
             : PanoramaCredential.UserNameAndPassword(stored.Value.UserName, stored.Value.Secret);
-    }
-
-    /// <summary>
-    /// Rebuilds the browsing client when the server or credential changes, and reuses it
-    /// otherwise.
-    /// </summary>
-    /// <remarks>
-    /// Not rebuilt per operation, so repeated trips through the folder browser do not repeat the
-    /// TLS handshake. The identity string is compared rather than the credential itself, so a
-    /// secret is never held longer than needed.
-    /// </remarks>
-    private WebDavClient ConnectForBrowsing(
-        AppSettings settings,
-        MonitoringConfiguration configuration,
-        PanoramaCredential credential)
-    {
-        var identity =
-            $"{configuration.ServerUrl}|{credential.UserName}|{credential.Secret.GetHashCode()}";
-
-        if (_browseClient is not null && _browseConnectedTo == identity)
-        {
-            return _browseClient;
-        }
-
-        _browseHttp?.Dispose();
-
-        var options = new WebDavClientOptions
-        {
-            BaseAddress = new Uri(configuration.ServerUrl, UriKind.Absolute),
-            Credential = credential,
-            MaxConcurrentTransfers = settings.MaxConcurrentTransfers,
-            TrustedRootCertificatePath = settings.TrustedRootCertificatePath,
-            RecordSha256 = settings.RecordSha256,
-        };
-
-        _browseHttp = options.CreateHttpClient();
-        _browseClient = new WebDavClient(
-            _browseHttp, options, _loggerFactory.CreateLogger<WebDavClient>());
-        _browseConnectedTo = identity;
-
-        _log.LogInformation(
-            "Using {Server} as {Credential}.", configuration.ServerUrl, credential.ToString());
-
-        return _browseClient;
     }
 }

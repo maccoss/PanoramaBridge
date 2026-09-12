@@ -18,6 +18,25 @@
         <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}" Margin="0,0,0,8"
                    Text="{Binding Summary}" />
 
+        <!--
+            Shown only when there is something to say. A change that could not be saved used to
+            vanish with the task that failed, leaving a tick on screen that the settings file knew
+            nothing about.
+        -->
+        <TextBlock DockPanel.Dock="Top" Margin="0,0,0,8" TextWrapping="Wrap"
+                   Foreground="#B3261E" FontWeight="SemiBold"
+                   Text="{Binding Problem}">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding Problem}" Value="">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
             <Button Content="Add" MinWidth="90" Command="{Binding AddCommand}"
                     ToolTip="Adds an empty configuration and opens it on the Local Monitoring tab." />
@@ -42,12 +61,24 @@
                   IsReadOnly="False">
             <DataGrid.Columns>
                 <!--
-                    The tick is the only editable cell. Everything else is edited on the two
-                    tabs, and a grid that lets a folder be typed into a cell as well would be two
-                    ways to change one thing.
+                    The run control, and the only thing in the grid that does anything. Everything
+                    else is edited on the two tabs; a grid that also let a folder be typed into a
+                    cell would be two ways to change one thing.
+
+                    It replaces a tick that said whether a configuration was included plus a
+                    toolbar button that said whether monitoring was on. Those were two switches in
+                    series for one outcome, and a configuration ran only when both agreed.
                 -->
-                <DataGridCheckBoxColumn Header="On" Width="40"
-                                        Binding="{Binding Enabled, UpdateSourceTrigger=PropertyChanged}" />
+                <DataGridTemplateColumn Header="" Width="76" CanUserSort="False">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Button Style="{StaticResource RowRunButton}"
+                                    Content="{Binding RunButtonText}"
+                                    Command="{Binding ToggleRunCommand}"
+                                    ToolTip="Starts or stops this configuration on its own. Nothing runs until you press it, including after a restart." />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
 
                 <!--
                     The five fixed columns are kept tight on purpose. Folder and Sends to are the

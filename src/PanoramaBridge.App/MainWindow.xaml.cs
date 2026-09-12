@@ -10,15 +10,21 @@ public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel;
     private readonly TransferService _transfers;
+    private readonly ConfigurationRunControl _runControl;
     private readonly TrayIcon _tray;
 
     /// <summary>Set only by the tray menu's Exit, so a close request means what it says.</summary>
     private bool _exiting;
 
-    public MainWindow(MainViewModel viewModel, TransferService transfers, TrayIcon tray)
+    public MainWindow(
+        MainViewModel viewModel,
+        TransferService transfers,
+        ConfigurationRunControl runControl,
+        TrayIcon tray)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _transfers = transfers ?? throw new ArgumentNullException(nameof(transfers));
+        _runControl = runControl ?? throw new ArgumentNullException(nameof(runControl));
         _tray = tray ?? throw new ArgumentNullException(nameof(tray));
 
         InitializeComponent();
@@ -27,6 +33,11 @@ public partial class MainWindow : Window
         // The secret stays in the password box; the view model reads it only when a command
         // needs it, so it never becomes bound or serialized state.
         _viewModel.SecretProvider = () => RemoteSettings.Secret;
+
+        // The Run button on a row starts a configuration, so it needs the same two things the
+        // toolbar used to reach for: what is in the password box, and permission to record it.
+        _runControl.SecretProvider = () => RemoteSettings.Secret;
+        _runControl.RememberCredential = _viewModel.RememberCredentialFor;
 
         RemoteSettings.BrowseRemoteRequested += OnBrowseRemoteRequested;
 

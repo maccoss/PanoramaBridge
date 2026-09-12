@@ -77,9 +77,7 @@ public sealed class AppSettingsTests
 
         // And it degrades to something the screen can explain rather than an empty list quietly
         // meaning "everything".
-        new AppSettings().Holding(configuration)
-            .Validate()
-            .ShouldContain(p => p.Contains("at least one file extension"));
+        configuration.Validate().ShouldContain(p => p.Contains("at least one file extension"));
     }
 
     [Fact]
@@ -184,9 +182,7 @@ public sealed class AppSettingsTests
     [Fact]
     public void Validation_reports_what_the_user_has_to_fix()
     {
-        var problems = new AppSettings()
-            .Holding(new MonitoringConfiguration { LocalDirectory = string.Empty })
-            .Validate();
+        var problems = new MonitoringConfiguration { LocalDirectory = string.Empty }.Validate();
 
         problems.ShouldContain(p => p.Contains("Local Monitoring"));
     }
@@ -194,10 +190,11 @@ public sealed class AppSettingsTests
     [Fact]
     public void Validation_passes_for_a_usable_configuration()
     {
-        var settings = new AppSettings()
-            .Holding(new MonitoringConfiguration { LocalDirectory = Path.GetTempPath() });
+        new MonitoringConfiguration { LocalDirectory = Path.GetTempPath() }
+            .Validate()
+            .ShouldBeEmpty();
 
-        settings.Validate().ShouldBeEmpty();
+        new AppSettings().Validate().ShouldBeEmpty("and nothing is wrong with the file itself");
     }
 
     [Theory]
@@ -205,12 +202,7 @@ public sealed class AppSettingsTests
     [InlineData("ftp://panoramaweb.org")]
     public void A_server_address_that_is_not_http_is_rejected(string url)
     {
-        new AppSettings()
-            .Holding(new MonitoringConfiguration
-            {
-                LocalDirectory = Path.GetTempPath(),
-                ServerUrl = url,
-            })
+        new MonitoringConfiguration { LocalDirectory = Path.GetTempPath(), ServerUrl = url }
             .Validate()
             .ShouldContain(p => p.Contains("server address"));
     }
@@ -218,38 +210,14 @@ public sealed class AppSettingsTests
     [Fact]
     public void A_password_login_without_a_user_name_is_rejected()
     {
-        new AppSettings()
-            .Holding(new MonitoringConfiguration
-            {
-                LocalDirectory = Path.GetTempPath(),
-                AuthMode = AuthMode.UserNameAndPassword,
-                UserName = string.Empty,
-            })
+        new MonitoringConfiguration
+        {
+            LocalDirectory = Path.GetTempPath(),
+            AuthMode = AuthMode.UserNameAndPassword,
+            UserName = string.Empty,
+        }
             .Validate()
             .ShouldContain(p => p.Contains("user name"));
-    }
-
-    [Fact]
-    public void A_configuration_that_is_switched_off_does_not_stop_the_others()
-    {
-        // Most of the point of being able to switch one off. An instrument away for service
-        // leaves a configuration pointing at a folder that is not there, and that must not be a
-        // reason to refuse to transfer from the instrument next to it.
-        var settings = new AppSettings
-        {
-            Configurations =
-            [
-                new MonitoringConfiguration { LocalDirectory = Path.GetTempPath() },
-                new MonitoringConfiguration
-                {
-                    Name = "Away for service",
-                    Enabled = false,
-                    LocalDirectory = @"X:\not\here",
-                },
-            ],
-        };
-
-        settings.Validate().ShouldBeEmpty();
     }
 
     [Fact]
@@ -266,27 +234,9 @@ public sealed class AppSettingsTests
             ],
         };
 
-        settings.Validate().ShouldContain(p => p.StartsWith("Exploris: "));
-    }
-
-    [Fact]
-    public void Turning_every_configuration_off_says_so()
-    {
-        // Rather than reporting no problems and then transferring nothing, which reads as a
-        // failure of the application instead of a setting.
-        var settings = new AppSettings
-        {
-            Configurations =
-            [
-                new MonitoringConfiguration
-                {
-                    Enabled = false,
-                    LocalDirectory = Path.GetTempPath(),
-                },
-            ],
-        };
-
-        settings.Validate().ShouldContain(p => p.Contains("turned off"));
+        settings.Configurations[1]
+            .Validate(settings.Configurations[1].DisplayName)
+            .ShouldContain(p => p.StartsWith("Exploris: "));
     }
 
     [Fact]

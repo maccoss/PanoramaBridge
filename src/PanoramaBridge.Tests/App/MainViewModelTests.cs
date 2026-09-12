@@ -68,7 +68,7 @@ public sealed class MainViewModelTests : IAsyncLifetime
         StubHttpMessageHandler.Returning(HttpStatusCode.NotFound);
 
     private readonly RecordingAccessor _credentials = new();
-    private TransferService? _transfers;
+    private TransferService _transfers = null!;
 
     private MainViewModel NewShell(AppSettings? settings = null)
     {
@@ -161,32 +161,66 @@ public sealed class MainViewModelTests : IAsyncLifetime
     [Fact]
     public void The_buttons_say_what_they_will_do()
     {
+        // Starting moved on to each configuration's own row, so the only thing left here that
+        // changes with state is what Upload now means.
         using var shell = NewShell();
 
-        shell.MonitoringButtonText.ShouldBe("Start monitoring");
         shell.UploadNowButtonText.ShouldBe("Upload now");
 
         shell.IsMonitoring = true;
 
-        shell.MonitoringButtonText.ShouldBe("Stop monitoring");
         shell.UploadNowButtonText.ShouldBe("Check now", "a second scan would only repeat the first");
     }
 
     [Fact]
-    public async Task Monitoring_can_be_turned_on_and_off_from_the_command_bar()
+    public async Task Stop_all_stands_everything_down_at_once()
     {
+        // The half of the old toggle that survived. Starting is per configuration now, but there
+        // is still one thing no row covers: stand everything down before a reboot, or when
+        // something is wrong. The tray's Exit and the updater's restart call the same path.
         using var shell = NewShell();
 
-        await shell.ToggleMonitoringCommand.ExecuteAsync(null);
+        await _transfers.StartConfigurationAsync(
+            shell.Settings.ToSettings(),
+            shell.Settings.Configurations[0],
+            "an-api-key");
 
-        shell.IsMonitoring.ShouldBeTrue();
-        shell.StatusLine.ShouldContain(_watched);
-        _credentials.Remembered.ShouldContain("https://example.invalid");
+        _transfers.IsMonitoring.ShouldBeTrue();
 
-        await shell.ToggleMonitoringCommand.ExecuteAsync(null);
+        await shell.StopAllCommand.ExecuteAsync(null);
 
         shell.IsMonitoring.ShouldBeFalse();
-        shell.StatusLine.ShouldBe("Monitoring stopped.");
+        _transfers.IsMonitoring.ShouldBeFalse();
+        shell.StatusLine.ShouldBe("Stopped.");
+    }
+
+    [Fact]
+    public async Task Stop_all_becomes_pressable_when_something_starts()
+    {
+        // CanExecuteChanged, not CanExecute. Asking the command directly evaluates the predicate
+        // there and then, so it answers correctly whether or not anything was ever raised -- which
+        // is why the test above passed against a button nobody could press. A WPF button asks once
+        // when the binding attaches, and after that only when this event tells it to; with
+        // IsMonitoring false at that moment, an event that never comes means a button that is
+        // grayed out for the life of the window.
+        using var shell = NewShell();
+
+        var raised = 0;
+        shell.StopAllCommand.CanExecuteChanged += (_, _) => raised++;
+
+        shell.StopAllCommand.CanExecute(null).ShouldBeFalse("nothing is running yet");
+
+        await _transfers.StartConfigurationAsync(
+            shell.Settings.ToSettings(),
+            shell.Settings.Configurations[0],
+            "an-api-key");
+
+        raised.ShouldBeGreaterThan(0, "the button is told to ask again");
+        shell.StopAllCommand.CanExecute(null).ShouldBeTrue("and the answer has changed");
+
+        await shell.StopAllCommand.ExecuteAsync(null);
+
+        shell.StopAllCommand.CanExecute(null).ShouldBeFalse("there is nothing left to stop");
     }
 
     [Fact]
@@ -197,7 +231,11 @@ public sealed class MainViewModelTests : IAsyncLifetime
         // its answer is what reaches the status line.
         using var shell = NewShell();
 
-        await shell.ToggleMonitoringCommand.ExecuteAsync(null);
+        await _transfers.StartConfigurationAsync(
+            shell.Settings.ToSettings(),
+            shell.Settings.Configurations[0],
+            "an-api-key");
+
         await shell.UploadNowCommand.ExecuteAsync(null);
 
         shell.IsBusy.ShouldBeFalse("a scan was not started");
@@ -212,20 +250,25 @@ public sealed class MainViewModelTests : IAsyncLifetime
         shell.StatusLine.ShouldStartWith("Monitoring -");
         shell.StatusLine.ShouldContain("up to date");
 
-        await shell.ToggleMonitoringCommand.ExecuteAsync(null);
+        await shell.StopAllCommand.ExecuteAsync(null);
     }
 
     [Fact]
-    public async Task Unusable_settings_are_reported_rather_than_started_with()
+    public async Task A_configuration_that_is_not_set_up_says_so_rather_than_starting()
     {
+        // The refusal is per configuration now, which is the point: one that is not filled in is
+        // its own problem rather than everybody's.
         using var shell = NewShell(
             new AppSettings().Holding(new MonitoringConfiguration { LocalDirectory = string.Empty }));
 
-        await shell.ToggleMonitoringCommand.ExecuteAsync(null);
+        var refusal = await Should.ThrowAsync<InvalidOperationException>(
+            () => _transfers.StartConfigurationAsync(
+                shell.Settings.ToSettings(),
+                shell.Settings.Configurations[0],
+                "an-api-key"));
 
-        shell.IsMonitoring.ShouldBeFalse();
-        shell.ConnectionFailed.ShouldBeTrue();
-        shell.StatusLine.ShouldContain("Local Monitoring");
+        refusal.Message.ShouldContain("Local Monitoring");
+        _transfers.IsMonitoring.ShouldBeFalse();
     }
 
     [Fact]
@@ -238,10 +281,10 @@ public sealed class MainViewModelTests : IAsyncLifetime
         shell.UploadsBlocked = true;
 
         shell.UploadNowCommand.CanExecute(null).ShouldBeFalse();
-        shell.ToggleMonitoringCommand.CanExecute(null).ShouldBeFalse();
+        shell.StopAllCommand.CanExecute(null).ShouldBeFalse("nothing is running to stand down");
 
         shell.IsMonitoring = true;
-        shell.ToggleMonitoringCommand.CanExecute(null).ShouldBeTrue();
+        shell.StopAllCommand.CanExecute(null).ShouldBeTrue();
     }
 
     // IAsyncLifetime, not IAsyncDisposable: xUnit v2 never calls IAsyncDisposable on a test

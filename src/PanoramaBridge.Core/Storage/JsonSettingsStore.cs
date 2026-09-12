@@ -52,6 +52,21 @@ public sealed class JsonSettingsStore : ISettingsStore
     private readonly ILogger<JsonSettingsStore> _log;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
+    /// <summary>
+    /// Set when a load returned defaults because the file could not be read.
+    /// </summary>
+    /// <remarks>
+    /// Leaving the file alone on a failed read is only half the job. What the caller is then
+    /// holding is defaults, and every route to a save -- pressing Run, Save settings, switching
+    /// configuration -- would write those defaults over the settings that were never read. The
+    /// file survives the lock and is then destroyed by the next click.
+    /// <para>
+    /// So saving is refused until a load succeeds. Refusing is not a good outcome, but there is no
+    /// good one here: the alternative is overwriting a file whose contents are still unknown.
+    /// </para>
+    /// </remarks>
+    private volatile bool _readFailed;
+
     public JsonSettingsStore(string path, ILogger<JsonSettingsStore>? log = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -70,7 +85,7 @@ public sealed class JsonSettingsStore : ISettingsStore
 
         try
         {
-            var json = await File.ReadAllTextAsync(_path, cancellationToken).ConfigureAwait(false);
+            var json = await ReadPatientlyAsync(cancellationToken).ConfigureAwait(false);
             var version = ReadVersion(json);
 
             var loaded = version < AppSettings.CurrentVersion
@@ -79,6 +94,9 @@ public sealed class JsonSettingsStore : ISettingsStore
 
             var settings = loaded ?? new AppSettings();
             var normalized = settings.NormalizeWithdrawnValues();
+
+            // Whatever went wrong last time, the file has now been read.
+            _readFailed = false;
 
             // Writing the result back is how an upgraded file stops being upgraded on every
             // launch, and how a withdrawn setting stops being carried. Neither applies to a file
@@ -104,13 +122,88 @@ public sealed class JsonSettingsStore : ISettingsStore
 
             return normalized;
         }
-        catch (Exception ex) when (ex is JsonException or IOException)
+        catch (JsonException ex)
         {
-            // Falling back to defaults beats refusing to start. The bad file is kept so it can
-            // be looked at rather than silently discarded.
+            // The content is bad. Falling back to defaults beats refusing to start, and the file
+            // is kept so it can be looked at rather than silently discarded. Saving stays allowed
+            // here, unlike the failed-read path below: the file has been read, it simply held
+            // nothing usable, so writing over it loses nothing the .corrupt copy does not have.
             _log.LogError(ex, "Could not read settings from {Path}; falling back to defaults.", _path);
             TryPreserveCorruptFile();
             return new AppSettings();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The file could not be read *this time*, which is not the same as its contents being
+            // bad -- and the difference matters, because the answer to a bad file is to move it
+            // aside and start from defaults. Doing that to a file that was merely locked for a
+            // moment by antivirus or a backup agent would take the monitored folder, the
+            // destination and the sign-in with it, on an instrument, for the sake of a lock that
+            // had already gone.
+            //
+            // So nothing is renamed and nothing is discarded here. Defaults are still returned,
+            // because refusing to start is worse, but the message says the settings could not be
+            // read rather than that they were bad -- and the next launch, or the next save, finds
+            // the file exactly as it was.
+            _log.LogError(
+                ex,
+                "Could not open {Path} after {Attempts} attempts; it is in use by something else. "
+                + "Starting with default settings this session; the file has been left alone and "
+                + "will not be written to until it can be read.",
+                _path,
+                ReadAttempts);
+
+            _readFailed = true;
+
+            return new AppSettings();
+        }
+    }
+
+    /// <summary>How many times a locked settings file is re-read before giving up.</summary>
+    /// <remarks>
+    /// Three attempts over about half a second. Long enough to outlast a virus scanner opening the
+    /// file as it is written, short enough that nobody watching the window would notice; a lock
+    /// held longer than this is not transient and waiting further would only delay saying so.
+    /// </remarks>
+    private const int ReadAttempts = 3;
+
+    private static readonly TimeSpan BetweenReadAttempts = TimeSpan.FromMilliseconds(200);
+
+    /// <summary>
+    /// Reads the file, giving a lock a moment to clear.
+    /// </summary>
+    /// <remarks>
+    /// Shared as ReadWrite rather than taking the default: the point is to get past another
+    /// process holding the file, so asking for exclusive use would fail against exactly the case
+    /// this exists for.
+    /// </remarks>
+    private async Task<string> ReadPatientlyAsync(CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await using var stream = new FileStream(
+                    _path,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+
+                using var reader = new StreamReader(stream);
+
+                return await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                && attempt < ReadAttempts)
+            {
+                _log.LogDebug(
+                    "{Path} is in use; attempt {Attempt} of {Total}.",
+                    _path,
+                    attempt,
+                    ReadAttempts);
+
+                await Task.Delay(BetweenReadAttempts, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 
@@ -119,6 +212,17 @@ public sealed class JsonSettingsStore : ISettingsStore
     {
         ArgumentNullException.ThrowIfNull(settings);
 
+        if (_readFailed)
+        {
+            throw new InvalidOperationException(
+                "Your settings could not be read when PanoramaBridge started, because something "
+                + "else had the file open, so what is on screen is the defaults rather than your "
+                + "settings. Saving now would write those over the file. Close PanoramaBridge, "
+                + "make sure nothing else is holding "
+                + Path.GetFileName(_path)
+                + ", and start it again.");
+        }
+
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -126,15 +230,27 @@ public sealed class JsonSettingsStore : ISettingsStore
 
             var temporary = _path + ".tmp";
 
-            await using (var stream = File.Create(temporary))
+            try
             {
-                await JsonSerializer
-                    .SerializeAsync(stream, settings, Options, cancellationToken)
-                    .ConfigureAwait(false);
-            }
+                await using (var stream = File.Create(temporary))
+                {
+                    await JsonSerializer
+                        .SerializeAsync(stream, settings, Options, cancellationToken)
+                        .ConfigureAwait(false);
+                }
 
-            // Move over the original only once the new file is complete on disk.
-            File.Move(temporary, _path, overwrite: true);
+                // Move over the original only once the new file is complete on disk.
+                File.Move(temporary, _path, overwrite: true);
+            }
+            catch
+            {
+                // The move is what fails when the settings file is locked, and it fails after the
+                // temporary file exists. Left behind, one accumulates beside the settings for
+                // every save that ever lost that race -- and the next reader has to work out
+                // which of the two files is the real one.
+                TryDelete(temporary);
+                throw;
+            }
         }
         finally
         {
@@ -337,6 +453,18 @@ public sealed class JsonSettingsStore : ISettingsStore
         }
     }
 
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Cleaning up after a failure must not replace it with a different one.
+        }
+    }
+
     private void TryPreserveCorruptFile()
     {
         try
@@ -345,9 +473,13 @@ public sealed class JsonSettingsStore : ISettingsStore
             File.Move(_path, kept, overwrite: true);
             _log.LogInformation("The unreadable settings file was kept as {Path}.", kept);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Nothing more to be done; defaults are already in use.
+            // Both, because a move over a file anybody holds open throws
+            // UnauthorizedAccessException and that does not derive from IOException. Catching only
+            // the latter meant a malformed file that something locked between being read and being
+            // moved took the exception past the handler that had already decided to carry on with
+            // defaults, and the application failed to start instead.
         }
     }
 }

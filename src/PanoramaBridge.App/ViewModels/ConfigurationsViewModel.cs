@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using PanoramaBridge.App.Services;
 using PanoramaBridge.Core.Storage;
 
 namespace PanoramaBridge.App.ViewModels;
@@ -16,16 +18,23 @@ namespace PanoramaBridge.App.ViewModels;
 /// </remarks>
 public sealed partial class ConfigurationRowViewModel : ObservableObject
 {
-    private readonly Func<bool, Task> _setEnabled;
+    private readonly Func<bool, Task> _run;
 
+    /// <param name="run">
+    /// Starts this configuration when passed true and stops it when passed false. The row does
+    /// not do it itself, because what running means belongs to the transfer service.
+    /// </param>
     public ConfigurationRowViewModel(
         MonitoringConfiguration configuration,
         int index,
-        Func<bool, Task> setEnabled)
+        bool running,
+        Func<bool, Task> run)
     {
         ArgumentNullException.ThrowIfNull(configuration);
 
         Index = index;
+        Configuration = configuration;
+        _running = running;
         Name = configuration.DisplayName;
         LocalDirectory = configuration.LocalDirectory;
         RemotePath = configuration.RemotePath;
@@ -42,10 +51,14 @@ public sealed partial class ConfigurationRowViewModel : ObservableObject
 
         Created = configuration.CreatedUtc == default
             ? string.Empty
-            : configuration.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+            // The provider is named rather than left to the ambient culture. ':' in a custom
+            // format string is the culture's time separator, not a literal, so without this the
+            // Created column and the Verified column on Uploads -- same format string, a few
+            // pixels apart -- render differently on a machine whose locale uses something else.
+            : configuration.CreatedUtc.ToLocalTime()
+                .ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
 
-        _enabled = configuration.Enabled;
-        _setEnabled = setEnabled ?? throw new ArgumentNullException(nameof(setEnabled));
+        _run = run ?? throw new ArgumentNullException(nameof(run));
 
         // Deliberately not Validate() here. That calls Directory.Exists, and on a share whose
         // server is down the answer takes the SMB timeout to arrive -- seconds, on the UI thread,
@@ -56,6 +69,9 @@ public sealed partial class ConfigurationRowViewModel : ObservableObject
 
     /// <summary>Where this configuration sits in the list.</summary>
     public int Index { get; }
+
+    /// <summary>The configuration this row stands for.</summary>
+    public MonitoringConfiguration Configuration { get; }
 
     /// <summary>What to call it. The folder it watches, when it has no name of its own.</summary>
     public string Name { get; }
@@ -90,21 +106,41 @@ public sealed partial class ConfigurationRowViewModel : ObservableObject
 
     /// <summary>What the status column says.</summary>
     /// <remarks>
+    /// <para>
     /// Whether it would run, not whether it is running. The Transfer Status tab is where what is
     /// happening now belongs, and saying "Running" here for a configuration whose folder had just
     /// been unplugged would be the kind of tick that means less than it appears to.
+    /// </para>
+    /// <para>
+    /// Three kinds of not-running are told apart, because they want different things done. One
+    /// nobody has filled in is "Not set up" -- it is waiting on somebody rather than resting. One
+    /// that has a folder but something wrong with it is "Needs attention", which is a fault to
+    /// look at. One with nothing wrong is "Ready", because that is what it is: ready to be run.
+    /// </para>
     /// </remarks>
-    public string Status => !Enabled
-        ? "Off"
-        : Problems.Count > 0 ? "Needs attention"
-        : Checked ? "Ready" : "Checking...";
+    public string Status => Running
+        ? "Running"
+        : Problems.Count > 0
+            ? string.IsNullOrWhiteSpace(LocalDirectory) ? "Not set up" : "Needs attention"
+            : Checked ? "Ready" : "Checking...";
 
     /// <summary>The first problem, for the tooltip on the status column.</summary>
     public string? StatusDetail => Problems.Count > 0 ? string.Join("\n", Problems) : null;
 
+    /// <summary>Whether this configuration is being watched right now.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
-    private bool _enabled;
+    [NotifyPropertyChangedFor(nameof(RunButtonText))]
+    [NotifyCanExecuteChangedFor(nameof(ToggleRunCommand))]
+    private bool _running;
+
+    /// <summary>True while this row's button is being acted on, so it cannot be pressed twice.</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ToggleRunCommand))]
+    private bool _busy;
+
+    /// <summary>What the button says. Green when it will start, red when it will stop.</summary>
+    public string RunButtonText => Running ? "Stop" : "Run";
 
     /// <summary>Records what the off-thread check found.</summary>
     public void Report(IReadOnlyList<string> problems)
@@ -113,7 +149,48 @@ public sealed partial class ConfigurationRowViewModel : ObservableObject
         Checked = true;
     }
 
-    partial void OnEnabledChanged(bool value) => _ = _setEnabled(value);
+    /// <summary>
+    /// Starts or stops this configuration.
+    /// </summary>
+    /// <remarks>
+    /// The button is the run control, and there is no second one: a tick saying a configuration
+    /// was included plus a button saying monitoring was on were two switches in series for one
+    /// outcome, and a configuration only ran when both agreed.
+    /// <para>
+    /// Failures are shown rather than discarded, and the button goes back to what it was. A
+    /// button that reads Stop for something that never started is the same defect as a tick that
+    /// was never saved.
+    /// </para>
+    /// </remarks>
+    [RelayCommand(CanExecute = nameof(CanToggleRun))]
+    private async Task ToggleRunAsync()
+    {
+        var wanted = !Running;
+
+        Busy = true;
+
+        try
+        {
+            // Running is not set here. Starting saves first, which rebuilds the list, so this row
+            // may already have been replaced by the time the call returns -- and setting it on an
+            // orphan would leave the row on screen showing the opposite of the truth. The list
+            // re-reads what is actually running instead.
+            await _run(wanted).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            Failed?.Invoke($"{Name} could not be {(wanted ? "started" : "stopped")}: {ex.Message}");
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+
+    private bool CanToggleRun() => !Busy;
+
+    /// <summary>Raised when starting or stopping failed. The view model above shows it.</summary>
+    public event Action<string>? Failed;
 }
 
 /// <summary>
@@ -136,12 +213,33 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
     private readonly SettingsViewModel _settings;
     private bool _rebuilding;
 
-    public ConfigurationsViewModel(SettingsViewModel settings)
+    /// <param name="run">
+    /// Starts and stops one configuration. Supplied rather than reached for, so this class stays
+    /// testable without a transfer service and a server behind it.
+    /// </param>
+    public ConfigurationsViewModel(
+        SettingsViewModel settings,
+        IConfigurationRunControl? run = null)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        _run = run ?? new NothingRuns();
         _settings.ConfigurationsChanged += Rebuild;
 
         Rebuild();
+    }
+
+    private readonly IConfigurationRunControl _run;
+
+    /// <summary>Stands in when nothing can actually run, which is every test but the lifecycle ones.</summary>
+    private sealed class NothingRuns : IConfigurationRunControl
+    {
+        public bool IsRunning(MonitoringConfiguration configuration) => false;
+
+        public Task StartAsync(MonitoringConfiguration configuration) => Task.CompletedTask;
+
+        public Task StopAsync(MonitoringConfiguration configuration) => Task.CompletedTask;
+
+        public Task<int> ReconcileAsync() => Task.FromResult(0);
     }
 
     /// <summary>The configurations, in the order they are kept.</summary>
@@ -162,50 +260,124 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
     /// <summary>Whether a row is selected, so the buttons that need one can be disabled.</summary>
     public bool HasSelection => SelectedIndex >= 0 && SelectedIndex < Rows.Count;
 
-    /// <summary>How many configurations will run when monitoring starts.</summary>
+    /// <summary>How many configurations are running now.</summary>
     public string Summary
     {
         get
         {
-            var enabled = Rows.Count(r => r.Enabled);
+            var running = Rows.Count(r => r.Running);
 
             return Rows.Count switch
             {
                 0 => "No configurations yet. Add one to choose a folder and where it goes.",
-                1 when enabled == 1 => "1 configuration, on.",
-                1 => "1 configuration, off.",
-                _ => $"{Rows.Count} configurations, {enabled} on.",
+                1 when running == 1 => "1 configuration, running.",
+                1 => "1 configuration, not running.",
+                _ when running == 0 => $"{Rows.Count} configurations, none running.",
+                _ => $"{Rows.Count} configurations, {running} running.",
             };
         }
     }
 
+    /// <summary>
+    /// Anything that stopped a change being saved, for the line under the list.
+    /// </summary>
+    /// <remarks>
+    /// Cleared by the next successful rebuild, so it describes now rather than accumulating.
+    /// </remarks>
+    [ObservableProperty]
+    private string _problem = string.Empty;
+
+    /// <summary>
+    /// Opens the clicked configuration on the editor tabs.
+    /// </summary>
+    /// <remarks>
+    /// Not async void, and not merely as a matter of taste. A property setter cannot be awaited,
+    /// so an asynchronous handler returns at its first await and the next click starts a second
+    /// one beside it -- two switches saving the same file and moving the same index, where the
+    /// later one can finish first and leave the list highlighting a row the tabs are not showing.
+    /// The switch in flight is kept instead, and a click arriving while one is running is ignored
+    /// rather than queued: the user's last click is answered by the rebuild that follows.
+    /// </remarks>
     partial void OnSelectedIndexChanged(int value)
     {
-        if (_rebuilding || value < 0 || value >= Rows.Count)
+        if (_rebuilding || _switching is { IsCompleted: false } || value < 0 || value >= Rows.Count)
         {
             return;
         }
 
-        _ = _settings.EditConfigurationAsync(value);
+        _switching = SwitchToAsync(value);
     }
 
-    /// <summary>Adds an empty configuration and selects it for editing.</summary>
+    /// <summary>The configuration switch in flight, so a second click cannot start another.</summary>
+    private Task? _switching;
+
+    /// <summary>Exposed so a test can wait for a switch rather than sleeping.</summary>
+    public Task Switching => _switching ?? Task.CompletedTask;
+
+    private async Task SwitchToAsync(int value)
+    {
+        try
+        {
+            // Switching saves the configuration being left, so this can fail for the same reason
+            // a tick can: the settings file is momentarily somebody else's.
+            await _settings.EditConfigurationAsync(value).ConfigureAwait(true);
+
+            await ReconcileAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            Problem = $"Could not open that configuration: {ex.Message}";
+
+            // EditConfigurationAsync saves before it moves, and leaves the index alone when that
+            // save throws. Without this the list would highlight the row that was clicked while
+            // the tabs still showed the previous one, and the next edit would be applied to a
+            // configuration nobody was looking at.
+            _rebuilding = true;
+
+            try
+            {
+                SelectedIndex = _settings.ConfigurationIndex;
+            }
+            finally
+            {
+                _rebuilding = false;
+            }
+        }
+    }
+
+    /// <summary>Adds an empty configuration, switched off, and selects it for editing.</summary>
     /// <remarks>
+    /// <para>
+    /// Off, because it has no folder and no destination and so there is nothing it could do. That
+    /// is not merely tidiness: an enabled configuration with no folder makes the whole settings
+    /// record invalid, and Start monitoring refuses on the first problem it finds. Adding a second
+    /// configuration to set up later therefore stopped the first one -- which was working --
+    /// from transferring at all.
+    /// </para>
+    /// <para>
+    /// Nothing turns it on by itself once the boxes are filled in. A configuration somebody is
+    /// still working on, or has deliberately left off, must stay off; the list says "Not set up"
+    /// until it is usable, so what is waiting on whom is visible without guessing.
+    /// </para>
+    /// <para>
     /// Stamped with the time it was created, unlike the one carried over from a settings file
     /// written before configurations existed -- that file never recorded when monitoring was set
     /// up, and inventing a date for it would be worse than leaving the column blank.
+    /// </para>
     /// </remarks>
     [RelayCommand]
     private async Task AddAsync()
     {
         var configurations = new List<MonitoringConfiguration>(_settings.Configurations)
         {
-            new() { CreatedUtc = DateTimeOffset.UtcNow },
+            new() { Enabled = false, CreatedUtc = DateTimeOffset.UtcNow },
         };
 
         await _settings
             .ReplaceConfigurationsAsync(configurations, configurations.Count - 1)
             .ConfigureAwait(true);
+
+        await ReconcileAsync().ConfigureAwait(true);
     }
 
     /// <summary>Copies the selected configuration and selects the copy.</summary>
@@ -240,6 +412,8 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         await _settings
             .ReplaceConfigurationsAsync(configurations, SelectedIndex + 1)
             .ConfigureAwait(true);
+
+        await ReconcileAsync().ConfigureAwait(true);
     }
 
     /// <summary>Removes the selected configuration.</summary>
@@ -274,29 +448,96 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         // is one shape rather than two.
         if (configurations.Count == 0)
         {
-            configurations.Add(new MonitoringConfiguration { CreatedUtc = DateTimeOffset.UtcNow });
+            // Off, and CreatedUtc stamped -- the same shape AddAsync produces, because this is
+            // the same thing: an empty configuration nobody has filled in yet. Leaving Enabled at
+            // its record default of true would write a file that an older build reads as "start
+            // this on Start monitoring", and an enabled configuration with no folder is what made
+            // that build refuse to start anything at all.
+            configurations.Add(new MonitoringConfiguration
+            {
+                Enabled = false,
+                CreatedUtc = DateTimeOffset.UtcNow,
+            });
         }
 
         await _settings
             .ReplaceConfigurationsAsync(
                 configurations, Math.Min(SelectedIndex, configurations.Count - 1))
             .ConfigureAwait(true);
+
+        // The deleted configuration may have been running. Nothing in the list refers to its
+        // runner any more, so without this it would go on watching that folder and transferring
+        // to that destination, with no row left to stop it.
+        await ReconcileAsync().ConfigureAwait(true);
     }
 
     /// <summary>Asks the user to confirm a deletion. Supplied by the view.</summary>
     public Func<string, bool>? Confirm { get; set; }
 
-    private Task SetEnabledAsync(int index, bool enabled)
+    /// <summary>
+    /// Starts or stops the configuration at this position.
+    /// </summary>
+    /// <remarks>
+    /// Saves first when starting, so what runs is what is on screen. Pressing Run with an edit
+    /// still in the boxes and having the old settings start instead would be the sort of
+    /// difference nobody can account for afterwards.
+    /// <para>
+    /// The index is checked on both sides of that save, because the save is precisely what can
+    /// change the list it addresses: it raises ConfigurationsChanged, which rebuilds the rows.
+    /// Checking only on the way in left an indexer that could throw out of the button, or start a
+    /// configuration other than the one whose row was pressed.
+    /// </para>
+    /// </remarks>
+    private async Task RunAsync(int index, bool wanted)
     {
         if (index < 0 || index >= _settings.Configurations.Count)
         {
-            return Task.CompletedTask;
+            return;
         }
 
-        var configurations = new List<MonitoringConfiguration>(_settings.Configurations);
-        configurations[index] = configurations[index] with { Enabled = enabled };
+        if (wanted)
+        {
+            await _settings.SaveAsync().ConfigureAwait(true);
 
-        return _settings.ReplaceConfigurationsAsync(configurations, _settings.ConfigurationIndex);
+            if (index >= _settings.Configurations.Count)
+            {
+                return;
+            }
+
+            await _run.StartAsync(_settings.Configurations[index]).ConfigureAwait(true);
+        }
+        else
+        {
+            await _run.StopAsync(_settings.Configurations[index]).ConfigureAwait(true);
+        }
+
+        await ReconcileAsync().ConfigureAwait(true);
+
+        RefreshRunState();
+    }
+
+    /// <summary>
+    /// Stops anything the saved configurations no longer describe, and says how many.
+    /// </summary>
+    /// <remarks>
+    /// Called after every save this list makes. Deleting a running configuration, or editing the
+    /// folder or destination of one, used to leave its runner watching the old folder with no row
+    /// left that could stop it.
+    /// </remarks>
+    private async Task ReconcileAsync()
+    {
+        var stopped = await _run.ReconcileAsync().ConfigureAwait(false);
+
+        if (stopped > 0)
+        {
+            Problem = stopped == 1
+                ? "A configuration that was running has been stopped, because what it watches "
+                    + "has changed. Press Run to start it again."
+                : $"{stopped} configurations that were running have been stopped, because what "
+                    + "they watch has changed. Press Run to start them again.";
+        }
+
+        RefreshRunState();
     }
 
     /// <summary>A name not already in the list, so two rows are never called the same thing.</summary>
@@ -332,6 +573,17 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
     /// </remarks>
     private static string NewAccount() => "config-" + Guid.NewGuid().ToString("n")[..12];
 
+    /// <summary>Re-reads which configurations are running, after something stopped them all.</summary>
+    public void RefreshRunState()
+    {
+        foreach (var row in Rows)
+        {
+            row.Running = _run.IsRunning(row.Configuration);
+        }
+
+        OnPropertyChanged(nameof(Summary));
+    }
+
     private void Rebuild()
     {
         // Guarded, because filling the collection moves the selection and that would otherwise
@@ -348,8 +600,15 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
             for (var i = 0; i < configurations.Count; i++)
             {
                 var index = i;
-                Rows.Add(new ConfigurationRowViewModel(
-                    configurations[i], index, enabled => SetEnabledAsync(index, enabled)));
+                var row = new ConfigurationRowViewModel(
+                    configurations[i],
+                    index,
+                    _run.IsRunning(configurations[i]),
+                    wanted => RunAsync(index, wanted));
+
+                row.Failed += message => Problem = message;
+
+                Rows.Add(row);
             }
 
             SelectedIndex = Rows.Count == 0
@@ -360,6 +619,9 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         {
             _rebuilding = false;
         }
+
+        // Whatever went wrong last time was about the list as it was; this is a new one.
+        Problem = string.Empty;
 
         OnPropertyChanged(nameof(HasSelection));
         OnPropertyChanged(nameof(Summary));

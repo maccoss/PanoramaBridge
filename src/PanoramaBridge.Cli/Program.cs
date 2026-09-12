@@ -111,9 +111,14 @@ internal static class Program
     /// </summary>
     /// <remarks>
     /// Read straight off the arguments rather than from the parsed options, because the decision
-    /// has to be made before the client is built and the parser runs per command. A bare scan for
-    /// the switch is enough: no other option takes a value, so <c>--no-upload</c> cannot appear
-    /// here as anything but itself.
+    /// has to be made before the client is built and the parser runs per command.
+    /// <para>
+    /// A bare scan is safe because <c>TryList</c> and <c>TryPath</c> refuse a value beginning with
+    /// two dashes, so no option's value can be the string <c>--no-upload</c>. That is the guard,
+    /// and it lives in <c>CommandOptions</c> rather than here: relax it there and this becomes
+    /// wrong, which is worth knowing. An earlier version of this comment claimed no other option
+    /// takes a value, which is false of seven of them.
+    /// </para>
     /// </remarks>
     private static bool IsOfflineWatch(string[] args) =>
         args.Length > 0
@@ -433,6 +438,23 @@ internal static class Program
 
         var roots = new List<string> { Path.GetFullPath(args[0]) };
         roots.AddRange(options.AlsoWatch.Select(Path.GetFullPath));
+
+        // Every watcher mirrors into the same remote root, because there is one destination
+        // argument. With one folder that is the whole point; with two it means D:\A\run.raw and
+        // D:\B\run.raw both resolve to <destination>/run.raw, and under Overwrite the second
+        // replaces the first on the server without a word.
+        //
+        // --also exists to measure what several watchers cost, and that is what --no-upload does.
+        // Rather than invent a per-folder destination syntax for a diagnostic switch, the two are
+        // required together: the measurement still works and the collision cannot happen.
+        if (options.AlsoWatch.Count > 0 && !options.NoUpload)
+        {
+            Console.Error.WriteLine(
+                "error: --also needs --no-upload. Every watched folder would otherwise mirror "
+                + "into the same remote directory, so two files with one name would overwrite "
+                + "each other there. To transfer several folders, run pbctl once per folder.");
+            return 2;
+        }
 
         var missing = roots.Where(r => !Directory.Exists(r)).ToArray();
         if (missing.Length > 0)
@@ -853,7 +875,8 @@ internal static class Program
                   --also <local-dir>         watch another folder alongside, repeatable.
                                              Each gets its own watcher and sweep timer, which
                                              is how the cost of several configurations is
-                                             measured.
+                                             measured. Needs --no-upload: every folder would
+                                             otherwise mirror into the same remote directory.
                   --no-upload                walk and report without transferring anything.
                                              Contacts no server, so it needs no credential.
                   --for N                    stop after N minutes and report, instead of

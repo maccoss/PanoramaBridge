@@ -175,7 +175,13 @@ public static class Program
         services.AddSingleton(provider => new TransferStatusViewModel(
             provider.GetRequiredService<TransferService>().Progress));
 
-        services.AddSingleton<ConfigurationsViewModel>();
+        services.AddSingleton(provider => new ConfigurationRunControl(
+            provider.GetRequiredService<TransferService>(),
+            provider.GetRequiredService<SettingsViewModel>()));
+
+        services.AddSingleton(provider => new ConfigurationsViewModel(
+            provider.GetRequiredService<SettingsViewModel>(),
+            provider.GetRequiredService<ConfigurationRunControl>()));
         services.AddSingleton(provider => new UploadsViewModel(
             provider.GetRequiredService<IStateStore>(),
             () => provider.GetRequiredService<SettingsViewModel>().Configurations));

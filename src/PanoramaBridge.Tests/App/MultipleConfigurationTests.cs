@@ -77,6 +77,25 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         }
     }
 
+    /// <summary>
+    /// Starts every configuration, one at a time.
+    /// </summary>
+    /// <remarks>
+    /// Starting is per configuration now -- a Run button on each row. These tests are about what
+    /// happens once several are running, so they say so here rather than each spelling out a loop.
+    /// </remarks>
+    private static async Task StartAllAsync(
+        TransferService service,
+        AppSettings settings,
+        string? secret,
+        MonitoringConfiguration? edited = null)
+    {
+        foreach (var configuration in settings.Configurations)
+        {
+            await service.StartConfigurationAsync(settings, configuration, secret, edited);
+        }
+    }
+
     private TransferService NewService() => new(
         _store,
         _credentials,
@@ -109,6 +128,105 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         };
 
     [Fact]
+    public async Task A_configuration_the_settings_no_longer_describe_is_stopped()
+    {
+        // Deleting a running configuration used to leave its runner watching that folder and
+        // transferring to that destination with no row left that could stop it -- and with Stop
+        // all grayed out, nothing could reach it short of killing the process.
+        await using var service = NewService();
+
+        var lumos = Watching("Lumos");
+        var exploris = Watching("Exploris");
+
+        var settings = new AppSettings { Configurations = [lumos, exploris] };
+
+        await StartAllAsync(service, settings, "an-api-key");
+
+        service.MonitoredConfigurations.ShouldBe(2);
+
+        var afterDelete = settings with { Configurations = [lumos] };
+
+        (await service.ReconcileAsync(afterDelete)).ShouldBe(1);
+
+        service.MonitoredConfigurations.ShouldBe(1);
+        service.IsConfigurationRunning(lumos).ShouldBeTrue("this one is still in the list");
+        service.IsConfigurationRunning(exploris).ShouldBeFalse("this one was deleted");
+    }
+
+    [Fact]
+    public async Task Editing_the_folder_of_a_running_configuration_stops_it()
+    {
+        // A runner watches a folder, a destination and a server. Change one and nothing in the
+        // list refers to that runner any more: the row went back to green Run, Stop became a
+        // no-op, and pressing Run started a second runner beside the first -- two watching, one
+        // of them the folder the user had just navigated away from, and only one on screen.
+        await using var service = NewService();
+
+        var before = Watching("Lumos");
+        var settings = new AppSettings { Configurations = [before] };
+
+        await StartAllAsync(service, settings, "an-api-key");
+
+        var after = before with { LocalDirectory = NewFolder() };
+        var edited = settings with { Configurations = [after] };
+
+        (await service.ReconcileAsync(edited)).ShouldBe(1);
+
+        service.MonitoredConfigurations.ShouldBe(0, "the old folder is no longer watched");
+        service.IsConfigurationRunning(after).ShouldBeFalse("and the new one was never started");
+
+        // And starting it again makes exactly one runner, not a second beside an orphan.
+        await service.StartConfigurationAsync(edited, after, "an-api-key");
+
+        service.MonitoredConfigurations.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task A_configuration_still_in_the_settings_is_left_alone()
+    {
+        // The other half of the rule. Renaming a configuration, or changing anything a runner is
+        // not built from, must not stand it down: the name is a label, and stopping a transfer
+        // because somebody retyped one would be its own bug.
+        await using var service = NewService();
+
+        var original = Watching("Lumos");
+        var settings = new AppSettings { Configurations = [original] };
+
+        await StartAllAsync(service, settings, "an-api-key");
+
+        var renamed = original with { Name = "Lumos 2" };
+
+        (await service.ReconcileAsync(settings with { Configurations = [renamed] })).ShouldBe(0);
+
+        service.MonitoredConfigurations.ShouldBe(1);
+        service.IsConfigurationRunning(renamed).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Changing_the_transfer_limit_after_everything_stopped_takes_effect()
+    {
+        // The budget is the limit across every configuration, so it is created by whichever one
+        // starts first and has to go when the last one stops. Held past that, the ??= that builds
+        // it kept the old one: raising the slider between a Stop and a Run left transfers
+        // throttled at the previous number, until Stop all or a restart, with nothing saying so.
+        await using var service = NewService();
+
+        var configuration = Watching("Lumos");
+        var settings = new AppSettings { Configurations = [configuration], MaxConcurrentTransfers = 2 };
+
+        await service.StartConfigurationAsync(settings, configuration, "an-api-key");
+        await service.StopConfigurationAsync(configuration);
+
+        service.MonitoredConfigurations.ShouldBe(0);
+
+        var raised = settings with { MaxConcurrentTransfers = 8 };
+
+        await service.StartConfigurationAsync(raised, configuration, "an-api-key");
+
+        service.TransferLimit.ShouldBe(8, "the slider was moved while nothing was running");
+    }
+
+    [Fact]
     public async Task Every_enabled_configuration_is_watched()
     {
         await using var service = NewService();
@@ -123,7 +241,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
             ],
         };
 
-        await service.StartMonitoringAsync(settings, "an-api-key");
+        await StartAllAsync(service, settings, "an-api-key");
 
         service.IsMonitoring.ShouldBeTrue();
         service.MonitoredConfigurations.ShouldBe(3);
@@ -135,49 +253,57 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_configuration_that_is_switched_off_is_not_watched()
+    public async Task A_configuration_nobody_started_is_not_watched()
     {
+        // There is no stored on-and-off any more. A configuration is watched because somebody
+        // pressed its Run button this session, and not otherwise -- including after a restart.
         await using var service = NewService();
 
         var settings = new AppSettings
         {
-            Configurations =
-            [
-                Watching("Lumos"),
-                Watching("Away for service", enabled: false),
-            ],
+            Configurations = [Watching("Lumos"), Watching("Exploris")],
         };
 
-        await service.StartMonitoringAsync(settings, "an-api-key");
+        await service.StartConfigurationAsync(settings, settings.Configurations[0], "an-api-key");
 
         service.MonitoredConfigurations.ShouldBe(1);
+        service.IsConfigurationRunning(settings.Configurations[0]).ShouldBeTrue();
+        service.IsConfigurationRunning(settings.Configurations[1]).ShouldBeFalse();
     }
 
     [Fact]
-    public async Task A_configuration_that_will_not_start_leaves_nothing_running()
+    public async Task A_configuration_that_will_not_start_leaves_the_others_running()
     {
-        // All or nothing on purpose. Starting four of five and reporting success would leave the
-        // window saying it was monitoring while one instrument quietly filled its disk -- and
-        // with several configurations nobody can see at a glance that one folder is uncovered.
+        // The opposite of what this used to promise, and deliberately. Starting was once a single
+        // action over the whole set, so one configuration that could not start had to take the
+        // attempt down rather than leave the window claiming to watch a folder it was not. Each
+        // one now has its own button, so a failure is that row's and says so on that row.
         await using var service = NewService();
 
         var settings = new AppSettings
         {
             Configurations =
             [
-                Watching("Lumos"),
+                Watching("Lumos", account: "config-lumos"),
 
-                // No secret is typed for this one and nothing is stored for it, so resolving its
-                // credential fails after the first configuration has already started.
+                // Nothing is stored for this one and no secret is typed, so it cannot start.
                 Watching("Exploris", server: "https://other.invalid", account: "config-exploris"),
             ],
         };
 
-        await Should.ThrowAsync<InvalidOperationException>(
-            () => service.StartMonitoringAsync(settings, secret: null));
+        _credentials.Write(
+            settings.Configurations[0].ServerUrl,
+            new StoredCredential("apikey", "lumos-key"),
+            settings.Configurations[0].Account);
 
-        service.IsMonitoring.ShouldBeFalse();
-        service.MonitoredConfigurations.ShouldBe(0, "the one that did start has to be stopped again");
+        await service.StartConfigurationAsync(settings, settings.Configurations[0], secret: null);
+
+        await Should.ThrowAsync<InvalidOperationException>(
+            () => service.StartConfigurationAsync(
+                settings, settings.Configurations[1], secret: null));
+
+        service.IsMonitoring.ShouldBeTrue();
+        service.MonitoredConfigurations.ShouldBe(1, "the one that started keeps running");
     }
 
     [Fact]
@@ -193,7 +319,8 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         };
 
         var refusal = await Should.ThrowAsync<InvalidOperationException>(
-            () => service.StartMonitoringAsync(settings, secret: null));
+            () => service.StartConfigurationAsync(
+                settings, settings.Configurations[0], secret: null));
 
         refusal.Message.ShouldContain("Exploris");
         refusal.Message.ShouldContain("https://example.invalid");
@@ -216,7 +343,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
 
         var settings = new AppSettings { Configurations = [edited, other] };
 
-        await service.StartMonitoringAsync(settings, "typed-for-lumos");
+        await StartAllAsync(service, settings, "typed-for-lumos");
 
         service.MonitoredConfigurations.ShouldBe(2);
 
@@ -244,7 +371,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         var settings = new AppSettings { Configurations = [first, second] };
 
         // Typed while the tabs were showing the second one.
-        await service.StartMonitoringAsync(settings, "typed-for-exploris", edited: second);
+        await StartAllAsync(service, settings, "typed-for-exploris", edited: second);
 
         service.MonitoredConfigurations.ShouldBe(2);
 
@@ -268,7 +395,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
             Configurations = [Watching("Lumos"), Watching("Exploris")],
         };
 
-        await service.StartMonitoringAsync(settings, "an-api-key");
+        await StartAllAsync(service, settings, "an-api-key");
 
         service.MonitoredConfigurations.ShouldBe(2);
         service.IsMonitoring.ShouldBeTrue();
@@ -292,12 +419,141 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
 
         var settings = new AppSettings { Configurations = [Watching("Lumos")] };
 
-        await service.StartMonitoringAsync(settings, "an-api-key");
+        await StartAllAsync(service, settings, "an-api-key");
         await service.StopMonitoringAsync();
-        await service.StartMonitoringAsync(settings, "an-api-key");
+        await StartAllAsync(service, settings, "an-api-key");
 
         service.MonitoredConfigurations.ShouldBe(1, "one session, not two");
         service.IsMonitoring.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Configurations_on_one_server_as_one_account_share_a_connection()
+    {
+        // A client holds the connection pool, so one per configuration means a fresh TLS
+        // handshake per file and a socket left behind afterwards. Two folders going to two
+        // projects on one Panorama is the ordinary case, and it is one connection.
+        await using var service = NewService();
+
+        const string Server = "https://panorama.invalid";
+
+        var elsewhere = Watching("Elsewhere", server: "https://other.invalid");
+
+        // The typed secret only reaches the slot it was typed for, so the configuration on the
+        // other server needs its own stored credential to start at all.
+        _credentials.Write(
+            elsewhere.ServerUrl, new StoredCredential("apikey", "other-key"), elsewhere.Account);
+
+        var settings = new AppSettings
+        {
+            Configurations =
+            [
+                Watching("To QC", server: Server),
+                Watching("To the project", server: Server),
+                elsewhere,
+            ],
+        };
+
+        await StartAllAsync(service, settings, "an-api-key");
+
+        service.MonitoredConfigurations.ShouldBe(3);
+        service.OpenConnections.ShouldBe(
+            2, "one per server, not one per configuration");
+    }
+
+    [Fact]
+    public async Task One_server_as_two_accounts_does_not_share_a_connection()
+    {
+        // A client carries exactly one credential, so this pair cannot share however much they
+        // have the server in common.
+        await using var service = NewService();
+
+        const string Server = "https://panorama.invalid";
+
+        var kyle = Watching("Kyle", server: Server, account: "config-kyle");
+        var brian = Watching("Brian", server: Server, account: "config-brian");
+
+        _credentials.Write(Server, new StoredCredential("apikey", "kyle-key"), "config-kyle");
+        _credentials.Write(Server, new StoredCredential("apikey", "brian-key"), "config-brian");
+
+        await service.StartEveryConfigurationAsync(
+            new AppSettings { Configurations = [kyle, brian] }, secret: null);
+
+        service.OpenConnections.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Scanning_twice_does_not_open_a_second_set_of_connections()
+    {
+        // The reason the cache exists. A runner that built its own client meant Upload now
+        // created and destroyed one connection pool per configuration, every time it was pressed.
+        await using var service = NewService();
+
+        var settings = new AppSettings
+        {
+            Configurations = [Watching("Lumos"), Watching("Exploris")],
+        };
+
+        await service.ScanAndUploadAsync(settings, "an-api-key");
+        var afterFirst = service.OpenConnections;
+
+        await service.ScanAndUploadAsync(settings, "an-api-key");
+
+        afterFirst.ShouldBe(1, "both configurations point at the same server here");
+        service.OpenConnections.ShouldBe(afterFirst, "and the second scan reused it");
+    }
+
+    [Fact]
+    public async Task Changing_a_setting_the_client_is_built_from_does_not_reuse_the_old_connection()
+    {
+        // A client is built from more than the server and sign-in: the pool size, the extra root
+        // certificate and the SHA-256 setting all go into it. An entry made before one of those
+        // changed would otherwise be handed back afterwards, and the new value silently ignored
+        // for the rest of the session.
+        //
+        // RecordSha256 stands in for all three because it needs nothing on disk; a certificate
+        // path is loaded when the client is built, so a made-up one fails for its own reasons.
+        await using var service = NewService();
+
+        var settings = new AppSettings { Configurations = [Watching("Lumos")] };
+
+        await service.StartConfigurationAsync(settings, settings.Configurations[0], "an-api-key");
+        service.OpenConnections.ShouldBe(1);
+
+        await service.StopConfigurationAsync(settings.Configurations[0]);
+
+        var changed = settings with { RecordSha256 = true };
+
+        await service.StartConfigurationAsync(
+            changed, changed.Configurations[0], "an-api-key");
+
+        service.OpenConnections.ShouldBe(
+            2, "what the client was built from is part of what a connection is");
+    }
+
+    [Fact]
+    public async Task Two_secrets_on_one_server_never_share_a_connection()
+    {
+        // The key holds a digest of the secret rather than its hash code. Thirty-two bits are not
+        // collision-resistant, and a collision here does not merely miss a cache -- it hands one
+        // configuration a client carrying the other account's Authorization header.
+        await using var service = NewService();
+
+        const string Server = "https://panorama.invalid";
+
+        var first = Watching("First", server: Server, account: "config-first");
+        var second = Watching("Second", server: Server, account: "config-second");
+
+        _credentials.Write(Server, new StoredCredential("apikey", "secret-one"), "config-first");
+        _credentials.Write(Server, new StoredCredential("apikey", "secret-two"), "config-second");
+
+        await service.StartConfigurationAsync(
+            new AppSettings { Configurations = [first, second] }, first, secret: null);
+
+        await service.StartConfigurationAsync(
+            new AppSettings { Configurations = [first, second] }, second, secret: null);
+
+        service.OpenConnections.ShouldBe(2);
     }
 
     [Fact]
@@ -315,7 +571,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         _credentials.Write(Server, new StoredCredential("apikey", "kyle-key"), "config-kyle");
         _credentials.Write(Server, new StoredCredential("apikey", "brian-key"), "config-brian");
 
-        await service.StartMonitoringAsync(
+        await service.StartEveryConfigurationAsync(
             new AppSettings { Configurations = [first, second] }, secret: null);
 
         service.MonitoredConfigurations.ShouldBe(2);
@@ -331,7 +587,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
 
         service.Monitor.ShouldBeNull("nothing is being watched yet");
 
-        await service.StartMonitoringAsync(
+        await service.StartEveryConfigurationAsync(
             new AppSettings { Configurations = [Watching("Lumos"), Watching("Exploris")] },
             "an-api-key");
 
@@ -350,7 +606,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         service.RequestSweep("nothing is running").ShouldBeFalse(
             "so the window knows to scan instead");
 
-        await service.StartMonitoringAsync(
+        await service.StartEveryConfigurationAsync(
             new AppSettings { Configurations = [Watching("Lumos"), Watching("Exploris")] },
             "an-api-key");
 
@@ -364,7 +620,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         // container disposes the same objects again a moment later.
         var service = NewService();
 
-        await service.StartMonitoringAsync(
+        await service.StartEveryConfigurationAsync(
             new AppSettings { Configurations = [Watching("Lumos"), Watching("Exploris")] },
             "an-api-key");
 
@@ -382,7 +638,7 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
         // rather than skip it, and Main returning disposes it synchronously.
         var service = NewService();
 
-        await service.StartMonitoringAsync(
+        await service.StartEveryConfigurationAsync(
             new AppSettings { Configurations = [Watching("Lumos"), Watching("Exploris")] },
             "an-api-key");
 

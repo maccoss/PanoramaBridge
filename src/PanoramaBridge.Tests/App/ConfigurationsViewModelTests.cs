@@ -1,3 +1,5 @@
+using System.Collections.Specialized;
+using PanoramaBridge.App.Services;
 using PanoramaBridge.App.ViewModels;
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Tests.TestDoubles;
@@ -40,7 +42,12 @@ public sealed class ConfigurationsViewModelTests
     };
 
     private static (SettingsViewModel Settings, ConfigurationsViewModel List) New(
-        params MonitoringConfiguration[] configurations)
+        params MonitoringConfiguration[] configurations) =>
+        New(run: null, configurations);
+
+    private static (SettingsViewModel Settings, ConfigurationsViewModel List) New(
+        IConfigurationRunControl? run,
+        MonitoringConfiguration[] configurations)
     {
         var settings = new SettingsViewModel(
             new InMemorySettingsStore(),
@@ -48,7 +55,7 @@ public sealed class ConfigurationsViewModelTests
                 ? new AppSettings()
                 : new AppSettings { Configurations = configurations });
 
-        return (settings, new ConfigurationsViewModel(settings));
+        return (settings, new ConfigurationsViewModel(settings, run));
     }
 
     [Fact]
@@ -77,6 +84,93 @@ public sealed class ConfigurationsViewModelTests
         list.SelectedIndex.ShouldBe(1);
         settings.ConfigurationIndex.ShouldBe(1);
         settings.LocalDirectory.ShouldBeEmpty("the new one has no folder yet");
+    }
+
+    [Fact]
+    public async Task A_new_configuration_is_off_until_somebody_fills_it_in()
+    {
+        // It has no folder and no destination, so there is nothing it could do. Added switched
+        // on, it is not merely useless: it is enabled and invalid, which makes the whole settings
+        // record invalid and stops monitoring starting for the configurations that were working.
+        var (settings, list) = New(Watching("Lumos", Path.GetTempPath()));
+
+        await list.AddCommand.ExecuteAsync(null);
+
+        settings.Configurations[1].Enabled.ShouldBeFalse();
+        settings.ToSettings().Validate().ShouldBeEmpty(
+            "adding one to set up later must not stop the others transferring");
+    }
+
+    [Fact]
+    public async Task A_new_configuration_says_it_needs_setting_up_rather_than_just_off()
+    {
+        // Off on its own reads as a deliberate choice, which for a configuration nobody has
+        // filled in yet is the wrong thing to say: the list is where somebody notices it is
+        // waiting on them.
+        var (_, list) = New(Watching("Lumos", Path.GetTempPath()));
+
+        await list.AddCommand.ExecuteAsync(null);
+        await list.StatusesChecked;
+
+        list.Rows[1].Status.ShouldBe("Not set up");
+        list.Rows[1].StatusDetail.ShouldNotBeNullOrWhiteSpace();
+
+        list.Rows[0].Status.ShouldBe("Ready", "and the one beside it is unaffected");
+    }
+
+    [Fact]
+    public async Task A_configuration_switched_off_on_purpose_still_reads_as_off()
+    {
+        // The distinction only helps if a complete configuration somebody turned off -- an
+        // instrument away for service -- still says so rather than claiming to need setting up.
+        var (_, list) = New(Watching("Away for service", Path.GetTempPath()));
+
+        await list.StatusesChecked;
+
+        list.Rows[0].Status.ShouldBe("Ready", "complete and not running is ready to be run");
+    }
+
+    [Fact]
+    public async Task Reloading_leaves_the_recent_destinations_alone_when_nothing_changed()
+    {
+        // The destination box is an editable ComboBox whose items are this collection and whose
+        // text is two-way bound to RemotePath. Replacing the items raises a Reset, the ComboBox
+        // throws away its text, and the binding writes the empty string back -- so the
+        // destination of whichever configuration was on screen was blanked, and the next save
+        // wrote the blank. Not touching the list when nothing about it changed is what stops it.
+        var (settings, list) = New(Watching("Lumos", Path.GetTempPath()));
+
+        var resets = 0;
+        ((INotifyCollectionChanged)settings.RecentRemotePaths).CollectionChanged += (_, e) =>
+        {
+            if (e.Action == NotifyCollectionChangedAction.Reset)
+            {
+                resets++;
+            }
+        };
+
+        await list.AddCommand.ExecuteAsync(null);
+        await settings.EditConfigurationAsync(0);
+        await settings.SaveAsync();
+
+        resets.ShouldBe(0, "the recent destinations never changed, so the list was never replaced");
+    }
+
+    [Fact]
+    public async Task Adding_a_configuration_does_not_blank_the_destination_of_the_one_before_it()
+    {
+        // What the blanking cost, stated at the level it was reported: add a configuration, go
+        // back to the previous one, and its destination is gone.
+        var (settings, list) = New(Watching("Lumos", Path.GetTempPath()));
+
+        var before = settings.RemotePath;
+        before.ShouldNotBeNullOrWhiteSpace();
+
+        await list.AddCommand.ExecuteAsync(null);
+        await settings.EditConfigurationAsync(0);
+
+        settings.RemotePath.ShouldBe(before);
+        settings.Configurations[0].RemotePath.ShouldBe(before);
     }
 
     [Fact]
@@ -215,19 +309,180 @@ public sealed class ConfigurationsViewModelTests
     }
 
     [Fact]
-    public async Task Ticking_a_row_turns_that_configuration_on_without_disturbing_the_others()
+    public async Task The_run_button_starts_one_configuration_and_leaves_the_others_alone()
     {
-        var (settings, list) = New(
-            Watching("Lumos", @"D:\Data\Lumos") with { Enabled = false },
-            Watching("Exploris", @"D:\Data\Exploris"));
+        var started = new List<string>();
 
-        list.Rows[0].Enabled = true;
+        var (_, list) = New(
+            run: new RecordingRun(started),
+            configurations:
+            [
+                Watching("Lumos", Path.GetTempPath()),
+                Watching("Exploris", Path.GetTempPath()),
+            ]);
 
-        // The tick writes through the settings, which is asynchronous.
-        await Task.Yield();
+        await list.Rows[0].ToggleRunCommand.ExecuteAsync(null);
 
-        settings.Configurations[0].Enabled.ShouldBeTrue();
-        settings.Configurations[1].Enabled.ShouldBeTrue("the one beside it is untouched");
+        started.ShouldBe(["Lumos"]);
+        list.Rows[0].Running.ShouldBeTrue();
+        list.Rows[0].RunButtonText.ShouldBe("Stop");
+        list.Rows[1].Running.ShouldBeFalse("the one beside it is untouched");
+        list.Rows[1].RunButtonText.ShouldBe("Run");
+    }
+
+    [Fact]
+    public async Task A_configuration_that_will_not_start_says_why_and_the_button_goes_back()
+    {
+        // A button reading Stop for something that never started is the same defect as a tick
+        // that was never saved.
+        var (_, list) = New(
+            run: new RefusingRun("no credential is available"),
+            configurations: [Watching("Lumos", Path.GetTempPath())]);
+
+        await list.Rows[0].ToggleRunCommand.ExecuteAsync(null);
+
+        list.Rows[0].Running.ShouldBeFalse();
+        list.Rows[0].RunButtonText.ShouldBe("Run");
+        list.Problem.ShouldContain("no credential is available");
+    }
+
+    [Fact]
+    public async Task Deleting_a_running_configuration_stops_it()
+    {
+        // It kept running. Nothing in the list referred to its runner any more, so it went on
+        // watching that folder and transferring to that destination with no row left to stop it
+        // -- and with Stop all grayed out as well, nothing short of killing the process reached
+        // it.
+        var started = new List<string>();
+
+        var settings = new SettingsViewModel(
+            new InMemorySettingsStore(),
+            new AppSettings
+            {
+                Configurations =
+                [
+                    Watching("Lumos", Path.GetTempPath()),
+                    Watching("Exploris", Path.GetTempPath()),
+                ],
+            });
+
+        var run = new RecordingRun(started, () => settings.Configurations);
+        var list = new ConfigurationsViewModel(settings, run);
+
+        await list.Rows[1].ToggleRunCommand.ExecuteAsync(null);
+
+        run.IsRunning(settings.Configurations[1]).ShouldBeTrue();
+
+        list.Confirm = _ => true;
+        list.SelectedIndex = 1;
+        await list.Switching;
+
+        await list.DeleteCommand.ExecuteAsync(null);
+
+        settings.Configurations.Count.ShouldBe(1);
+        run.IsRunning(Watching("Exploris", Path.GetTempPath())).ShouldBeFalse(
+            "the configuration is gone, so what it was running has to be too");
+        list.Problem.ShouldContain("has been stopped");
+    }
+
+    [Fact]
+    public async Task Every_save_the_list_makes_asks_for_orphans_to_be_stood_down()
+    {
+        // Add, Copy, Delete and Run all save, and a save is what can leave a runner behind. The
+        // count is the assertion: a new save path that forgets to ask is the way this regresses.
+        var started = new List<string>();
+
+        var settings = new SettingsViewModel(
+            new InMemorySettingsStore(),
+            new AppSettings { Configurations = [Watching("Lumos", Path.GetTempPath())] });
+
+        var run = new RecordingRun(started, () => settings.Configurations);
+        var list = new ConfigurationsViewModel(settings, run);
+
+        await list.AddCommand.ExecuteAsync(null);
+        run.Reconciles.ShouldBe(1, "Add saves");
+
+        list.SelectedIndex = 0;
+        await list.Switching;
+        run.Reconciles.ShouldBe(2, "switching saves the one being left");
+
+        await list.CopyCommand.ExecuteAsync(null);
+        run.Reconciles.ShouldBe(3, "Copy saves");
+
+        list.Confirm = _ => true;
+        await list.DeleteCommand.ExecuteAsync(null);
+        run.Reconciles.ShouldBe(4, "Delete saves");
+    }
+
+    /// <param name="configurations">
+    /// What the settings currently hold, so a reconcile can tell which running configurations the
+    /// list no longer describes. Left null by the tests that are not about that.
+    /// </param>
+    private sealed class RecordingRun(
+        List<string> started,
+        Func<IReadOnlyList<MonitoringConfiguration>>? configurations = null)
+        : IConfigurationRunControl
+    {
+        private readonly HashSet<string> _running = new(StringComparer.Ordinal);
+
+        public bool IsRunning(MonitoringConfiguration configuration) =>
+            _running.Contains(configuration.DisplayName);
+
+        public Task StartAsync(MonitoringConfiguration configuration)
+        {
+            started.Add(configuration.DisplayName);
+            _running.Add(configuration.DisplayName);
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(MonitoringConfiguration configuration)
+        {
+            _running.Remove(configuration.DisplayName);
+            return Task.CompletedTask;
+        }
+
+        /// <summary>How many times a save asked for anything orphaned to be stood down.</summary>
+        public int Reconciles { get; private set; }
+
+        /// <summary>
+        /// Stops anything running that is no longer in the list.
+        /// </summary>
+        /// <remarks>
+        /// The real one matches a runner to a configuration by folder, destination and server.
+        /// This one goes by name, which is all it has, and the point is the same: a configuration
+        /// that has been deleted stops being run.
+        /// </remarks>
+        public Task<int> ReconcileAsync()
+        {
+            Reconciles++;
+
+            if (configurations is null)
+            {
+                return Task.FromResult(0);
+            }
+
+            var live = configurations().Select(c => c.DisplayName).ToHashSet(StringComparer.Ordinal);
+            var orphaned = _running.Where(name => !live.Contains(name)).ToArray();
+
+            foreach (var name in orphaned)
+            {
+                _running.Remove(name);
+            }
+
+            return Task.FromResult(orphaned.Length);
+        }
+    }
+
+    private sealed class RefusingRun(string reason) : IConfigurationRunControl
+    {
+        public bool IsRunning(MonitoringConfiguration configuration) => false;
+
+        public Task StartAsync(MonitoringConfiguration configuration) =>
+            throw new InvalidOperationException(reason);
+
+        public Task StopAsync(MonitoringConfiguration configuration) => Task.CompletedTask;
+
+        public Task<int> ReconcileAsync() => Task.FromResult(0);
     }
 
     [Fact]
@@ -306,14 +561,27 @@ public sealed class ConfigurationsViewModelTests
     }
 
     [Fact]
-    public void A_configuration_that_is_switched_off_reads_as_off_rather_than_as_broken()
+    public async Task A_folder_that_is_not_there_needs_attention_rather_than_setting_up()
     {
-        // An instrument away for service. Nothing is wrong with it and nothing needs fixing, so
-        // marking it red would train people to ignore the column.
-        var (_, list) = New(
-            Watching("Away for service", @"X:\not\here") with { Enabled = false });
+        // An instrument whose share is unplugged has been set up; something is wrong with it.
+        // Saying "Not set up" would send somebody to fill in boxes that are already filled in.
+        var (_, list) = New(Watching("Away for service", @"X:\not\here"));
 
-        list.Rows[0].Status.ShouldBe("Off");
+        await list.StatusesChecked;
+
+        list.Rows[0].Status.ShouldBe("Needs attention");
+    }
+
+    [Fact]
+    public async Task A_complete_configuration_that_is_not_running_reads_as_ready()
+    {
+        // Not "Off". Nothing is wrong with it and nothing is waiting on anybody: it is ready to
+        // be run, and the Run button beside it is how.
+        var (_, list) = New(Watching("Lumos", Path.GetTempPath()));
+
+        await list.StatusesChecked;
+
+        list.Rows[0].Status.ShouldBe("Ready");
     }
 
     [Fact]
@@ -340,13 +608,13 @@ public sealed class ConfigurationsViewModelTests
     public async Task The_summary_says_how_many_will_actually_run()
     {
         var (_, list) = New(
-            Watching("Lumos", @"D:\Data\Lumos"),
-            Watching("Exploris", @"D:\Data\Exploris") with { Enabled = false });
+            Watching("Lumos", Path.GetTempPath()),
+            Watching("Exploris", Path.GetTempPath()));
 
-        list.Summary.ShouldBe("2 configurations, 1 on.");
+        list.Summary.ShouldBe("2 configurations, none running.");
 
         await list.AddCommand.ExecuteAsync(null);
 
-        list.Summary.ShouldBe("3 configurations, 2 on.");
+        list.Summary.ShouldBe("3 configurations, none running.");
     }
 }

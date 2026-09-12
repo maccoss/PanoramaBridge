@@ -95,18 +95,22 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(UploadNowCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ToggleMonitoringCommand))]
     private bool _isBusy;
 
-    /// <summary>Whether the monitored folder is being watched.</summary>
+    /// <summary>Whether anything is being watched.</summary>
+    /// <remarks>
+    /// The NotifyCanExecuteChangedFor is what makes Stop all usable, and leaving it off is not a
+    /// missing nicety: CommunityToolkit's RelayCommand does not listen to
+    /// CommandManager.RequerySuggested, so a command's CanExecute is asked once when the binding
+    /// attaches and then only when something raises CanExecuteChanged. This property starts false,
+    /// so without this attribute the button is evaluated once as disabled and stays that way for
+    /// the life of the window -- with nothing to see, because a button that is grayed out from the
+    /// start looks like a button that has nothing to do.
+    /// </remarks>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(MonitoringButtonText))]
     [NotifyPropertyChangedFor(nameof(UploadNowButtonText))]
-    [NotifyCanExecuteChangedFor(nameof(ToggleMonitoringCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StopAllCommand))]
     private bool _isMonitoring;
-
-    /// <summary>Label on the monitoring button, so one button serves both states.</summary>
-    public string MonitoringButtonText => IsMonitoring ? "Stop monitoring" : "Start monitoring";
 
     /// <summary>
     /// Label on the scan button.
@@ -144,7 +148,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(UploadNowCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ToggleMonitoringCommand))]
     private bool _uploadsBlocked;
 
     /// <summary>Whether to show the informational update strip.</summary>
@@ -250,72 +253,45 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private bool CanUploadNow() => !IsBusy && !UploadsBlocked;
 
     /// <summary>
-    /// Starts or stops watching the monitored folder.
+    /// Stops every configuration that is running.
     /// </summary>
     /// <remarks>
-    /// Stopping is always allowed, including while the version floor blocks new uploads: a build
-    /// that may not start new work still has to be able to stand down cleanly.
+    /// What is left of the old Start monitoring button. Starting is per configuration now -- the
+    /// Run button on its row -- because a tick saying a configuration was included plus a button
+    /// saying monitoring was on were two switches in series for one outcome, and a configuration
+    /// ran only when both agreed.
+    /// <para>
+    /// Stopping stayed global because there is a real use for it that no per-row button covers:
+    /// stand everything down at once, before a reboot or when something is wrong. Shutdown does
+    /// not come through here -- it reaches <see cref="TransferService.StopMonitoringAsync"/> by
+    /// way of DisposeAsync -- so this is the button and nothing else.
+    /// </para>
+    /// <para>
+    /// Always allowed while anything is running, including while the version floor blocks new
+    /// uploads: a build that may not start new work still has to be able to stand down cleanly.
+    /// </para>
     /// </remarks>
-    [RelayCommand(CanExecute = nameof(CanToggleMonitoring))]
-    private async Task ToggleMonitoringAsync()
+    [RelayCommand(CanExecute = nameof(IsMonitoring))]
+    private async Task StopAllAsync()
     {
-        if (_transfers.IsMonitoring)
-        {
-            // Whatever the stopped configurations last reported stops being true the moment they
-            // stop being watched. Left behind, a failure from one of them would survive into the
-            // next session's status line and never clear.
-            _sweeps.Clear();
+        // Whatever the stopped configurations last reported stops being true the moment they stop
+        // being watched. Left behind, a failure from one of them would survive into the next
+        // session's status line and never clear.
+        _sweeps.Clear();
 
-            StatusLine = "Stopping monitoring...";
+        StatusLine = "Stopping...";
 
-            await _transfers.StopMonitoringAsync().ConfigureAwait(true);
+        await _transfers.StopMonitoringAsync().ConfigureAwait(true);
 
-            IsMonitoring = false;
-            StatusLine = "Monitoring stopped.";
-            await Uploads.RefreshAsync().ConfigureAwait(true);
-            return;
-        }
+        IsMonitoring = false;
+        StatusLine = "Stopped.";
 
-        var settings = await Settings.SaveAsync(_shutdown.Token).ConfigureAwait(true);
+        Configurations.RefreshRunState();
 
-        var problems = settings.Validate();
-        if (problems.Count > 0)
-        {
-            StatusLine = problems[0];
-            ConnectionFailed = true;
-            return;
-        }
-
-        try
-        {
-            RememberCredential(settings);
-
-            await _transfers
-                .StartMonitoringAsync(
-                    settings, SecretProvider?.Invoke(), Settings.Edited, _shutdown.Token)
-                .ConfigureAwait(true);
-
-            IsMonitoring = true;
-            ConnectionFailed = false;
-
-            var count = _transfers.MonitoredConfigurations;
-
-            // The folder of the one actually being watched, not of the one the tabs happen to
-            // show: with a single configuration they are the same, and with several the count is
-            // what is worth saying.
-            StatusLine = count == 1
-                ? $"Monitoring {settings.EnabledConfigurations.First().LocalDirectory}."
-                : $"Monitoring {count} configurations.";
-        }
-        catch (Exception ex)
-        {
-            _log.LogError(ex, "Monitoring could not be started.");
-            StatusLine = ex.Message;
-            ConnectionFailed = true;
-        }
+        await Uploads.RefreshAsync().ConfigureAwait(true);
     }
 
-    private bool CanToggleMonitoring() => IsMonitoring || (!IsBusy && !UploadsBlocked);
+
 
     [RelayCommand(CanExecute = nameof(IsBusy))]
     private void Cancel()
@@ -429,6 +405,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// instead wrote one configuration's key into another's credential slot, and an unticked box
     /// deleted a credential belonging to a configuration nobody was looking at.
     /// </remarks>
+    public void RememberCredentialFor(AppSettings settings) => RememberCredential(settings);
+
     private void RememberCredential(AppSettings settings)
     {
         var secret = SecretProvider?.Invoke();
@@ -502,6 +480,57 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         IsBusy = _transfers.IsRunning;
         IsMonitoring = _transfers.IsMonitoring;
+
+        DropSweepsFromConfigurationsThatStopped();
+    }
+
+    /// <summary>
+    /// Forgets what a configuration last reported, once it is no longer being watched.
+    /// </summary>
+    /// <remarks>
+    /// Whatever a configuration last said stops being true the moment it stops being watched.
+    /// Stop all cleared the lot, but stopping one configuration from its own row left its last
+    /// sweep in the dictionary -- so a failure from a folder nobody is watching any more kept
+    /// being folded into the status line, for the rest of the session, and no later sweep could
+    /// ever clear it because none would arrive for that key.
+    /// <para>
+    /// Driven off the run state rather than from the stop itself, so it covers every way a
+    /// configuration can stop being watched: its own button, a reconcile after an edit or a
+    /// delete, or a monitor that gave up on its own.
+    /// </para>
+    /// </remarks>
+    private void DropSweepsFromConfigurationsThatStopped()
+    {
+        if (_sweeps.Count == 0)
+        {
+            return;
+        }
+
+        var running = _transfers.RunningConfigurationNames;
+        var stale = _sweeps.Keys.Where(name => !running.Contains(name)).ToArray();
+
+        if (stale.Length == 0)
+        {
+            return;
+        }
+
+        foreach (var name in stale)
+        {
+            _sweeps.Remove(name);
+        }
+
+        if (_sweeps.Count == 0)
+        {
+            // Nothing is being watched, so there is nothing to describe. The line is left to
+            // whatever stopped things to set, rather than overwritten with a stale summary.
+            ConnectionFailed = false;
+            return;
+        }
+
+        var summary = Core.Monitoring.MonitoringSummary.Describe(_sweeps);
+
+        StatusLine = summary.Line;
+        ConnectionFailed = summary.Failed;
     }
 
     /// <summary>
