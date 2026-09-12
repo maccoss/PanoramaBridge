@@ -25,13 +25,13 @@ public sealed class MainViewModelTests : IAsyncLifetime
     {
         public bool IsAvailable => true;
 
-        public StoredCredential? Read(string serverUrl) => null;
+        public StoredCredential? Read(string serverUrl, string account = "") => null;
 
-        public void Write(string serverUrl, StoredCredential credential)
+        public void Write(string serverUrl, StoredCredential credential, string account = "")
         {
         }
 
-        public void Delete(string serverUrl)
+        public void Delete(string serverUrl, string account = "")
         {
         }
     }

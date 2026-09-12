@@ -23,12 +23,31 @@ public interface ICredentialStore
     /// <summary>Whether a real credential store is available on this machine.</summary>
     bool IsAvailable { get; }
 
-    /// <summary>Reads the credential for a server, or null when none is stored.</summary>
-    StoredCredential? Read(string serverUrl);
+    /// <summary>Reads the credential for a server and account, or null when none is stored.</summary>
+    /// <param name="account">
+    /// Which credential for this server is meant, when a configuration keeps one of its own.
+    /// Empty means the credential held for the server as a whole.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// Keyed by server <em>and</em> account, because two configurations may sign in to one server
+    /// as different people. Deliberately not keyed by user name, which looks like the obvious
+    /// discriminator and does not work: with an API key -- the recommended mode -- there is no
+    /// user name at all, only the key, so two API-key configurations on one server would still
+    /// overwrite each other.
+    /// </para>
+    /// <para>
+    /// An empty account resolves to exactly the target used before accounts existed, which is
+    /// what makes this need no migration. The credential already stored on every installed copy
+    /// is found unchanged, and a build without accounts still finds it after a rollback because
+    /// nothing moved.
+    /// </para>
+    /// </remarks>
+    StoredCredential? Read(string serverUrl, string account = "");
 
-    /// <summary>Stores or replaces the credential for a server.</summary>
-    void Write(string serverUrl, StoredCredential credential);
+    /// <summary>Stores or replaces the credential for a server and account.</summary>
+    void Write(string serverUrl, StoredCredential credential, string account = "");
 
-    /// <summary>Removes the credential for a server. Succeeds when there was none.</summary>
-    void Delete(string serverUrl);
+    /// <summary>Removes one. Succeeds when there was none.</summary>
+    void Delete(string serverUrl, string account = "");
 }

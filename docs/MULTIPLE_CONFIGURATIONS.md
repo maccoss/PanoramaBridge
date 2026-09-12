@@ -93,7 +93,7 @@ configurations may address different servers.
 Data first, because the migrations are the only irreversible part and everything else depends on
 the shapes they settle.
 
-### Phase 1 — widen the ledger key
+### Phase 1 — widen the ledger key  **[done: cbb9044]**
 
 `(local_path, remote_path)` as the primary key. `IStateStore` gains the destination wherever it
 currently takes only a path.
@@ -112,10 +112,32 @@ Required before this ships:
   that were settled before — no re-upload after an update
 - a test that two destinations for one local path now coexist
 
-### Phase 2 — key credentials by server *and* account
+### Phase 2 — key credentials by server *and* account  **[done]**
 
-Smaller, and the same shape of problem: existing entries are keyed by server alone and have to be
-found under the old name once, then rewritten under the new one.
+Smaller, and it turned out to need no migration at all.
+
+The obvious discriminator is the user name, and it does not work: with an API key -- the
+recommended mode -- there is no user name, only the key, so two API-key configurations on one
+server would still overwrite each other. The key is therefore an **account**, which phase 3 fills
+with the configuration's identity.
+
+An empty account resolves to *exactly* the target name used before accounts existed. That is the
+whole migration: every credential already stored is found where it has always been, a rolled-back
+build still finds it because nothing moved, and configuration one can keep the empty account and
+inherit the credential the machine already has.
+
+### Carried forward from phase 1
+
+Two things the ledger work surfaced that later phases have to deal with:
+
+- **A failure recorded before a destination is known uses an empty destination.** That is a real
+  key, not an argument error, and `SafeSetStateAsync` marks every row a file has -- all three
+  routes there are files nothing can transfer, so the failure is true for every destination.
+- **A case-only rename now leaves a stale row.** Local paths still collapse case-insensitively
+  but remote paths compare exactly, so `run.raw` to `RUN.raw` produces two rows. Nothing
+  re-uploads; the sweep finds the row for the destination it would use now. The Uploads table
+  would show two entries for one file, so this wants clearing on save before phase 5 puts that
+  table in front of anyone.
 
 ### Phase 3 — split settings into application and configurations
 

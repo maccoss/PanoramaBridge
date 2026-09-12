@@ -6,6 +6,7 @@ namespace PanoramaBridge.Tests.Security;
 /// Exercises the real Windows Credential Manager. Uses a throwaway server name so it can never
 /// touch a credential the user actually relies on, and removes what it creates.
 /// </summary>
+[Collection(nameof(CredentialManagerCollection))]
 public sealed class WindowsCredentialStoreTests : IDisposable
 {
     private readonly WindowsCredentialStore _store = new();
