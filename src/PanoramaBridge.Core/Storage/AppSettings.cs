@@ -321,11 +321,25 @@ public sealed record AppSettings
                 "Add a configuration: a folder to monitor and a Panorama folder to send it to.");
         }
 
-        if (MaxConcurrentTransfers is < 1 or > 8)
+        if (ValidateConcurrency(MaxConcurrentTransfers) is { } limit)
         {
-            problems.Add("Concurrent transfers must be between 1 and 8.");
+            problems.Add(limit);
         }
 
         return problems;
     }
+
+    /// <summary>
+    /// What is wrong with a concurrency limit, or null when nothing is.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="Validate"/> so that starting one configuration can ask this
+    /// without also asking whether any configurations exist. That question has no meaning to a
+    /// caller holding the configuration it wants to start, and asking it told such a caller to go
+    /// and add one.
+    /// </remarks>
+    public static string? ValidateConcurrency(int concurrentTransfers) =>
+        concurrentTransfers is < 1 or > 8
+            ? "Concurrent transfers must be between 1 and 8."
+            : null;
 }

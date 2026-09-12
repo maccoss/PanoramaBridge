@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using PanoramaBridge.App.Services;
+using PanoramaBridge.App.ViewModels;
 using PanoramaBridge.Core.Infrastructure;
 using PanoramaBridge.Core.Security;
 using PanoramaBridge.Core.Storage;
@@ -126,6 +127,165 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
             // if a folder is not as empty as it should be.
             ReconcileMinutes = 60,
         };
+
+    /// <summary>A settings store that keeps what it was given.</summary>
+    private sealed class InMemorySettingsStore(AppSettings initial) : ISettingsStore
+    {
+        public AppSettings Saved { get; private set; } = initial;
+
+        public Task<AppSettings> LoadAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(Saved);
+
+        public Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
+        {
+            Saved = settings;
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task An_unsaved_edit_does_not_stand_down_a_configuration_that_is_running()
+    {
+        // Through the real ConfigurationRunControl, which is where this went wrong. It handed the
+        // reconcile ToSettings() -- the editor's current contents -- so a folder somebody was
+        // halfway through retyping made a perfectly healthy runner match nothing, and the next
+        // reconcile stood it down. The stop path does not save, so pressing Stop on one row was
+        // enough to lose the transfer on another.
+        await using var service = NewService();
+
+        var lumos = Watching("Lumos");
+        var exploris = Watching("Exploris");
+
+        var stored = new AppSettings { Configurations = [lumos, exploris] };
+        var settings = new SettingsViewModel(new InMemorySettingsStore(stored), stored);
+
+        var control = new ConfigurationRunControl(service, settings) { SecretProvider = () => "an-api-key" };
+
+        await control.StartAsync(lumos);
+        await control.StartAsync(exploris);
+
+        service.MonitoredConfigurations.ShouldBe(2);
+
+        // The editor is on the first configuration. Retype its folder and do not save.
+        await settings.EditConfigurationAsync(0);
+        settings.LocalDirectory = NewFolder();
+
+        settings.HasUnsavedChanges.ShouldBeTrue("the premise: an edit nobody has saved");
+
+        (await control.ReconcileAsync()).ShouldBe(
+            0, "nothing saved has changed, so nothing should be stood down");
+
+        service.MonitoredConfigurations.ShouldBe(2, "both are still transferring");
+        service.IsConfigurationRunning(lumos).ShouldBeTrue();
+        service.IsConfigurationRunning(exploris).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Saving_the_edit_then_does_stand_it_down()
+    {
+        // The other half, so the fix above cannot be "never reconcile anything". Once the change
+        // is saved it is what the configuration is, and the runner watching the old folder is no
+        // longer described by anything.
+        await using var service = NewService();
+
+        var lumos = Watching("Lumos");
+        var stored = new AppSettings { Configurations = [lumos] };
+        var settings = new SettingsViewModel(new InMemorySettingsStore(stored), stored);
+
+        var control = new ConfigurationRunControl(service, settings) { SecretProvider = () => "an-api-key" };
+
+        await control.StartAsync(lumos);
+
+        settings.LocalDirectory = NewFolder();
+        await settings.SaveAsync();
+
+        (await control.ReconcileAsync()).ShouldBe(1);
+
+        service.MonitoredConfigurations.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Stopping_one_configuration_leaves_the_others_holding_the_session()
+    {
+        // The session -- the shared budget and the cancellation source -- must survive any one
+        // configuration stopping, and go only when the last does.
+        //
+        // What this does NOT cover, and is worth saying rather than implying: the race it was
+        // written for. A runner reaches _runners only after StartAsync returns, so a Stop landing
+        // in that window used to find the list empty and release a session somebody was still
+        // starting into. Against an in-memory store and no server, StartConfigurationAsync never
+        // suspends, so the window does not exist here and this passed with or without the fix.
+        // The guard for it is the _starting count in TransferService, verified by inspection.
+        await using var service = NewService();
+
+        var lumos = Watching("Lumos");
+        var exploris = Watching("Exploris");
+        var settings = new AppSettings { Configurations = [lumos, exploris] };
+
+        await service.StartConfigurationAsync(settings, lumos, "an-api-key");
+
+        // Stop the only listed runner while a second start is in flight. Awaiting the start after
+        // the stop is what puts them in that order without needing to pause inside the service.
+        var starting = service.StartConfigurationAsync(settings, exploris, "an-api-key");
+
+        await service.StopConfigurationAsync(lumos);
+        await starting;
+
+        service.MonitoredConfigurations.ShouldBe(1);
+        service.IsConfigurationRunning(exploris).ShouldBeTrue();
+        service.IsMonitoring.ShouldBeTrue("the session outlived the configuration that made it");
+        service.TransferLimit.ShouldNotBeNull("the budget is still held by the one that is running");
+
+        await service.StopConfigurationAsync(exploris);
+
+        service.TransferLimit.ShouldBeNull("and goes when the last one stops");
+    }
+
+    [Fact]
+    public async Task A_configuration_that_stopped_is_not_reported_as_running()
+    {
+        // RunningConfigurationNames decides which status reports are still worth showing.
+        //
+        // The case that prompted the fix is not this one and cannot be reached from here: a
+        // runner whose monitor gave up stays in the array with IsRunning false, and nothing
+        // outside the service can put it in that state. The filter added there matches
+        // MonitoredConfigurations immediately above it; that much is by inspection. What this
+        // covers is the ordinary path, so a future change cannot start reporting stopped
+        // configurations as running.
+        await using var service = NewService();
+
+        var configuration = Watching("Lumos");
+        var settings = new AppSettings { Configurations = [configuration] };
+
+        await service.StartConfigurationAsync(settings, configuration, "an-api-key");
+
+        service.RunningConfigurationNames.ShouldContain("Lumos");
+
+        await service.StopConfigurationAsync(configuration);
+
+        service.RunningConfigurationNames.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Starting_a_configuration_never_asks_for_one_to_be_added()
+    {
+        // StartConfigurationAsync is handed the configuration to start, so "are there any
+        // configurations at all" is not a question it can be asking. Asking the whole of
+        // AppSettings.Validate told a caller holding a configuration to go and add one.
+        await using var service = NewService();
+
+        var configuration = Watching("Lumos");
+
+        // Deliberately not in the list: this is what the message was wrong about. Passed as the
+        // edited configuration so the typed secret reaches its credential slot, which is how the
+        // window calls this for a configuration it is showing.
+        var settings = new AppSettings { Configurations = [] };
+
+        await service.StartConfigurationAsync(
+            settings, configuration, "an-api-key", edited: configuration);
+
+        service.IsConfigurationRunning(configuration).ShouldBeTrue();
+    }
 
     [Fact]
     public async Task A_configuration_the_settings_no_longer_describe_is_stopped()

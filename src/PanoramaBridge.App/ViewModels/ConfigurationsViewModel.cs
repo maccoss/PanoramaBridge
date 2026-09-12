@@ -295,13 +295,22 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
     /// so an asynchronous handler returns at its first await and the next click starts a second
     /// one beside it -- two switches saving the same file and moving the same index, where the
     /// later one can finish first and leave the list highlighting a row the tabs are not showing.
-    /// The switch in flight is kept instead, and a click arriving while one is running is ignored
-    /// rather than queued: the user's last click is answered by the rebuild that follows.
+    /// The switch in flight is kept instead, and a click arriving while one is running is
+    /// remembered rather than run beside it -- then applied when the first finishes. Dropping it
+    /// was not enough: the rebuild that follows a switch puts SelectedIndex back to the
+    /// configuration being edited, so an ignored click was not merely unanswered, it was undone
+    /// under the pointer and had to be made again.
     /// </remarks>
     partial void OnSelectedIndexChanged(int value)
     {
-        if (_rebuilding || _switching is { IsCompleted: false } || value < 0 || value >= Rows.Count)
+        if (_rebuilding || value < 0 || value >= Rows.Count)
         {
+            return;
+        }
+
+        if (_switching is { IsCompleted: false })
+        {
+            _pendingSelection = value;
             return;
         }
 
@@ -310,6 +319,9 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
 
     /// <summary>The configuration switch in flight, so a second click cannot start another.</summary>
     private Task? _switching;
+
+    /// <summary>A row clicked while a switch was running, applied once it finishes.</summary>
+    private int? _pendingSelection;
 
     /// <summary>Exposed so a test can wait for a switch rather than sleeping.</summary>
     public Task Switching => _switching ?? Task.CompletedTask;
@@ -323,6 +335,8 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
             await _settings.EditConfigurationAsync(value).ConfigureAwait(true);
 
             await ReconcileAsync().ConfigureAwait(true);
+
+            await ApplyPendingSelectionAsync().ConfigureAwait(true);
         }
         catch (Exception ex)
         {
@@ -342,6 +356,41 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
             {
                 _rebuilding = false;
             }
+        }
+    }
+
+    /// <summary>
+    /// Opens whichever row was clicked while the last switch was still running.
+    /// </summary>
+    /// <remarks>
+    /// Only the most recent is kept, because that is the row the user is looking at. Setting
+    /// SelectedIndex re-enters OnSelectedIndexChanged, which starts the switch, so this is a loop
+    /// rather than a recursion -- clicking steadily through the list cannot build a stack.
+    /// </remarks>
+    private async Task ApplyPendingSelectionAsync()
+    {
+        while (_pendingSelection is { } wanted)
+        {
+            _pendingSelection = null;
+
+            if (wanted < 0 || wanted >= Rows.Count || wanted == _settings.ConfigurationIndex)
+            {
+                continue;
+            }
+
+            _rebuilding = true;
+
+            try
+            {
+                SelectedIndex = wanted;
+            }
+            finally
+            {
+                _rebuilding = false;
+            }
+
+            await _settings.EditConfigurationAsync(wanted).ConfigureAwait(true);
+            await ReconcileAsync().ConfigureAwait(true);
         }
     }
 
@@ -468,7 +517,7 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         // The deleted configuration may have been running. Nothing in the list refers to its
         // runner any more, so without this it would go on watching that folder and transferring
         // to that destination, with no row left to stop it.
-        await ReconcileAsync().ConfigureAwait(true);
+        await ReconcileAsync(deleted: true).ConfigureAwait(true);
     }
 
     /// <summary>Asks the user to confirm a deletion. Supplied by the view.</summary>
@@ -501,6 +550,11 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
 
             if (index >= _settings.Configurations.Count)
             {
+                // The save shrank the list past this row. Nothing to start, but the row still has
+                // to be told what is true, or it goes back to reading Run with no reconcile having
+                // happened and nothing said.
+                await ReconcileAsync().ConfigureAwait(true);
+                RefreshRunState();
                 return;
             }
 
@@ -524,17 +578,30 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
     /// folder or destination of one, used to leave its runner watching the old folder with no row
     /// left that could stop it.
     /// </remarks>
-    private async Task ReconcileAsync()
+    /// <param name="deleted">
+    /// Whether the save that prompted this removed a configuration, so the message can say what
+    /// to do. "Press Run to start it again" is no help when the row it names has just gone.
+    /// </param>
+    private async Task ReconcileAsync(bool deleted = false)
     {
-        var stopped = await _run.ReconcileAsync().ConfigureAwait(false);
+        // ConfigureAwait(true), like every other await in this class. The service finishes on a
+        // worker thread, and what follows sets bound properties and walks Rows -- which the UI
+        // thread rebuilds on every ConfigurationsChanged, so enumerating it from a pool thread is
+        // a collection-modified exception waiting for the right moment.
+        var stopped = await _run.ReconcileAsync().ConfigureAwait(true);
 
         if (stopped > 0)
         {
-            Problem = stopped == 1
-                ? "A configuration that was running has been stopped, because what it watches "
-                    + "has changed. Press Run to start it again."
-                : $"{stopped} configurations that were running have been stopped, because what "
-                    + "they watch has changed. Press Run to start them again.";
+            Problem = (stopped, deleted) switch
+            {
+                (1, true) => "The configuration you removed was running, and has been stopped.",
+                (_, true) =>
+                    $"{stopped} configurations you removed were running, and have been stopped.",
+                (1, false) => "A configuration that was running has been stopped, because what it "
+                    + "watches has changed. Press Run to start it again.",
+                _ => $"{stopped} configurations that were running have been stopped, because what "
+                    + "they watch has changed. Press Run to start them again.",
+            };
         }
 
         RefreshRunState();

@@ -65,6 +65,17 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     private CancellationTokenSource? _run;
 
     /// <summary>
+    /// How many configurations are part-way through starting.
+    /// </summary>
+    /// <remarks>
+    /// A configuration holds the session from the moment it takes the budget, which is before its
+    /// runner reaches <c>_runners</c>. Without this, a Stop completing in that window sees an
+    /// empty list and releases a session somebody is still starting into. Touched only from the
+    /// UI thread, like the rest of start and stop.
+    /// </remarks>
+    private int _starting;
+
+    /// <summary>
     /// The manual scan in flight, so teardown can wait for it.
     /// </summary>
     /// <remarks>
@@ -521,12 +532,16 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             throw new InvalidOperationException(problems[0]);
         }
 
-        // Asked of the settings rather than restated here. The bound and its wording had been
-        // copied, so the two could disagree about what is allowed and only one of them would be
-        // the message anybody read.
-        if (settings.Validate() is { Count: > 0 } faults)
+        // The concurrency limit, taken from the settings rather than restated here: the bound and
+        // its wording had been copied, so the two could disagree about what is allowed and only
+        // one of them would be the message anybody read.
+        //
+        // Not the whole of Validate, though. That also answers "are there any configurations at
+        // all", which is not a question this method can be asking -- it was handed the one to
+        // start. Asking it anyway told a caller holding a configuration to go and add one.
+        if (AppSettings.ValidateConcurrency(settings.MaxConcurrentTransfers) is { } limit)
         {
-            throw new InvalidOperationException(faults[0]);
+            throw new InvalidOperationException(limit);
         }
 
         var credential = ResolveCredential(
@@ -542,6 +557,16 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         // past the last runner is what made a changed concurrency limit disappear: ??= then held
         // on to the old budget, so raising the slider between a Stop and a Run left transfers
         // throttled at the previous number with nothing on screen saying so.
+        //
+        // Counted rather than inferred from _runners being empty. A runner is added to _runners
+        // only after StartAsync returns, and starting resolves a credential and contacts a server,
+        // so there is a real window in which this configuration holds the session and nothing in
+        // _runners says so. A Stop landing in that window used to find the list empty and dispose
+        // both -- leaving the configuration that was still starting with a token from a disposed
+        // source and no session, so IsMonitoring read false while it was genuinely watching and
+        // Stop all went dead again.
+        _starting++;
+
         _monitoring ??= new CancellationTokenSource();
         _budget ??= new TransferBudget(settings.MaxConcurrentTransfers);
 
@@ -560,6 +585,8 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         try
         {
             await runner.StartAsync(_monitoring.Token).ConfigureAwait(false);
+
+            _runners = [.. _runners, runner];
         }
         catch
         {
@@ -567,8 +594,14 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             await runner.DisposeAsync().ConfigureAwait(false);
             throw;
         }
+        finally
+        {
+            // Decremented only once the runner is in _runners, or once the failure has been
+            // cleaned up, so the session is never unheld while this configuration still needs it.
+            _starting--;
 
-        _runners = [.. _runners, runner];
+            DiscardSessionIfIdle();
+        }
 
         _log.LogInformation(
             "{Configuration} started; {Count} running, {Concurrency} transfer(s) at once across "
@@ -673,7 +706,7 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// </remarks>
     private void DiscardSessionIfIdle()
     {
-        if (_runners.Length > 0)
+        if (_runners.Length > 0 || _starting > 0)
         {
             return;
         }
@@ -720,8 +753,14 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             StringComparison.OrdinalIgnoreCase);
 
     /// <summary>What each running configuration is called, so stale reports can be dropped.</summary>
+    /// <remarks>
+    /// Filtered on IsRunning, like <see cref="MonitoredConfigurations"/> and not like the array
+    /// itself. A runner whose monitor gave up stays in <c>_runners</c> until something stops it,
+    /// so reporting the whole array kept that configuration's last sweep -- which is precisely the
+    /// failure that made it give up -- in the status line with nothing able to clear it.
+    /// </remarks>
     public IReadOnlyCollection<string> RunningConfigurationNames =>
-        [.. _runners.Select(r => r.Name)];
+        [.. _runners.Where(r => r.IsRunning).Select(r => r.Name)];
 
     /// <summary>
     /// How many transfers the running session allows at once, or null when nothing is running.

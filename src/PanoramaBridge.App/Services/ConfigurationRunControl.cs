@@ -57,5 +57,11 @@ public sealed class ConfigurationRunControl : IConfigurationRunControl
         _transfers.StopConfigurationAsync(configuration);
 
     /// <inheritdoc />
-    public Task<int> ReconcileAsync() => _transfers.ReconcileAsync(_settings.ToSettings());
+    /// <remarks>
+    /// Judged against the saved settings, deliberately, and not against ToSettings. What is in
+    /// the boxes is not yet what anything should be running: with A and B both transferring, a
+    /// half-typed change to A's folder that nobody has saved would make A match no runner, and
+    /// pressing Stop on B -- which does not save -- would then stand A down as well.
+    /// </remarks>
+    public Task<int> ReconcileAsync() => _transfers.ReconcileAsync(_settings.SavedSettings);
 }

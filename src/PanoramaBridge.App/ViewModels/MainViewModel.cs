@@ -521,8 +521,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         if (_sweeps.Count == 0)
         {
-            // Nothing is being watched, so there is nothing to describe. The line is left to
-            // whatever stopped things to set, rather than overwritten with a stale summary.
+            // Nothing is being watched, so there is nothing to describe -- and the line has to say
+            // so here rather than being left to whatever stopped things. Only Stop all writes its
+            // own line; stopping the last configuration from its own row wrote none, so the status
+            // line went on reading "Monitoring ..." for a folder nobody was watching.
+            StatusLine = "Stopped.";
             ConnectionFailed = false;
             return;
         }
