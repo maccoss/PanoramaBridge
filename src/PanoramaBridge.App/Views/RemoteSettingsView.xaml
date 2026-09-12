@@ -12,6 +12,14 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel>
 
+            <!--
+                Which configuration these settings belong to. Without it the tab is a page of
+                boxes with nothing to say whose they are, and with several configurations that is
+                how somebody edits the wrong instrument's folder.
+            -->
+            <TextBlock Margin="0,0,0,8" FontWeight="SemiBold"
+                       Text="{Binding EditingName, StringFormat='Editing: {0}'}" />
+
             <GroupBox Header="Panorama server"
                       ToolTip="Certificates are always validated. If your site uses a TLS-inspecting proxy, add its root certificate under Advanced rather than turning checking off — there is no option to do that.">
                 <TextBox Text="{Binding ServerUrl, UpdateSourceTrigger=PropertyChanged}" />

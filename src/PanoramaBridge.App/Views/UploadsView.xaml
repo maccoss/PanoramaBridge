@@ -68,7 +68,7 @@
             </DataGrid.RowStyle>
 
             <DataGrid.Columns>
-                <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="2*" />
+                <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="3*" />
 
                 <!--
                     Worked out from the paths rather than stored on the row, so it follows a
@@ -76,8 +76,13 @@
                     matches, which is ordinary: the ledger outlives the configuration that wrote
                     a row.
                 -->
+                <!--
+                    Narrower than the same column on Transfer Status. This table has nine columns
+                    and the file name is what people scan for; measured at 140 here, File came out
+                    the narrowest column in the table, which is the wrong thing to squeeze.
+                -->
                 <DataGridTextColumn Header="Configuration" Binding="{Binding Configuration}"
-                                    Width="140" />
+                                    Width="110" />
 
                 <DataGridTextColumn Header="State" Binding="{Binding State}" Width="130" />
 
@@ -103,7 +108,7 @@
 
                 <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="90" />
                 <DataGridTextColumn Header="Verified" Binding="{Binding VerifiedAt}" Width="130" />
-                <DataGridTextColumn Header="Remote path" Binding="{Binding RemotePath}" Width="3*" />
+                <DataGridTextColumn Header="Remote path" Binding="{Binding RemotePath}" Width="2*" />
                 <DataGridTextColumn Header="Detail" Binding="{Binding Detail}" Width="2*" />
             </DataGrid.Columns>
         </DataGrid>

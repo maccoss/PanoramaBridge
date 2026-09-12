@@ -19,6 +19,14 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel>
 
+            <!--
+                Which configuration these settings belong to. Without it the tab is a page of
+                boxes with nothing to say whose they are, and with several configurations that is
+                how somebody edits the wrong instrument's folder.
+            -->
+            <TextBlock Margin="0,0,0,8" FontWeight="SemiBold"
+                       Text="{Binding EditingName, StringFormat='Editing: {0}'}" />
+
             <GroupBox Header="Name"
                       ToolTip="What this configuration is called on the Configurations tab and in the Transfer Status and Uploads columns. Leave it empty to be shown by the folder being watched.">
                 <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />

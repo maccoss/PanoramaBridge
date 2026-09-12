@@ -49,10 +49,18 @@
                 <DataGridCheckBoxColumn Header="On" Width="40"
                                         Binding="{Binding Enabled, UpdateSourceTrigger=PropertyChanged}" />
 
-                <DataGridTextColumn Header="Name" Width="160" IsReadOnly="True"
+                <!--
+                    The five fixed columns are kept tight on purpose. Folder and Sends to are the
+                    only ones that flex, so every pixel spent here comes straight out of them,
+                    and at the window's 820 px minimum that left Folder at 96 px for a path sixty
+                    characters long. Folder gets the larger share of what is left, because two
+                    configurations on one instrument are told apart by their folder before
+                    anything else.
+                -->
+                <DataGridTextColumn Header="Name" Width="150" IsReadOnly="True"
                                     Binding="{Binding Name}" />
 
-                <DataGridTextColumn Header="Folder" Width="2*" IsReadOnly="True"
+                <DataGridTextColumn Header="Folder" Width="3*" IsReadOnly="True"
                                     Binding="{Binding LocalDirectory}">
                     <DataGridTextColumn.ElementStyle>
                         <Style TargetType="TextBlock">
@@ -73,13 +81,13 @@
                     </DataGridTextColumn.ElementStyle>
                 </DataGridTextColumn>
 
-                <DataGridTextColumn Header="User" Width="120" IsReadOnly="True"
+                <DataGridTextColumn Header="User" Width="90" IsReadOnly="True"
                                     Binding="{Binding User}" />
 
-                <DataGridTextColumn Header="Created" Width="120" IsReadOnly="True"
+                <DataGridTextColumn Header="Created" Width="115" IsReadOnly="True"
                                     Binding="{Binding Created}" />
 
-                <DataGridTextColumn Header="Status" Width="120" IsReadOnly="True"
+                <DataGridTextColumn Header="Status" Width="110" IsReadOnly="True"
                                     Binding="{Binding Status}">
                     <DataGridTextColumn.ElementStyle>
                         <Style TargetType="TextBlock">
