@@ -255,6 +255,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         if (_transfers.IsMonitoring)
         {
+            // Whatever the stopped configurations last reported stops being true the moment they
+            // stop being watched. Left behind, a failure from one of them would survive into the
+            // next session's status line and never clear.
+            _sweeps.Clear();
+
             StatusLine = "Stopping monitoring...";
 
             await _transfers.StopMonitoringAsync().ConfigureAwait(true);
@@ -285,7 +290,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
             IsMonitoring = true;
             ConnectionFailed = false;
-            StatusLine = $"Monitoring {ActiveConfiguration(settings).LocalDirectory}.";
+
+            var count = _transfers.MonitoredConfigurations;
+
+            StatusLine = count == 1
+                ? $"Monitoring {EditedConfiguration(settings).LocalDirectory}."
+                : $"Monitoring {count} configurations.";
         }
         catch (Exception ex)
         {
@@ -401,23 +411,27 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             MessageBoxImage.Information);
 
     /// <summary>
-    /// The configuration the window is acting on.
+    /// The configuration the settings tabs are showing.
     /// </summary>
     /// <remarks>
-    /// The first enabled one, matching what <c>TransferService</c> will actually run. Phase 5
-    /// gives the window a configuration to select; until then this is where the assumption is
-    /// written down rather than spread through the status messages.
+    /// The first one, which is what <c>SettingsViewModel</c> edits until phase 5 adds a selector.
+    /// Deliberately not "the first enabled one": the password box and the Save credentials
+    /// tickbox belong to what the person is looking at, and the tabs go on showing a
+    /// configuration after it is switched off.
     /// </remarks>
-    private static MonitoringConfiguration ActiveConfiguration(AppSettings settings) =>
-        settings.EnabledConfigurations.FirstOrDefault()
-        ?? settings.Configurations.FirstOrDefault()
-        ?? new MonitoringConfiguration();
+    private static MonitoringConfiguration EditedConfiguration(AppSettings settings) =>
+        settings.Configurations.FirstOrDefault() ?? new MonitoringConfiguration();
 
     /// <summary>Stores or clears the credential according to the user's choice.</summary>
+    /// <remarks>
+    /// Only for the configuration being edited. There is one password box and one Save
+    /// credentials tickbox, and they describe that configuration; the others keep whatever they
+    /// already have in Windows Credential Manager, which is the only copy they have.
+    /// </remarks>
     private void RememberCredential(AppSettings settings)
     {
         var secret = SecretProvider?.Invoke();
-        var configuration = ActiveConfiguration(settings);
+        var configuration = EditedConfiguration(settings);
 
         if (!configuration.SaveCredentials)
         {
@@ -497,17 +511,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// runs. Saying so in the status line is what makes a monitor that has nothing to do
     /// distinguishable from one that has stopped working.
     /// </remarks>
-    private void OnSwept(Core.Monitoring.SweepResult result)
+    private void OnSwept(Services.ConfigurationSweep sweep)
     {
         var dispatcher = Application.Current?.Dispatcher;
 
         if (dispatcher is not null && !dispatcher.CheckAccess())
         {
-            dispatcher.InvokeAsync(() => ApplySweep(result));
+            dispatcher.InvokeAsync(() => ApplySweep(sweep));
             return;
         }
 
-        ApplySweep(result);
+        ApplySweep(sweep);
     }
 
     private void OnMonitoringFailed(string message)
@@ -530,20 +544,25 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         IsMonitoring = _transfers.IsMonitoring;
     }
 
-    private void ApplySweep(Core.Monitoring.SweepResult result)
+    /// <summary>
+    /// The most recent sweep from each configuration, so the status line describes all of them.
+    /// </summary>
+    /// <remarks>
+    /// What the line then says is <see cref="Core.Monitoring.MonitoringSummary"/>'s decision, not
+    /// this view model's: it is the only part of the status line that has to weigh several
+    /// answers against each other, and it belongs somewhere it can be tested without a dispatcher.
+    /// </remarks>
+    private readonly Dictionary<string, Core.Monitoring.SweepResult> _sweeps =
+        new(StringComparer.Ordinal);
+
+    private void ApplySweep(Services.ConfigurationSweep sweep)
     {
-        if (result.Failed)
-        {
-            StatusLine = result.Problem ?? "The folder could not be checked.";
-            ConnectionFailed = true;
-            return;
-        }
+        _sweeps[sweep.Configuration] = sweep.Result;
 
-        ConnectionFailed = false;
+        var summary = Core.Monitoring.MonitoringSummary.Describe(_sweeps);
 
-        StatusLine = result.Offered > 0
-            ? $"Monitoring - {result.Offered} file(s) to transfer."
-            : $"Monitoring - {result.Examined} file(s) checked, all up to date.";
+        StatusLine = summary.Line;
+        ConnectionFailed = summary.Failed;
     }
 
     private async Task RunUpdateLoopAsync(CancellationToken cancellationToken)

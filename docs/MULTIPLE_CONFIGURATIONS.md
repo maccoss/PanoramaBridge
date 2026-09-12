@@ -185,16 +185,55 @@ the work of phase 4: `TransferService.ActiveConfiguration`, `MainViewModel.Activ
 and the configuration index `SettingsViewModel` takes as a constructor parameter. Each takes the
 first enabled configuration and says in its remarks which phase replaces it.
 
-### Phase 4 — `TransferService` runs a set
+### Phase 4 — `TransferService` runs a set  **[done]**
 
-One runner per enabled configuration. Two things that are currently implicit become explicit:
+`ConfigurationRunner` is one enabled configuration's connection, engine and monitor.
+`TransferService` owns a set of them and is otherwise unchanged from the outside: the same
+`IsMonitoring`, the same events, the same buttons. Each runner has its own WebDAV client, because
+a client carries exactly one credential and configurations may sign in to one server as different
+people.
 
-- **Concurrency is global.** `MaxConcurrentTransfers` is per-run today; N configurations would
-  multiply it. On a spinning disk more parallelism is slower — the application says so itself in
-  `ConcurrencyAdvice` — so the limit has to be shared across configurations, not per one.
-- **Idle cost multiplies.** N configurations means N watchers and N sweep timers. CLAUDE.md is
-  explicit that assumptions here have been wrong by two orders of magnitude. Measure with
-  `pbctl watch` at one, three and eight configurations before this is called done.
+Both of the things the plan called implicit are now explicit, and one more turned up.
+
+**Concurrency is shared.** `TransferBudget` is a permit taken as each file starts and given back
+when it finishes, held in common by every engine. Shared rather than divided: three
+configurations against a limit of three would otherwise get one slot each, so the one with a
+hundred files waiting would use a third of the link while the other two sat idle. The test is a
+cost assertion — two engines, twelve files each, a budget of two, and the high-water mark of
+overlapping uploads has to be exactly two. Bypassing the budget makes it fail, which was checked
+rather than assumed.
+
+**Idle cost does not multiply.** Measured at one, three and eight configurations; the numbers and
+what they mean are in §7 of [the handoff](DOTNET_PORT_HANDOFF.md). The short version: cost tracks
+how many files are swept, not how many configurations there are, per-folder cost is flat at about
+0.3% of one core at a one-minute interval, and at the default fifteen minutes eight
+configurations watching four thousand files come to 0.17%. Memory grows by roughly 1.7 MB per
+configuration. The feature clears the bar it was given.
+
+**One password box, several servers.** Not in the plan and nearly a real defect. The typed secret
+was being handed to every configuration, and because a secret typed this session deliberately
+takes precedence over a stored one, a configuration on another server would have ignored the
+credential it had of its own and signed in with somebody else's key. It now reaches only
+configurations that resolve to the same credential slot — the same server as the same account —
+which still covers the ordinary case of two folders on one instrument going to two projects on
+one Panorama, since those genuinely share a credential.
+
+Two smaller decisions worth recording:
+
+- **Starting is all or nothing.** A configuration that will not start takes the attempt down and
+  the ones already started are stopped again. Starting four of five and reporting success would
+  leave the window saying it was monitoring while one instrument quietly filled its disk, and
+  with several configurations nobody can see at a glance that one folder is uncovered.
+- **The status line is composed, not overwritten.** `MonitoringSummary` in `Core` turns the last
+  sweep from each configuration into one line. Setting it from whichever swept most recently
+  meant a folder that could not be read was announced and then cleared a second later by a folder
+  that was fine — a broken share flickering past and gone.
+
+`pbctl watch` grew what the measurement needed: `--also <dir>` to watch another folder alongside,
+`--no-upload` to walk and report without contacting a server (and so without a credential), and
+`--for MINUTES` to stop and report on its own. CLAUDE.md had promised the no-credential run was
+available through a filter matching nothing; it was not, and that paragraph now describes what
+actually works.
 
 ### Phase 5 — the Configurations tab
 

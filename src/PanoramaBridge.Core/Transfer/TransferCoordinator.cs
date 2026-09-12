@@ -22,8 +22,25 @@ public sealed class TransferEngineOptions
     /// <summary>What to do when a different file already occupies a destination.</summary>
     public ConflictPolicy ConflictPolicy { get; init; } = ConflictPolicy.Ask;
 
-    /// <summary>How many files move at once.</summary>
+    /// <summary>
+    /// How many files this engine moves at once.
+    /// </summary>
+    /// <remarks>
+    /// The number of workers started. With several engines running -- one per configuration --
+    /// this is no longer the limit the user set: see <see cref="Budget"/>, which is.
+    /// </remarks>
     public int MaxConcurrentTransfers { get; init; } = 3;
+
+    /// <summary>
+    /// The limit shared with every other engine, or null when this one runs alone.
+    /// </summary>
+    /// <remarks>
+    /// Null means the worker count is the limit, which is what it was before configurations
+    /// existed and is still true of a one-off scan. Supplying a budget is how several engines
+    /// add up to the number of concurrent transfers the user asked for rather than to a multiple
+    /// of it. The engine never owns it: one budget outlives the engines that share it.
+    /// </remarks>
+    public TransferBudget? Budget { get; init; }
 
     /// <summary>
     /// Queue depth. Bounded so pointing the app at a directory of two hundred thousand files
@@ -308,6 +325,14 @@ public sealed class TransferCoordinator : IAsyncDisposable
         {
             try
             {
+                // Taken around the whole of the work, not just the upload: reading a file to
+                // hash it competes for the same disk head as sending it, which is the cost the
+                // limit exists to control. Inside the try so that being canceled while waiting
+                // for a permit reports the same "Interrupted" row as being canceled mid-upload.
+                using var permit = _options.Budget is null
+                    ? null
+                    : await _options.Budget.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
                 await ProcessAsync(localPath, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

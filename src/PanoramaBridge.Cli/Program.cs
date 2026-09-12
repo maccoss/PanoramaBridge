@@ -37,18 +37,34 @@ internal static class Program
         var url = Environment.GetEnvironmentVariable(UrlVariable);
         var key = Environment.GetEnvironmentVariable(KeyVariable);
 
-        if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(key))
+        // watch --no-upload walks folders and reports what that costs. It contacts nothing, so
+        // requiring a credential for it was a rule with no purpose -- and it stopped the one
+        // command whose whole job is measuring idle cost from running on a machine with no
+        // credential, which is most of them.
+        var needsServer = !IsOfflineWatch(args);
+
+        if (needsServer && (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(key)))
         {
             Console.Error.WriteLine(
                 $"Set {UrlVariable} and {KeyVariable} before running. "
-                + $"{PathVariable} supplies a default remote path.");
+                + $"{PathVariable} supplies a default remote path. "
+                + "To walk a folder without contacting a server, use: watch <dir> --no-upload");
             return 2;
         }
 
         var options = new WebDavClientOptions
         {
-            BaseAddress = new Uri(url, UriKind.Absolute),
-            Credential = PanoramaCredential.ApiKey(key),
+            // A placeholder when nothing will be sent. Nothing reads it in that mode, and
+            // WebDavClientOptions requires an absolute address.
+            BaseAddress = new Uri(
+                string.IsNullOrWhiteSpace(url) ? "https://offline.invalid" : url,
+                UriKind.Absolute),
+
+            // A placeholder credential too, and deliberately one that could never work: nothing
+            // is sent in this mode, and a value that would be accepted somewhere is exactly what
+            // should not be sitting in a client built for a run that contacts nothing.
+            Credential = PanoramaCredential.ApiKey(
+                string.IsNullOrWhiteSpace(key) ? "offline-no-credential" : key),
         };
 
         using var loggerFactory = LoggerFactory.Create(builder => builder
@@ -89,6 +105,20 @@ internal static class Program
             return 1;
         }
     }
+
+    /// <summary>
+    /// Whether these arguments are a watch that will not contact a server.
+    /// </summary>
+    /// <remarks>
+    /// Read straight off the arguments rather than from the parsed options, because the decision
+    /// has to be made before the client is built and the parser runs per command. A bare scan for
+    /// the switch is enough: no other option takes a value, so <c>--no-upload</c> cannot appear
+    /// here as anything but itself.
+    /// </remarks>
+    private static bool IsOfflineWatch(string[] args) =>
+        args.Length > 0
+        && string.Equals(args[0], "watch", StringComparison.OrdinalIgnoreCase)
+        && args.Contains("--no-upload", StringComparer.Ordinal);
 
     private static async Task<int> RunAsync(
         IWebDavClient client,
@@ -389,12 +419,11 @@ internal static class Program
         if (args.Length == 0)
         {
             Console.Error.WriteLine(
-                "usage: pbctl watch <local-dir> [remote-dir] [--concurrency N] [--no-verify] "
+                "usage: pbctl watch <local-dir> [remote-dir] [--also <local-dir>]... "
+                + "[--concurrency N] [--no-verify] [--no-upload] [--for MINUTES] "
                 + "[--every MINUTES] [--stable SECONDS] [--ext .raw,.d] [--exclude .skyd]");
             return 2;
         }
-
-        var localDirectory = Path.GetFullPath(args[0]);
 
         if (!CommandOptions.TryParse(args[1..], out var options, out var problem))
         {
@@ -402,127 +431,311 @@ internal static class Program
             return 2;
         }
 
-        var concurrency = options.Concurrency;
-        var verify = options.Verify;
-        var reconcileMinutes = options.ReconcileMinutes;
-        var stableSeconds = options.StableSeconds;
-        var extensions = options.Extensions;
-        var excluded = options.ExcludedExtensions;
-        var destination = Target([.. options.Paths], 0).AsCollection();
+        var roots = new List<string> { Path.GetFullPath(args[0]) };
+        roots.AddRange(options.AlsoWatch.Select(Path.GetFullPath));
+
+        var missing = roots.Where(r => !Directory.Exists(r)).ToArray();
+        if (missing.Length > 0)
+        {
+            Console.Error.WriteLine($"error: no such directory: {missing[0]}");
+            return 2;
+        }
+
+        // A destination is still needed even with nothing to upload: the sweep resolves each file
+        // to where it would go and asks the ledger whether it is already there. Given a real one,
+        // "would upload" is the truth; without one a placeholder makes every file look untouched,
+        // which is fine for measuring what walking costs and wrong for anything else -- so the
+        // header says which of the two this run is.
+        var offlinePlaceholder = options.NoUpload
+            && options.Paths.Count == 0
+            && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(PathVariable));
+
+        var destination = offlinePlaceholder
+            ? RemotePath.Parse("/_webdav/offline/@files/").AsCollection()
+            : Target([.. options.Paths], 0).AsCollection();
 
         await using var store = new SqliteStateStore(StateDatabasePath());
 
-        await using var coordinator = new TransferCoordinator(
-            client,
-            store,
-            new TransferEngineOptions
-            {
-                LocalBaseDirectory = localDirectory,
-                DestinationRoot = destination,
-                MaxConcurrentTransfers = concurrency,
-                VerifyUploads = verify,
-            });
+        // Shared, so several watched folders add up to the concurrency asked for rather than to a
+        // multiple of it. The same budget the application gives its configurations.
+        using var budget = new TransferBudget(options.Concurrency);
 
-        coordinator.Progress += progress =>
-        {
-            if (progress.State is TransferState.Uploading)
-            {
-                return;
-            }
-
-            Console.WriteLine($"  {progress.State,-11} {progress.FileName}  {progress.Message}");
-        };
-
-        await using var monitor = new ContinuousMonitor(
-            store,
-            new MonitorOptions
-            {
-                Root = localDirectory,
-                DestinationRoot = destination,
-                Filter = new CandidateFilter(extensions, excluded),
-                StabilityPeriod = TimeSpan.FromSeconds(stableSeconds),
-                ReconcileInterval = TimeSpan.FromMinutes(Math.Max(1, reconcileMinutes)),
-            });
-
-        monitor.Swept += result => Console.WriteLine(
-            result.Failed
-                ? $"  sweep       {result.Problem}"
-                : $"  sweep       {result.Examined} examined, {result.Offered} offered, "
-                  + $"{result.AlreadyAccountedFor} already settled, "
-                  + $"{result.Elapsed.TotalMilliseconds:F0} ms");
-
-        monitor.Waiting += report =>
-        {
-            if (report.StillWatching)
-            {
-                Console.WriteLine($"  waiting     {Path.GetFileName(report.Path)}  {report.Readiness.Detail}");
-            }
-        };
-
-        Console.WriteLine($"watching {localDirectory}");
-        Console.WriteLine($"      to {destination}");
-        Console.WriteLine(
-            $"  extensions {(extensions.Count == 0 ? "(all)" : string.Join(", ", extensions))}");
-        Console.WriteLine(
-            $"  excluding  {(excluded.Count == 0 ? "(nothing)" : string.Join(", ", excluded))}");
-        Console.WriteLine(
-            $"  every {reconcileMinutes} min, stable after {stableSeconds}s, "
-            + $"concurrency {concurrency}, verify {(verify ? "on" : "off")}");
-        Console.WriteLine("  Ctrl+C to stop.");
-        Console.WriteLine();
-
-        await coordinator.RecoverInterruptedAsync(cancellationToken).ConfigureAwait(false);
-
-        var process = Process.GetCurrentProcess();
-        var startedAt = DateTimeOffset.UtcNow;
-        var processorAtStart = process.TotalProcessorTime;
-
-        var transfers = coordinator.RunAsync(cancellationToken);
+        var watchers = new List<Watcher>();
 
         try
         {
-            await monitor
-                .RunAsync(path => coordinator.EnqueueAsync(path, cancellationToken), cancellationToken)
-                .ConfigureAwait(false);
+            foreach (var root in roots)
+            {
+                watchers.Add(Watcher.For(root, destination, client, store, budget, options));
+            }
+
+            Describe(roots, destination, options, offlinePlaceholder);
+
+            foreach (var watcher in watchers)
+            {
+                await watcher.RecoverAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            var process = Process.GetCurrentProcess();
+            var startedAt = DateTimeOffset.UtcNow;
+            var processorAtStart = process.TotalProcessorTime;
+
+            // A run that stops itself when asked to, so the measurement does not depend on
+            // somebody being there to press Ctrl+C at the right moment.
+            using var stopping = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+            if (options.ForMinutes > 0)
+            {
+                stopping.CancelAfter(TimeSpan.FromMinutes(options.ForMinutes));
+            }
+
+            var running = watchers.Select(w => w.RunAsync(stopping.Token)).ToArray();
+
+            TransferSummary[] summaries;
+            try
+            {
+                summaries = await Task.WhenAll(running).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Ctrl+C. Everything below still has to be reported.
+                summaries = [];
+            }
+
+            var elapsed = DateTimeOffset.UtcNow - startedAt;
+            var processor = process.TotalProcessorTime - processorAtStart;
+
+            var uploaded = summaries.Sum(x => x.Uploaded);
+            var skipped = summaries.Sum(x => x.Skipped);
+            var conflicts = summaries.Sum(x => x.Conflicts);
+            var failed = summaries.Sum(x => x.Failed);
+            var bytes = summaries.Sum(x => x.BytesUploaded);
+            var offered = watchers.Sum(w => w.Offered);
+
+            Console.WriteLine();
+
+            if (options.NoUpload)
+            {
+                Console.WriteLine($"would upload {offered}");
+            }
+            else
+            {
+                Console.WriteLine($"uploaded  {uploaded}");
+                Console.WriteLine($"skipped   {skipped}");
+                Console.WriteLine($"conflicts {conflicts}");
+                Console.WriteLine($"failed    {failed}");
+                Console.WriteLine($"bytes     {bytes:N0}");
+            }
+
+            // What this run cost the machine, which is the number that decides whether monitoring
+            // is welcome on a computer attached to a mass spectrometer. Reported per watched
+            // folder as well as in total, because the question several configurations raise is
+            // whether the cost multiplies.
+            Console.WriteLine($"watching  {roots.Count} folder(s)");
+            Console.WriteLine($"watched   {elapsed.TotalMinutes:F1} min");
+            Console.WriteLine(
+                $"processor {processor.TotalSeconds:F1}s "
+                + $"({Percent(processor, elapsed):F3}% of one core, "
+                + $"{Percent(processor, elapsed) / roots.Count:F3}% per folder)");
+
+            process.Refresh();
+            Console.WriteLine($"memory    {FormatBytes(process.WorkingSet64)} working set");
+
+            return failed > 0 ? 1 : 0;
         }
-        catch (OperationCanceledException)
+        finally
         {
-            // Ctrl+C. The engine still has to be wound down.
+            foreach (var watcher in watchers)
+            {
+                await watcher.DisposeAsync().ConfigureAwait(false);
+            }
         }
+    }
 
-        coordinator.CompleteAdding();
+    private static double Percent(TimeSpan processor, TimeSpan elapsed) =>
+        elapsed.TotalSeconds > 0 ? processor.TotalSeconds / elapsed.TotalSeconds * 100 : 0;
 
-        TransferSummary summary;
-        try
+    private static void Describe(
+        IReadOnlyList<string> roots,
+        RemotePath destination,
+        CommandOptions options,
+        bool offlinePlaceholder)
+    {
+        foreach (var root in roots)
         {
-            summary = await transfers.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            summary = default;
+            Console.WriteLine($"watching {root}");
         }
 
-        var elapsed = DateTimeOffset.UtcNow - startedAt;
-        var processor = process.TotalProcessorTime - processorAtStart;
-
-        Console.WriteLine();
-        Console.WriteLine($"uploaded  {summary.Uploaded}");
-        Console.WriteLine($"skipped   {summary.Skipped}");
-        Console.WriteLine($"conflicts {summary.Conflicts}");
-        Console.WriteLine($"failed    {summary.Failed}");
-        Console.WriteLine($"bytes     {summary.BytesUploaded:N0}");
-
-        // What this run cost the machine, which is the number that decides whether monitoring is
-        // welcome on a computer attached to a mass spectrometer.
-        Console.WriteLine($"watched   {elapsed.TotalMinutes:F1} min");
         Console.WriteLine(
-            $"processor {processor.TotalSeconds:F1}s "
-            + $"({(elapsed.TotalSeconds > 0 ? processor.TotalSeconds / elapsed.TotalSeconds * 100 : 0):F3}% of one core)");
+            offlinePlaceholder
+                ? "      to (no destination given; nothing counts as already transferred)"
+                : options.NoUpload
+                    ? $"      to {destination} (--no-upload; nothing will be sent)"
+                    : $"      to {destination}");
+        Console.WriteLine(
+            $"  extensions {(options.Extensions.Count == 0 ? "(all)" : string.Join(", ", options.Extensions))}");
+        Console.WriteLine(
+            $"  excluding  {(options.ExcludedExtensions.Count == 0 ? "(nothing)" : string.Join(", ", options.ExcludedExtensions))}");
+        Console.WriteLine(
+            $"  every {options.ReconcileMinutes} min, stable after {options.StableSeconds}s, "
+            + $"concurrency {options.Concurrency} shared, verify {(options.Verify ? "on" : "off")}");
+        Console.WriteLine(
+            options.ForMinutes > 0
+                ? $"  stopping after {options.ForMinutes} min, or Ctrl+C."
+                : "  Ctrl+C to stop.");
+        Console.WriteLine();
+    }
 
-        process.Refresh();
-        Console.WriteLine($"memory    {FormatBytes(process.WorkingSet64)} working set");
+    /// <summary>
+    /// One watched folder: its monitor, and the engine that transfers what the monitor offers.
+    /// </summary>
+    /// <remarks>
+    /// The same pairing the application builds per configuration, with no XAML in the way. That is
+    /// what makes several of these the right way to measure what N configurations cost while idle:
+    /// this process does nothing else, so its processor time is monitoring's and nothing else's.
+    /// <para>
+    /// Under <c>--no-upload</c> there is no engine at all. Offered files are counted and left, so
+    /// the run reaches no network and needs no credential -- and what it measures is the watcher
+    /// and the sweep, which is the part that multiplies.
+    /// </para>
+    /// </remarks>
+    private sealed class Watcher : IAsyncDisposable
+    {
+        private readonly string _root;
+        private readonly ContinuousMonitor _monitor;
+        private readonly TransferCoordinator? _engine;
+        private int _offered;
 
-        return summary.Failed > 0 ? 1 : 0;
+        private Watcher(string root, ContinuousMonitor monitor, TransferCoordinator? engine)
+        {
+            _root = root;
+            _monitor = monitor;
+            _engine = engine;
+        }
+
+        /// <summary>How many files the sweep handed on, whether or not they were transferred.</summary>
+        public int Offered => Volatile.Read(ref _offered);
+
+        public static Watcher For(
+            string root,
+            RemotePath destination,
+            IWebDavClient client,
+            IStateStore store,
+            TransferBudget budget,
+            CommandOptions options)
+        {
+            var monitor = new ContinuousMonitor(
+                store,
+                new MonitorOptions
+                {
+                    Root = root,
+                    DestinationRoot = destination,
+                    Filter = new CandidateFilter(options.Extensions, options.ExcludedExtensions),
+                    StabilityPeriod = TimeSpan.FromSeconds(options.StableSeconds),
+                    ReconcileInterval = TimeSpan.FromMinutes(Math.Max(1, options.ReconcileMinutes)),
+                });
+
+            var label = Path.GetFileName(root.TrimEnd(
+                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+            monitor.Swept += result => Console.WriteLine(
+                result.Failed
+                    ? $"  sweep  {label}  {result.Problem}"
+                    : $"  sweep  {label}  {result.Examined} examined, {result.Offered} offered, "
+                      + $"{result.AlreadyAccountedFor} already settled, "
+                      + $"{result.Elapsed.TotalMilliseconds:F0} ms");
+
+            monitor.Waiting += report =>
+            {
+                if (report.StillWatching)
+                {
+                    Console.WriteLine(
+                        $"  waiting {label}  {Path.GetFileName(report.Path)}  {report.Readiness.Detail}");
+                }
+            };
+
+            if (options.NoUpload)
+            {
+                return new Watcher(root, monitor, engine: null);
+            }
+
+            var engine = new TransferCoordinator(
+                client,
+                store,
+                new TransferEngineOptions
+                {
+                    LocalBaseDirectory = root,
+                    DestinationRoot = destination,
+                    MaxConcurrentTransfers = budget.Capacity,
+                    Budget = budget,
+                    VerifyUploads = options.Verify,
+                });
+
+            engine.Progress += progress =>
+            {
+                if (progress.State is TransferState.Uploading)
+                {
+                    return;
+                }
+
+                Console.WriteLine($"  {progress.State,-11} {progress.FileName}  {progress.Message}");
+            };
+
+            return new Watcher(root, monitor, engine);
+        }
+
+        public Task RecoverAsync(CancellationToken cancellationToken) =>
+            _engine?.RecoverInterruptedAsync(cancellationToken) ?? Task.CompletedTask;
+
+        public async Task<TransferSummary> RunAsync(CancellationToken cancellationToken)
+        {
+            var transfers = _engine?.RunAsync(cancellationToken);
+
+            try
+            {
+                await _monitor.RunAsync(Offer, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Ctrl+C. The engine still has to be wound down.
+            }
+
+            _engine?.CompleteAdding();
+
+            if (transfers is null)
+            {
+                return default;
+            }
+
+            try
+            {
+                return await transfers.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return default;
+            }
+
+            async Task Offer(string path)
+            {
+                Interlocked.Increment(ref _offered);
+
+                if (_engine is not null)
+                {
+                    await _engine.EnqueueAsync(path, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await _monitor.DisposeAsync().ConfigureAwait(false);
+
+            if (_engine is not null)
+            {
+                await _engine.DisposeAsync().ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>Prints the ledger, which is what "did that actually get uploaded" means.</summary>
@@ -634,8 +847,17 @@ internal static class Program
                   --exclude .skyd            extensions that are never data, even sitting on
                                              one that is (run.raw.skyd is Skyline's cache,
                                              not an acquisition). Pass "" for none.
-                  --concurrency N            files in flight at once (default 3)
+                  --concurrency N            files in flight at once, shared across every
+                                             watched folder (default 3)
                   --no-verify                skip hash verification
+                  --also <local-dir>         watch another folder alongside, repeatable.
+                                             Each gets its own watcher and sweep timer, which
+                                             is how the cost of several configurations is
+                                             measured.
+                  --no-upload                walk and report without transferring anything.
+                                             Contacts no server, so it needs no credential.
+                  --for N                    stop after N minutes and report, instead of
+                                             waiting to be interrupted
           status                           what the upload ledger currently holds
 
         Environment:
