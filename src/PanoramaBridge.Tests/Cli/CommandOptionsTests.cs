@@ -80,6 +80,17 @@ public sealed class CommandOptionsTests
     }
 
     [Fact]
+    public void Watching_several_folders_is_still_only_parsing()
+    {
+        // The parser accepts the pair; whether --also is allowed without --no-upload is the
+        // command's decision, not this one's, because it depends on there being one destination.
+        var options = Parse("--also", @"E:\Data");
+
+        options.AlsoWatch.ShouldHaveSingleItem();
+        options.NoUpload.ShouldBeFalse();
+    }
+
+    [Fact]
     public void Walking_without_uploading_is_asked_for_by_name()
     {
         Parse("--no-upload").NoUpload.ShouldBeTrue();

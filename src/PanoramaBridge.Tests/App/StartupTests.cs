@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using PanoramaBridge.App;
@@ -85,9 +86,22 @@ public sealed class StartupTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_root))
+        // The container built a real ledger under this directory. A pooled connection handle that
+        // has not been released yet makes the delete throw, and the test then fails for a reason
+        // unrelated to anything it asserts -- which is how the suite's earlier temp-directory leak
+        // stayed hidden. The same two lines LedgerRekeyMigrationTests already carries.
+        SqliteConnection.ClearAllPools();
+
+        try
         {
-            Directory.Delete(_root, recursive: true);
+            if (Directory.Exists(_root))
+            {
+                Directory.Delete(_root, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+            // A temporary directory is not worth failing a run over.
         }
     }
 }

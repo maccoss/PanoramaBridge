@@ -64,16 +64,24 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     private SweepResult? _lastSweep;
 
     /// <summary>
-    /// The connection the settings screen tested, kept for the remote folder browser.
+    /// Every connection this service holds, one per server and sign-in.
     /// </summary>
     /// <remarks>
-    /// Deliberately separate from the runners' connections. The browser shows the server the
-    /// person is editing, which is not necessarily one that is running -- and with configurations
-    /// on different servers, "the connected client" is otherwise an ambiguous thing to ask for.
+    /// Shared by the runners, the one-off scans and the folder browser, so a configuration and the
+    /// settings screen talking to the same server as the same account use one pool between them
+    /// rather than one each.
     /// </remarks>
-    private HttpClient? _browseHttp;
-    private WebDavClient? _browseClient;
-    private string? _browseConnectedTo;
+    private readonly WebDavClientCache _clients;
+
+    /// <summary>
+    /// The connection the settings screen last tested, for the remote folder browser.
+    /// </summary>
+    /// <remarks>
+    /// A reference into the cache rather than a client of its own. The browser shows the server
+    /// the person is editing, which is not necessarily one that is running -- and with
+    /// configurations on different servers, "the connected client" is otherwise ambiguous.
+    /// </remarks>
+    private IWebDavClient? _browseClient;
 
     private bool _disposed;
 
@@ -88,7 +96,11 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         _governor = governor ?? throw new ArgumentNullException(nameof(governor));
         _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
         _log = loggerFactory.CreateLogger<TransferService>();
+        _clients = new WebDavClientCache(_loggerFactory);
     }
+
+    /// <summary>How many distinct server connections are open, for tests that assert the cost.</summary>
+    public int OpenConnections => _clients.Count;
 
     /// <summary>Collects progress for the UI to drain on its own schedule.</summary>
     public TransferProgressAggregator Progress { get; } = new();
@@ -232,7 +244,8 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
                         : "Enter your Panorama password.");
             }
 
-            var client = ConnectForBrowsing(settings, configuration, credential);
+            var client = _clients.For(settings, configuration, credential);
+            _browseClient = client;
 
             var destination = RemotePath.Parse(configuration.RemotePath);
             var capabilities = await client
@@ -392,7 +405,12 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
                 + $"{configuration.ServerUrl}.");
 
         await using var runner = new ConfigurationRunner(
-            configuration, settings, credential, _store, budget, _loggerFactory);
+            configuration,
+            settings,
+            _clients.For(settings, configuration, credential),
+            _store,
+            budget,
+            _loggerFactory);
 
         runner.Progress += Progress.Report;
         runner.Waiting += OnWaiting;
@@ -481,7 +499,12 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
                         + $"{configuration.ServerUrl}.");
 
                 var runner = new ConfigurationRunner(
-                    configuration, settings, credential, _store, budget, _loggerFactory);
+                    configuration,
+                    settings,
+                    _clients.For(settings, configuration, credential),
+                    _store,
+                    budget,
+                    _loggerFactory);
 
                 runner.Progress += Progress.Report;
                 runner.Swept += OnSwept;
@@ -591,7 +614,7 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
 
         await StopMonitoringAsync().ConfigureAwait(false);
 
-        _browseHttp?.Dispose();
+        _clients.Dispose();
     }
 
     /// <summary>
@@ -643,7 +666,7 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         // leaving it: the budget holds no handle, and the process is exiting.
         _budget = null;
 
-        _browseHttp?.Dispose();
+        _clients.Dispose();
     }
 
     /// <summary>
@@ -801,49 +824,5 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         return configuration.AuthMode == AuthMode.ApiKey
             ? PanoramaCredential.ApiKey(stored.Value.Secret)
             : PanoramaCredential.UserNameAndPassword(stored.Value.UserName, stored.Value.Secret);
-    }
-
-    /// <summary>
-    /// Rebuilds the browsing client when the server or credential changes, and reuses it
-    /// otherwise.
-    /// </summary>
-    /// <remarks>
-    /// Not rebuilt per operation, so repeated trips through the folder browser do not repeat the
-    /// TLS handshake. The identity string is compared rather than the credential itself, so a
-    /// secret is never held longer than needed.
-    /// </remarks>
-    private WebDavClient ConnectForBrowsing(
-        AppSettings settings,
-        MonitoringConfiguration configuration,
-        PanoramaCredential credential)
-    {
-        var identity =
-            $"{configuration.ServerUrl}|{credential.UserName}|{credential.Secret.GetHashCode()}";
-
-        if (_browseClient is not null && _browseConnectedTo == identity)
-        {
-            return _browseClient;
-        }
-
-        _browseHttp?.Dispose();
-
-        var options = new WebDavClientOptions
-        {
-            BaseAddress = new Uri(configuration.ServerUrl, UriKind.Absolute),
-            Credential = credential,
-            MaxConcurrentTransfers = settings.MaxConcurrentTransfers,
-            TrustedRootCertificatePath = settings.TrustedRootCertificatePath,
-            RecordSha256 = settings.RecordSha256,
-        };
-
-        _browseHttp = options.CreateHttpClient();
-        _browseClient = new WebDavClient(
-            _browseHttp, options, _loggerFactory.CreateLogger<WebDavClient>());
-        _browseConnectedTo = identity;
-
-        _log.LogInformation(
-            "Using {Server} as {Credential}.", configuration.ServerUrl, credential.ToString());
-
-        return _browseClient;
     }
 }

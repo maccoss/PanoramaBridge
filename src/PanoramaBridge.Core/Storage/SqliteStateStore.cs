@@ -74,13 +74,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         LedgerKey key,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(key.LocalPath);
-
-        // Not ThrowIfNullOrWhiteSpace on the destination: an empty one is a real value here. A
-        // file that failed before a destination could be resolved -- a name the server would
-        // mangle, a path outside the monitored folder -- has its failure recorded against an
-        // empty destination, and that row has to be findable or the failure is invisible.
-        ArgumentNullException.ThrowIfNull(key.RemotePath);
+        Validate(key);
 
         await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
@@ -168,7 +162,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         string? lastError = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(key.LocalPath);
+        Validate(key);
 
         // Attempts increments only when an upload actually starts, so the count reflects
         // transfers tried rather than state changes made.
@@ -200,7 +194,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         DateTimeOffset verifiedUtc,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(key.LocalPath);
+        Validate(key);
 
         var changed = await ExecuteWriteAsync(
             """
@@ -335,8 +329,11 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
 
     /// <inheritdoc />
     public Task SetErrorAsync(
-        LedgerKey key, string? error, CancellationToken cancellationToken = default) =>
-        ExecuteWriteAsync(
+        LedgerKey key, string? error, CancellationToken cancellationToken = default)
+    {
+        Validate(key);
+
+        return ExecuteWriteAsync(
             """
             UPDATE uploads SET last_error = $error
              WHERE local_path = $path AND remote_path = $remote;
@@ -348,6 +345,7 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
                 command.Parameters.AddWithValue("$error", (object?)error ?? DBNull.Value);
             },
             cancellationToken);
+    }
 
     /// <inheritdoc />
     public Task<IReadOnlyList<UploadRecord>> GetInterruptedAsync(
@@ -535,6 +533,27 @@ public sealed class SqliteStateStore : IStateStore, IAsyncDisposable, IDisposabl
         Action<SqliteCommand> bind,
         CancellationToken cancellationToken) =>
         ExecuteWriteCountingAsync(sql, bind, cancellationToken);
+
+    /// <summary>
+    /// Checks both halves of a key.
+    /// </summary>
+    /// <remarks>
+    /// Not ThrowIfNullOrWhiteSpace on the destination: an empty one is a real value here. A file
+    /// that failed before a destination could be resolved -- a name the server would mangle, a
+    /// path outside the monitored folder -- has its failure recorded against an empty
+    /// destination, and that row has to be findable or the failure is invisible.
+    /// <para>
+    /// Shared by every method that takes a key, because only the read used to check it. A null
+    /// destination then bound a null parameter, matched no row under SQL NULL semantics, and
+    /// surfaced as "Cannot transition an unknown upload record" -- sending the reader to look for
+    /// a row rather than at the argument that was wrong.
+    /// </para>
+    /// </remarks>
+    private static void Validate(LedgerKey key)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key.LocalPath);
+        ArgumentNullException.ThrowIfNull(key.RemotePath);
+    }
 
     private static void EnsureExistingRow(int changed, LedgerKey key)
     {

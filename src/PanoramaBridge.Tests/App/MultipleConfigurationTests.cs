@@ -301,6 +301,82 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Configurations_on_one_server_as_one_account_share_a_connection()
+    {
+        // A client holds the connection pool, so one per configuration means a fresh TLS
+        // handshake per file and a socket left behind afterwards. Two folders going to two
+        // projects on one Panorama is the ordinary case, and it is one connection.
+        await using var service = NewService();
+
+        const string Server = "https://panorama.invalid";
+
+        var elsewhere = Watching("Elsewhere", server: "https://other.invalid");
+
+        // The typed secret only reaches the slot it was typed for, so the configuration on the
+        // other server needs its own stored credential to start at all.
+        _credentials.Write(
+            elsewhere.ServerUrl, new StoredCredential("apikey", "other-key"), elsewhere.Account);
+
+        var settings = new AppSettings
+        {
+            Configurations =
+            [
+                Watching("To QC", server: Server),
+                Watching("To the project", server: Server),
+                elsewhere,
+            ],
+        };
+
+        await service.StartMonitoringAsync(settings, "an-api-key");
+
+        service.MonitoredConfigurations.ShouldBe(3);
+        service.OpenConnections.ShouldBe(
+            2, "one per server, not one per configuration");
+    }
+
+    [Fact]
+    public async Task One_server_as_two_accounts_does_not_share_a_connection()
+    {
+        // A client carries exactly one credential, so this pair cannot share however much they
+        // have the server in common.
+        await using var service = NewService();
+
+        const string Server = "https://panorama.invalid";
+
+        var kyle = Watching("Kyle", server: Server, account: "config-kyle");
+        var brian = Watching("Brian", server: Server, account: "config-brian");
+
+        _credentials.Write(Server, new StoredCredential("apikey", "kyle-key"), "config-kyle");
+        _credentials.Write(Server, new StoredCredential("apikey", "brian-key"), "config-brian");
+
+        await service.StartMonitoringAsync(
+            new AppSettings { Configurations = [kyle, brian] }, secret: null);
+
+        service.OpenConnections.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Scanning_twice_does_not_open_a_second_set_of_connections()
+    {
+        // The reason the cache exists. A runner that built its own client meant Upload now
+        // created and destroyed one connection pool per configuration, every time it was pressed.
+        await using var service = NewService();
+
+        var settings = new AppSettings
+        {
+            Configurations = [Watching("Lumos"), Watching("Exploris")],
+        };
+
+        await service.ScanAndUploadAsync(settings, "an-api-key");
+        var afterFirst = service.OpenConnections;
+
+        await service.ScanAndUploadAsync(settings, "an-api-key");
+
+        afterFirst.ShouldBe(1, "both configurations point at the same server here");
+        service.OpenConnections.ShouldBe(afterFirst, "and the second scan reused it");
+    }
+
+    [Fact]
     public async Task Each_configuration_reads_the_credential_for_its_own_account()
     {
         // Two configurations on one server as different people: the case phase 2 keyed

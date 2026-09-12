@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PanoramaBridge.Core.Storage;
@@ -17,6 +18,7 @@ namespace PanoramaBridge.App.ViewModels;
 public sealed partial class ConfigurationRowViewModel : ObservableObject
 {
     private readonly Func<bool, Task> _setEnabled;
+    private bool _applying;
 
     public ConfigurationRowViewModel(
         MonitoringConfiguration configuration,
@@ -42,7 +44,12 @@ public sealed partial class ConfigurationRowViewModel : ObservableObject
 
         Created = configuration.CreatedUtc == default
             ? string.Empty
-            : configuration.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+            // The provider is named rather than left to the ambient culture. ':' in a custom
+            // format string is the culture's time separator, not a literal, so without this the
+            // Created column and the Verified column on Uploads -- same format string, a few
+            // pixels apart -- render differently on a machine whose locale uses something else.
+            : configuration.CreatedUtc.ToLocalTime()
+                .ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
 
         _enabled = configuration.Enabled;
         _setEnabled = setEnabled ?? throw new ArgumentNullException(nameof(setEnabled));
@@ -113,7 +120,50 @@ public sealed partial class ConfigurationRowViewModel : ObservableObject
         Checked = true;
     }
 
-    partial void OnEnabledChanged(bool value) => _ = _setEnabled(value);
+    /// <summary>
+    /// Writes the tick through, and puts it back if that failed.
+    /// </summary>
+    /// <remarks>
+    /// A checkbox is answered before it is saved, so the save is asynchronous and the exception
+    /// had nowhere to go: it was discarded with the task. The box stayed ticked, the settings file
+    /// did not, and the next Start monitoring quietly left that folder out -- with the screen
+    /// saying it was included.
+    /// <para>
+    /// Putting the tick back is the part that matters. A message alone would leave the checkbox
+    /// showing something that is not true, which is the same defect with an apology attached.
+    /// </para>
+    /// </remarks>
+    async partial void OnEnabledChanged(bool value)
+    {
+        if (_applying)
+        {
+            return;
+        }
+
+        try
+        {
+            await _setEnabled(value).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            _applying = true;
+
+            try
+            {
+                Enabled = !value;
+            }
+            finally
+            {
+                _applying = false;
+            }
+
+            Failed?.Invoke(
+                $"{Name} could not be turned {(value ? "on" : "off")}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Raised when a tick could not be saved. The view model above shows it.</summary>
+    public event Action<string>? Failed;
 }
 
 /// <summary>
@@ -179,14 +229,32 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         }
     }
 
-    partial void OnSelectedIndexChanged(int value)
+    /// <summary>
+    /// Anything that stopped a change being saved, for the line under the list.
+    /// </summary>
+    /// <remarks>
+    /// Cleared by the next successful rebuild, so it describes now rather than accumulating.
+    /// </remarks>
+    [ObservableProperty]
+    private string _problem = string.Empty;
+
+    async partial void OnSelectedIndexChanged(int value)
     {
         if (_rebuilding || value < 0 || value >= Rows.Count)
         {
             return;
         }
 
-        _ = _settings.EditConfigurationAsync(value);
+        try
+        {
+            // Switching saves the configuration being left, so this can fail for the same reason
+            // a tick can: the settings file is momentarily somebody else's.
+            await _settings.EditConfigurationAsync(value).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            Problem = $"Could not open that configuration: {ex.Message}";
+        }
     }
 
     /// <summary>Adds an empty configuration and selects it for editing.</summary>
@@ -348,8 +416,12 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
             for (var i = 0; i < configurations.Count; i++)
             {
                 var index = i;
-                Rows.Add(new ConfigurationRowViewModel(
-                    configurations[i], index, enabled => SetEnabledAsync(index, enabled)));
+                var row = new ConfigurationRowViewModel(
+                    configurations[i], index, enabled => SetEnabledAsync(index, enabled));
+
+                row.Failed += message => Problem = message;
+
+                Rows.Add(row);
             }
 
             SelectedIndex = Rows.Count == 0
@@ -360,6 +432,9 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         {
             _rebuilding = false;
         }
+
+        // Whatever went wrong last time was about the list as it was; this is a new one.
+        Problem = string.Empty;
 
         OnPropertyChanged(nameof(HasSelection));
         OnPropertyChanged(nameof(Summary));

@@ -40,8 +40,7 @@ public sealed class ConfigurationRunner : IAsyncDisposable
     private readonly ILoggerFactory _loggerFactory;
     private readonly IStateStore _store;
 
-    private readonly HttpClient _http;
-    private readonly WebDavClient _client;
+    private readonly IWebDavClient _client;
     private readonly TransferCoordinator _engine;
     private readonly ContinuousMonitor _monitor;
 
@@ -55,12 +54,17 @@ public sealed class ConfigurationRunner : IAsyncDisposable
     /// Application-level settings. Read for the things that describe this computer rather than
     /// the pairing: the extra root certificate, the SHA-256 record, the connection pool size.
     /// </param>
-    /// <param name="credential">Already resolved, so this never touches the credential store.</param>
+    /// <param name="client">
+    /// The connection to this configuration's server, from <see cref="WebDavClientCache"/>.
+    /// Borrowed rather than owned: it is shared with any other configuration signing in to the
+    /// same server as the same account, and it outlives this runner. A runner that built its own
+    /// meant a fresh connection pool, and a fresh TLS handshake per file, for every scan.
+    /// </param>
     /// <param name="budget">The concurrency limit shared with every other runner.</param>
     public ConfigurationRunner(
         MonitoringConfiguration configuration,
         AppSettings settings,
-        PanoramaCredential credential,
+        IWebDavClient client,
         IStateStore store,
         TransferBudget budget,
         ILoggerFactory loggerFactory)
@@ -69,27 +73,11 @@ public sealed class ConfigurationRunner : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(budget);
 
+        _client = client ?? throw new ArgumentNullException(nameof(client));
         _store = store ?? throw new ArgumentNullException(nameof(store));
 
         _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
         _log = loggerFactory.CreateLogger<ConfigurationRunner>();
-
-        var clientOptions = new WebDavClientOptions
-        {
-            BaseAddress = new Uri(configuration.ServerUrl, UriKind.Absolute),
-            Credential = credential,
-
-            // The shared capacity, not a share of it. At most this many transfers are in flight
-            // anywhere, and they may all belong to this configuration, so a smaller pool here
-            // would throttle below the limit the user set.
-            MaxConcurrentTransfers = budget.Capacity,
-
-            TrustedRootCertificatePath = settings.TrustedRootCertificatePath,
-            RecordSha256 = settings.RecordSha256,
-        };
-
-        _http = clientOptions.CreateHttpClient();
-        _client = new WebDavClient(_http, clientOptions, loggerFactory.CreateLogger<WebDavClient>());
 
         _engine = new TransferCoordinator(
             _client,
@@ -127,7 +115,7 @@ public sealed class ConfigurationRunner : IAsyncDisposable
     /// <summary>What this configuration's monitor is doing.</summary>
     public MonitorStatus Status => _monitor.Status;
 
-    /// <summary>The connected client, for the remote folder browser.</summary>
+    /// <summary>The connection this configuration is using. Not owned by this runner.</summary>
     public IWebDavClient Client => _client;
 
     /// <summary>Raised as this configuration's transfers progress. Fires on worker threads.</summary>
@@ -343,7 +331,9 @@ public sealed class ConfigurationRunner : IAsyncDisposable
         await _monitor.DisposeAsync().ConfigureAwait(false);
         await _engine.DisposeAsync().ConfigureAwait(false);
 
-        _http.Dispose();
+        // The client is not disposed here. It belongs to the cache and is very likely shared with
+        // another configuration on the same server; closing its pool when one runner stops would
+        // take the others' connections with it.
     }
 
     /// <summary>
@@ -369,7 +359,6 @@ public sealed class ConfigurationRunner : IAsyncDisposable
         _running = null;
 
         _monitor.Dispose();
-        _http.Dispose();
     }
 
     /// <summary>

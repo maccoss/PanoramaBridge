@@ -14,7 +14,20 @@ time and update the heading; see `README.md` in this directory for the process.
   it is. A file whose contents really are bad is still kept for inspection, as before.
 - A settings save that could not replace the file left a `settings.json.tmp` beside it, one for
   every save that lost that race.
+- On the Configurations tab, turning a configuration on or off when the settings file could not be
+  written left the tick showing a change that had not been saved. The tick now goes back and the
+  reason is shown.
 
 ## Performance
 
+- Several configurations sending to one Panorama server as the same account now share one
+  connection instead of opening one each. Pressing Upload now with eight configurations was
+  building and discarding eight connection pools, which meant repeating the TLS handshake for
+  every file.
+
 ## Breaking Changes
+
+- `pbctl watch --also` now requires `--no-upload`. Every watched folder mirrored into the same
+  remote directory, so two files with the same name in different folders overwrote each other on
+  the server. The switch exists to measure what several watchers cost, which is what
+  `--no-upload` does; to transfer several folders, run `pbctl` once per folder.
