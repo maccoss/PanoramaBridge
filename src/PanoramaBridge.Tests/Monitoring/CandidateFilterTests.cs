@@ -28,6 +28,47 @@ public sealed class CandidateFilterTests
     public void Anything_else_is_left_alone(string path) =>
         Instrument.Accepts(path).ShouldBeFalse();
 
+    // -- Thermo's own sequence files -----------------------------------------------------------
+
+    [Theory]
+    [InlineData("203b13ca-0743-4a98-bed4-5830bfc7d826.sld", false)]
+    [InlineData("2026-09-12_QC.sld", true)]
+    [InlineData("Lumos_batch_3.sld", true)]
+    public void A_sequence_the_data_system_named_for_itself_is_not_data(string name, bool expected)
+    {
+        // The case this exists for, and the one the lab actually runs: .sld is in the extensions
+        // box -- it almost always is -- so the only thing that can tell the two apart is the name.
+        // A sequence somebody named and saved is wanted; one the data system left behind, whose
+        // whole name is a GUID, is a working copy that accumulates one per session.
+        //
+        // This overrides the extensions box, which the exclusion list deliberately cannot do. It
+        // has to: a lab has to ask for .sld to get any sequences at all, so there is no way to
+        // express "these but not those" by listing extensions.
+        new CandidateFilter([".sld"]).Accepts(name).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("203b13ca-0743-4a98-bed4-5830bfc7d826.raw")]
+    [InlineData("203b13ca-0743-4a98-bed4-5830bfc7d826.wiff")]
+    public void A_GUID_name_on_anything_else_is_still_data(string name)
+    {
+        // Deliberately only .sld. Some pipelines name acquisitions by GUID to keep them unique,
+        // and a rule broad enough to catch a temporary .raw would silently drop those -- losing
+        // data to save clutter, which is the wrong way round.
+        new CandidateFilter([".raw", ".wiff"]).Accepts(name).ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("{203b13ca-0743-4a98-bed4-5830bfc7d826}.sld")]
+    [InlineData("203b13ca07434a98bed45830bfc7d826.sld")]
+    public void A_name_that_merely_resembles_a_GUID_is_left_alone(string name)
+    {
+        // TryParseExact with "D", not TryParse: the braced and unhyphenated forms are shapes a
+        // person could plausibly have chosen, and only the exact 8-4-4-4-12 form is what the data
+        // system writes. Being wrong here means discarding somebody's sequence.
+        new CandidateFilter([".sld"]).Accepts(name).ShouldBeTrue();
+    }
+
     // -- companion files, from a real Sciex ZenoTOF 8600 acquisition ---------------------------
 
     [Theory]

@@ -113,6 +113,14 @@ public sealed class CandidateFilter
         // walk and can never veto something typed into the extensions box. Somebody who
         // deliberately asks for .skyd gets .skyd; the alternative is an empty queue and nothing
         // on screen to explain it.
+        //
+        // IsWorkingFile is the one thing that does override the box, and deliberately: a file
+        // ending -wal, .tmp or .md5, or a sequence the data system named for itself, is never the
+        // thing a person meant even when its extension is. .sld is the case that makes this
+        // concrete -- a lab asking for .sld wants the sequences somebody named and saved, and
+        // would have to ask for .sld to get any of them, so an exclusion list could not express
+        // "these but not those" at all. See IsGeneratedSequence for why that rule is narrow
+        // enough to apply without asking.
         var candidate = name;
 
         while (true)
