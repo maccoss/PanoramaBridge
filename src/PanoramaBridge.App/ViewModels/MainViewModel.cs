@@ -482,7 +482,22 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         IsMonitoring = _transfers.IsMonitoring;
 
         DropSweepsFromConfigurationsThatStopped();
+
+        // On the transition, not on the state. A scan raises this event too, so reporting
+        // "Stopped." whenever nothing is being watched would write over what a scan had just
+        // said; and the sweep-dropping above cannot carry it either, because a configuration
+        // started and stopped before its first sweep leaves nothing to drop.
+        if (_wasMonitoring && !IsMonitoring)
+        {
+            StatusLine = "Stopped.";
+            ConnectionFailed = false;
+        }
+
+        _wasMonitoring = IsMonitoring;
     }
+
+    /// <summary>Whether anything was being watched last time the run state was read.</summary>
+    private bool _wasMonitoring;
 
     /// <summary>
     /// Forgets what a configuration last reported, once it is no longer being watched.
@@ -521,12 +536,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         if (_sweeps.Count == 0)
         {
-            // Nothing is being watched, so there is nothing to describe -- and the line has to say
-            // so here rather than being left to whatever stopped things. Only Stop all writes its
-            // own line; stopping the last configuration from its own row wrote none, so the status
-            // line went on reading "Monitoring ..." for a folder nobody was watching.
-            StatusLine = "Stopped.";
-            ConnectionFailed = false;
+            // Nothing left to describe. The line itself is written by the transition check in
+            // ApplyRunState, which also covers a configuration stopped before its first sweep
+            // arrived -- there being nothing to drop in that case, this method would never run.
             return;
         }
 

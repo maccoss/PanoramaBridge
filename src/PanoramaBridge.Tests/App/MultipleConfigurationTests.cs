@@ -205,6 +205,26 @@ public sealed class MultipleConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_start_that_throws_before_it_begins_does_not_keep_the_session()
+    {
+        // The session is taken before the runner is built, and building one can throw: a
+        // destination containing ".." satisfies MonitoringConfiguration.Validate and is then
+        // rejected by RemotePath.Parse. With the count raised outside the try that lowers it, the
+        // budget and the cancellation source were retained for the life of the process -- and the
+        // next start silently reused a budget built from whatever the concurrency limit had been.
+        await using var service = NewService();
+
+        var bad = Watching("Lumos") with { RemotePath = "/_webdav/MacCoss/../@files/" };
+        var settings = new AppSettings { Configurations = [bad] };
+
+        await Should.ThrowAsync<Exception>(
+            () => service.StartConfigurationAsync(settings, bad, "an-api-key"));
+
+        service.MonitoredConfigurations.ShouldBe(0);
+        service.TransferLimit.ShouldBeNull("nothing is running, so nothing holds the session");
+    }
+
+    [Fact]
     public async Task Stopping_one_configuration_leaves_the_others_holding_the_session()
     {
         // The session -- the shared budget and the cancellation source -- must survive any one

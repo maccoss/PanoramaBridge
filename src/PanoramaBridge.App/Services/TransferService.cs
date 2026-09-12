@@ -567,37 +567,60 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         // Stop all went dead again.
         _starting++;
 
-        _monitoring ??= new CancellationTokenSource();
-        _budget ??= new TransferBudget(settings.MaxConcurrentTransfers);
-
-        var runner = new ConfigurationRunner(
-            configuration,
-            _clients.For(settings, configuration, credential),
-            _store,
-            _budget,
-            _loggerFactory);
-
-        runner.Progress += Progress.Report;
-        runner.Swept += OnSwept;
-        runner.Waiting += OnWaiting;
-        runner.Failed += OnRunnerFailed;
-
         try
         {
-            await runner.StartAsync(_monitoring.Token).ConfigureAwait(false);
+            _monitoring ??= new CancellationTokenSource();
+            _budget ??= new TransferBudget(settings.MaxConcurrentTransfers);
 
-            _runners = [.. _runners, runner];
-        }
-        catch
-        {
-            Detach(runner);
-            await runner.DisposeAsync().ConfigureAwait(false);
-            throw;
+            // The session this configuration is joining. Compared again below rather than trusted:
+            // Stop all and Dispose tear the session down without consulting _starting -- they have
+            // to, since their job is to stop everything -- so a start that was in flight when one
+            // of them ran must notice and stand its own runner down instead of appending a live
+            // runner to a list that has just been emptied.
+            var session = _monitoring;
+
+            var runner = new ConfigurationRunner(
+                configuration,
+                _clients.For(settings, configuration, credential),
+                _store,
+                _budget,
+                _loggerFactory);
+
+            runner.Progress += Progress.Report;
+            runner.Swept += OnSwept;
+            runner.Waiting += OnWaiting;
+            runner.Failed += OnRunnerFailed;
+
+            try
+            {
+                await runner.StartAsync(session.Token).ConfigureAwait(false);
+
+                if (!ReferenceEquals(_monitoring, session))
+                {
+                    _log.LogInformation(
+                        "{Configuration} was stopped while it was starting.",
+                        configuration.DisplayName);
+
+                    Detach(runner);
+                    await runner.DisposeAsync().ConfigureAwait(false);
+                    return;
+                }
+
+                _runners = [.. _runners, runner];
+            }
+            catch
+            {
+                Detach(runner);
+                await runner.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
         }
         finally
         {
-            // Decremented only once the runner is in _runners, or once the failure has been
-            // cleaned up, so the session is never unheld while this configuration still needs it.
+            // In a finally around the whole of it, not only around StartAsync. Building the runner
+            // can throw too -- RemotePath.Parse rejects a destination containing "..", which
+            // MonitoringConfiguration.Validate accepts -- and leaving the count raised would
+            // retain the session for the life of the process.
             _starting--;
 
             DiscardSessionIfIdle();

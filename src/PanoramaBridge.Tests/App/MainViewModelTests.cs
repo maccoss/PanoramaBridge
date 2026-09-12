@@ -195,6 +195,28 @@ public sealed class MainViewModelTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Stopping_the_last_configuration_from_its_row_says_so()
+    {
+        // Only Stop all used to write a line, so stopping the last configuration from its own row
+        // left the previous text on screen. Dropping its stale sweep was not enough on its own
+        // either: started and stopped before any sweep arrived, there is nothing to drop and the
+        // status line was never touched at all. The transition is what reports it.
+        using var shell = NewShell();
+
+        await _transfers.StartConfigurationAsync(
+            shell.Settings.ToSettings(),
+            shell.Settings.Configurations[0],
+            "an-api-key");
+
+        shell.IsMonitoring.ShouldBeTrue();
+
+        await _transfers.StopConfigurationAsync(shell.Settings.Configurations[0]);
+
+        shell.IsMonitoring.ShouldBeFalse();
+        shell.StatusLine.ShouldBe("Stopped.", "no sweep ever arrived, and it still has to say so");
+    }
+
+    [Fact]
     public async Task Stop_all_becomes_pressable_when_something_starts()
     {
         // CanExecuteChanged, not CanExecute. Asking the command directly evaluates the predicate

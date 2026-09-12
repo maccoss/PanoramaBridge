@@ -342,6 +342,12 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         {
             Problem = $"Could not open that configuration: {ex.Message}";
 
+            // Anything clicked while this was running is dropped rather than carried past the
+            // failure. Kept, it would be applied by the next click the user made -- opening a row
+            // they chose before the error and have since had a message about -- or lost silently
+            // if they made none.
+            _pendingSelection = null;
+
             // EditConfigurationAsync saves before it moves, and leaves the index alone when that
             // save throws. Without this the list would highlight the row that was clicked while
             // the tabs still showed the previous one, and the next edit would be applied to a
