@@ -14,8 +14,8 @@ time and update the heading; see `README.md` in this directory for the process.
   - Configurations may use different Panorama servers, and may sign in to one server as different
     people.
   - Two of them may watch the same folder and send it to different destinations.
-  - The Local Monitoring and Remote Settings tabs now edit whichever configuration is selected on
-    the Configurations tab, and say which one in their headers.
+  - The Local Monitoring and Remote Settings tabs now edit whichever configuration is selected
+    on the Configurations tab, and each says which one at the top of the page.
   - Settings that describe this computer rather than one pairing moved to a new Application tab:
     how many files transfer at once, the tray and verbose-logging options, and the additional
     trusted root certificate. They were on the other two tabs, where they would now read as
@@ -52,3 +52,11 @@ time and update the heading; see `README.md` in this directory for the process.
 ## Performance
 
 ## Breaking Changes
+
+- **The settings file changes format, and an older version cannot read the new one.** Your
+  settings are upgraded automatically the first time this version runs, and nothing needs
+  re-entering. But if you afterwards go back to 26.8.1 or earlier, that version will not find the
+  monitored folder, the destination or the sign-in in the upgraded file, and will quietly stop
+  transferring. Your uploaded files and the record of what has been uploaded are unaffected.
+  If you need to go back, keep a copy of `settings.json` from
+  `%LOCALAPPDATA%\PanoramaBridge` before updating, and put it back alongside the older version.
