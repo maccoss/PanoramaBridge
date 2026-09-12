@@ -21,6 +21,12 @@ time and update the heading; see `README.md` in this directory for the process.
 
 ## Bug Fixes
 
+- **Stopping one configuration could stop another.** If you had started retyping a folder or
+  destination for a configuration that was transferring, and had not saved it, pressing Stop on a
+  different row stood that one down too. What ought to be running is now judged by what is saved,
+  not by what is currently in the boxes.
+- **The status line still said it was monitoring after the last configuration stopped.** Only Stop
+  all wrote a line; stopping the last one from its own row left the previous report on screen.
 - **Deleting a configuration that was running did not stop it.** It kept watching its folder and
   kept transferring, with no row left on screen that could stop it. Editing the folder or the
   destination of a running configuration did the same thing, and pressing Run afterwards started a

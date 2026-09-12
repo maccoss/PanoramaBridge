@@ -293,6 +293,17 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// The settings as last written to the file, with no edit in progress folded in.
+    /// </summary>
+    /// <remarks>
+    /// For deciding what ought to be running. ToSettings carries whatever is currently in the
+    /// boxes, which is the right answer when saving and the wrong one here: a folder somebody is
+    /// halfway through retyping would make a configuration that is transferring perfectly well
+    /// look like one nothing describes, and stopping it is what that means.
+    /// </remarks>
+    public AppSettings SavedSettings => _saved;
+
     /// <summary>The configuration being edited, as saved.</summary>
     /// <remarks>
     /// An empty one when there is nothing at that index, which is how a settings file with no

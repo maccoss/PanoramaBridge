@@ -22,14 +22,30 @@ public sealed class ConfigurationsViewModelTests
 
         public int Saves { get; private set; }
 
+        /// <summary>
+        /// Held open so a save can be made to take time.
+        /// </summary>
+        /// <remarks>
+        /// Saving here normally completes before it returns, which quietly makes every
+        /// "while another is in flight" test a test of the sequential case instead -- the second
+        /// click arrives after the first is already finished, and the code that handles overlap
+        /// never runs. A test that needs the overlap opens this gate itself.
+        /// </remarks>
+        public TaskCompletionSource? Gate { get; set; }
+
         public Task<AppSettings> LoadAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(Saved);
 
-        public Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
+        public async Task SaveAsync(
+            AppSettings settings, CancellationToken cancellationToken = default)
         {
+            if (Gate is { } gate)
+            {
+                await gate.Task.ConfigureAwait(false);
+            }
+
             Saved = settings;
             Saves++;
-            return Task.CompletedTask;
         }
     }
 
@@ -347,6 +363,47 @@ public sealed class ConfigurationsViewModelTests
     }
 
     [Fact]
+    public async Task A_row_clicked_while_another_is_opening_is_opened_next()
+    {
+        // Ignoring the second click was not enough. The rebuild that follows a switch puts
+        // SelectedIndex back to the configuration being edited, so the ignored click was undone
+        // under the pointer and had to be made again.
+        //
+        // The gate is the whole test. Without it the first switch finishes before the second
+        // click is made, the overlap never happens, and this passes whatever the code does.
+        var store = new InMemorySettingsStore();
+
+        var settings = new SettingsViewModel(
+            store,
+            new AppSettings
+            {
+                Configurations =
+                [
+                    Watching("Lumos", @"D:\Data\Lumos"),
+                    Watching("Exploris", @"D:\Data\Exploris"),
+                    Watching("Eclipse", @"D:\Data\Eclipse"),
+                ],
+            });
+
+        var list = new ConfigurationsViewModel(settings);
+
+        store.Gate = new TaskCompletionSource();
+
+        list.SelectedIndex = 1;
+        list.SelectedIndex = 2;
+
+        settings.ConfigurationIndex.ShouldBe(0, "the first switch is still saving");
+
+        store.Gate.SetResult();
+        store.Gate = null;
+
+        await list.Switching;
+
+        settings.ConfigurationIndex.ShouldBe(2, "the row clicked last is the one opened");
+        list.SelectedIndex.ShouldBe(2, "and the list agrees with the tabs");
+    }
+
+    [Fact]
     public async Task Deleting_a_running_configuration_stops_it()
     {
         // It kept running. Nothing in the list referred to its runner any more, so it went on
@@ -382,7 +439,7 @@ public sealed class ConfigurationsViewModelTests
         settings.Configurations.Count.ShouldBe(1);
         run.IsRunning(Watching("Exploris", Path.GetTempPath())).ShouldBeFalse(
             "the configuration is gone, so what it was running has to be too");
-        list.Problem.ShouldContain("has been stopped");
+        list.Problem.ShouldContain("removed was running");
     }
 
     [Fact]
