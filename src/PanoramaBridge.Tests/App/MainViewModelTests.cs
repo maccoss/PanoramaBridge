@@ -42,10 +42,10 @@ public sealed class MainViewModelTests : IAsyncLifetime
 
         public List<string> Forgotten { get; } = [];
 
-        public void Remember(string serverUrl, string userName, string secret) =>
+        public void Remember(string serverUrl, string userName, string secret, string account = "") =>
             Remembered.Add(serverUrl);
 
-        public void Forget(string serverUrl) => Forgotten.Add(serverUrl);
+        public void Forget(string serverUrl, string account = "") => Forgotten.Add(serverUrl);
     }
 
     private sealed class InMemorySettingsStore : ISettingsStore
@@ -99,13 +99,13 @@ public sealed class MainViewModelTests : IAsyncLifetime
         return shell;
     }
 
-    private AppSettings Usable() => new()
+    private AppSettings Usable() => new AppSettings().Holding(new MonitoringConfiguration
     {
         LocalDirectory = _watched,
         RemotePath = "/_webdav/MacCoss/maccoss/@files/uploads/",
         ServerUrl = "https://example.invalid",
         ReconcileMinutes = 60,
-    };
+    });
 
     [Fact]
     public void Restarting_for_an_update_says_why_when_it_will_not()
@@ -214,7 +214,8 @@ public sealed class MainViewModelTests : IAsyncLifetime
     [Fact]
     public async Task Unusable_settings_are_reported_rather_than_started_with()
     {
-        using var shell = NewShell(new AppSettings { LocalDirectory = string.Empty });
+        using var shell = NewShell(
+            new AppSettings().Holding(new MonitoringConfiguration { LocalDirectory = string.Empty }));
 
         await shell.ToggleMonitoringCommand.ExecuteAsync(null);
 

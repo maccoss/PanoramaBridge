@@ -285,7 +285,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
             IsMonitoring = true;
             ConnectionFailed = false;
-            StatusLine = $"Monitoring {settings.LocalDirectory}.";
+            StatusLine = $"Monitoring {ActiveConfiguration(settings).LocalDirectory}.";
         }
         catch (Exception ex)
         {
@@ -400,25 +400,41 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             MessageBoxButton.OK,
             MessageBoxImage.Information);
 
+    /// <summary>
+    /// The configuration the window is acting on.
+    /// </summary>
+    /// <remarks>
+    /// The first enabled one, matching what <c>TransferService</c> will actually run. Phase 5
+    /// gives the window a configuration to select; until then this is where the assumption is
+    /// written down rather than spread through the status messages.
+    /// </remarks>
+    private static MonitoringConfiguration ActiveConfiguration(AppSettings settings) =>
+        settings.EnabledConfigurations.FirstOrDefault()
+        ?? settings.Configurations.FirstOrDefault()
+        ?? new MonitoringConfiguration();
+
     /// <summary>Stores or clears the credential according to the user's choice.</summary>
     private void RememberCredential(AppSettings settings)
     {
         var secret = SecretProvider?.Invoke();
+        var configuration = ActiveConfiguration(settings);
 
-        if (!settings.SaveCredentials)
+        if (!configuration.SaveCredentials)
         {
             // Unticking the box has to actually remove what was stored earlier, not merely stop
-            // adding to it.
-            _credentials.Forget(settings.ServerUrl);
+            // adding to it. Only this configuration's own credential: another one signed in to
+            // the same server as somebody else must stay signed in.
+            _credentials.Forget(configuration.ServerUrl, configuration.Account);
             return;
         }
 
         if (!string.IsNullOrWhiteSpace(secret))
         {
             _credentials.Remember(
-                settings.ServerUrl,
-                settings.AuthMode == AuthMode.ApiKey ? "apikey" : settings.UserName,
-                secret);
+                configuration.ServerUrl,
+                configuration.AuthMode == AuthMode.ApiKey ? "apikey" : configuration.UserName,
+                secret,
+                configuration.Account);
         }
     }
 
@@ -646,7 +662,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 /// </remarks>
 public interface ICredentialStoreAccessor
 {
-    void Remember(string serverUrl, string userName, string secret);
+    /// <param name="account">
+    /// Which credential for this server is meant. Empty is the one held for the server as a
+    /// whole, which is where every credential stored before configurations existed still lives.
+    /// </param>
+    void Remember(string serverUrl, string userName, string secret, string account = "");
 
-    void Forget(string serverUrl);
+    /// <inheritdoc cref="Remember" />
+    void Forget(string serverUrl, string account = "");
 }

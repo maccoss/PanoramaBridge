@@ -20,7 +20,7 @@ namespace PanoramaBridge.Cli;
 internal sealed record CommandOptions
 {
     /// <summary>The settings screen's own defaults, read once rather than per option.</summary>
-    private static readonly AppSettings Defaults = new();
+    private static readonly MonitoringConfiguration Defaults = new();
 
     /// <summary>Files in flight at once.</summary>
     public int Concurrency { get; init; } = 3;

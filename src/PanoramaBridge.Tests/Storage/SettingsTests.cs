@@ -1,5 +1,6 @@
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Core.Transfer;
+using PanoramaBridge.Tests.TestDoubles;
 
 namespace PanoramaBridge.Tests.Storage;
 
@@ -22,8 +23,8 @@ public sealed class AppSettingsTests
     {
         // AutoQC runs on the instrument computer beside the acquisition software and leaves
         // run.raw.skyd next to run.raw. Nobody should have to discover that and configure it.
-        new AppSettings().ExcludedExtensions.ShouldContain(".skyd");
-        new AppSettings().FormatExcludedExtensions().ShouldContain(".skyd");
+        new MonitoringConfiguration().ExcludedExtensions.ShouldContain(".skyd");
+        new MonitoringConfiguration().FormatExcludedExtensions().ShouldContain(".skyd");
     }
 
     [Fact]
@@ -32,11 +33,18 @@ public sealed class AppSettingsTests
         // Equality here is hand-written, because the compiler-generated version compares the
         // lists by reference. A property left out of it makes the settings screen believe
         // nothing was edited and quietly drop the edit.
-        var settings = new AppSettings();
+        var configuration = new MonitoringConfiguration();
 
-        settings.ShouldNotBe(settings with { ExcludedExtensions = [".skyd", ".blib"] });
-        settings.ShouldNotBe(settings with { ExcludedExtensions = [] });
-        settings.ShouldBe(settings with { ExcludedExtensions = [.. settings.ExcludedExtensions] });
+        configuration.ShouldNotBe(configuration with { ExcludedExtensions = [".skyd", ".blib"] });
+        configuration.ShouldNotBe(configuration with { ExcludedExtensions = [] });
+        configuration.ShouldBe(
+            configuration with { ExcludedExtensions = [.. configuration.ExcludedExtensions] });
+
+        // And the settings that hold it notice too, which is the comparison the screen makes.
+        var settings = new AppSettings().Holding(configuration);
+
+        settings.ShouldNotBe(
+            settings.Holding(configuration with { ExcludedExtensions = [".skyd", ".blib"] }));
     }
 
     [Fact]
@@ -46,19 +54,32 @@ public sealed class AppSettingsTests
         // file is meant to be hand-editable. One hand-typed null used to reach GetHashCode and
         // FormatExtensions and throw -- straight past the corrupt-file fallback, which only
         // catches malformed JSON, so the file was valid and the application still fell over.
-        var settings = new AppSettings { Extensions = null!, ExcludedExtensions = null! };
+        var configuration = new MonitoringConfiguration
+        {
+            Extensions = null!,
+            ExcludedExtensions = null!,
+        };
 
-        settings.Extensions.ShouldBeEmpty();
-        settings.ExcludedExtensions.ShouldBeEmpty();
+        configuration.Extensions.ShouldBeEmpty();
+        configuration.ExcludedExtensions.ShouldBeEmpty();
 
+        Should.NotThrow(() => configuration.GetHashCode());
+        Should.NotThrow(() => configuration.FormatExtensions());
+        Should.NotThrow(() => configuration.FormatExcludedExtensions());
+        Should.NotThrow(() => configuration.Equals(new MonitoringConfiguration()));
+
+        // The list of configurations is hand-editable in the same file, and reaches the same way.
+        var settings = new AppSettings { Configurations = null! };
+
+        settings.Configurations.ShouldBeEmpty();
         Should.NotThrow(() => settings.GetHashCode());
-        Should.NotThrow(() => settings.FormatExtensions());
-        Should.NotThrow(() => settings.FormatExcludedExtensions());
         Should.NotThrow(() => settings.Equals(new AppSettings()));
 
         // And it degrades to something the screen can explain rather than an empty list quietly
         // meaning "everything".
-        settings.Validate().ShouldContain(p => p.Contains("at least one file extension"));
+        new AppSettings().Holding(configuration)
+            .Validate()
+            .ShouldContain(p => p.Contains("at least one file extension"));
     }
 
     [Fact]
@@ -67,7 +88,7 @@ public sealed class AppSettingsTests
         // The 38 MB-of-13.7 GB truncation reachable by configuration instead of by a bug: the
         // .wiff uploads and records as verified while the spectra stay behind, and nothing looks
         // wrong until somebody opens it in Skyline.
-        var problems = new AppSettings
+        var problems = new MonitoringConfiguration
         {
             LocalDirectory = Path.GetTempPath(),
             Extensions = [".wiff"],
@@ -80,7 +101,7 @@ public sealed class AppSettingsTests
     [Fact]
     public void Excluding_a_suffix_nothing_listed_needs_is_not_reported()
     {
-        new AppSettings
+        new MonitoringConfiguration
         {
             LocalDirectory = Path.GetTempPath(),
             Extensions = [".raw"],
@@ -93,7 +114,7 @@ public sealed class AppSettingsTests
     {
         // Nearly every upload from this lab goes here, so nobody should have to remember the
         // _webdav and @files incantation.
-        new AppSettings().RemotePath.ShouldBe("/_webdav/MacCoss/maccoss/@files/");
+        new MonitoringConfiguration().RemotePath.ShouldBe("/_webdav/MacCoss/maccoss/@files/");
         new AppSettings().RecentRemotePaths.ShouldContain("/_webdav/MacCoss/maccoss/@files/");
     }
 
@@ -104,7 +125,6 @@ public sealed class AppSettingsTests
             .WithRecentPath("/_webdav/MacCoss/Kyle/@files/")
             .WithRecentPath("/_webdav/MacCoss/maccoss/@files/RawFiles/");
 
-        settings.RemotePath.ShouldBe("/_webdav/MacCoss/maccoss/@files/RawFiles/");
         settings.RecentRemotePaths[0].ShouldBe("/_webdav/MacCoss/maccoss/@files/RawFiles/");
         settings.RecentRemotePaths[1].ShouldBe("/_webdav/MacCoss/Kyle/@files/");
 
@@ -138,22 +158,35 @@ public sealed class AppSettingsTests
     public void Defaults_encode_the_decisions_that_matter()
     {
         var settings = new AppSettings();
+        var configuration = new MonitoringConfiguration();
 
-        settings.AuthMode.ShouldBe(AuthMode.ApiKey, "an API key is safer than the account password");
-        settings.VerifyUploads.ShouldBeTrue("an unverified upload is the failure mode being designed out");
-        settings.ConflictPolicy.ShouldBe(ConflictPolicy.Ask, "guessing risks destroying data");
-        settings.MaxConcurrentTransfers.ShouldBe(3);
-        settings.ReconcileMinutes.ShouldBeGreaterThan(0, "the periodic sweep is the real safety net");
-        settings.StabilitySeconds.ShouldBeGreaterThan(0);
-        settings.LockedFileRetryIntervalSeconds.ShouldBe(
+        configuration.AuthMode.ShouldBe(AuthMode.ApiKey, "an API key is safer than the account password");
+        configuration.VerifyUploads.ShouldBeTrue("an unverified upload is the failure mode being designed out");
+        configuration.ConflictPolicy.ShouldBe(ConflictPolicy.Ask, "guessing risks destroying data");
+        configuration.ReconcileMinutes.ShouldBeGreaterThan(0, "the periodic sweep is the real safety net");
+        configuration.StabilitySeconds.ShouldBeGreaterThan(0);
+        configuration.LockedFileRetryIntervalSeconds.ShouldBe(
             30,
             "a file in use is looked at slowly, but it is always looked at");
+        configuration.Enabled.ShouldBeTrue("a configuration somebody just added should run");
+
+        settings.MaxConcurrentTransfers.ShouldBe(3);
+
+        // One configuration out of the box, so the settings tabs on a fresh install have
+        // something to edit rather than an empty list and no way to make one.
+        settings.Configurations.ShouldHaveSingleItem();
+
+        // No creation time on it, so two default settings objects compare equal. The screen asks
+        // that question every time a box is typed in.
+        settings.ShouldBe(new AppSettings());
     }
 
     [Fact]
     public void Validation_reports_what_the_user_has_to_fix()
     {
-        var problems = new AppSettings { LocalDirectory = string.Empty }.Validate();
+        var problems = new AppSettings()
+            .Holding(new MonitoringConfiguration { LocalDirectory = string.Empty })
+            .Validate();
 
         problems.ShouldContain(p => p.Contains("Local Monitoring"));
     }
@@ -161,7 +194,8 @@ public sealed class AppSettingsTests
     [Fact]
     public void Validation_passes_for_a_usable_configuration()
     {
-        var settings = new AppSettings { LocalDirectory = Path.GetTempPath() };
+        var settings = new AppSettings()
+            .Holding(new MonitoringConfiguration { LocalDirectory = Path.GetTempPath() });
 
         settings.Validate().ShouldBeEmpty();
     }
@@ -171,7 +205,12 @@ public sealed class AppSettingsTests
     [InlineData("ftp://panoramaweb.org")]
     public void A_server_address_that_is_not_http_is_rejected(string url)
     {
-        new AppSettings { LocalDirectory = Path.GetTempPath(), ServerUrl = url }
+        new AppSettings()
+            .Holding(new MonitoringConfiguration
+            {
+                LocalDirectory = Path.GetTempPath(),
+                ServerUrl = url,
+            })
             .Validate()
             .ShouldContain(p => p.Contains("server address"));
     }
@@ -179,14 +218,92 @@ public sealed class AppSettingsTests
     [Fact]
     public void A_password_login_without_a_user_name_is_rejected()
     {
-        new AppSettings
-        {
-            LocalDirectory = Path.GetTempPath(),
-            AuthMode = AuthMode.UserNameAndPassword,
-            UserName = string.Empty,
-        }
+        new AppSettings()
+            .Holding(new MonitoringConfiguration
+            {
+                LocalDirectory = Path.GetTempPath(),
+                AuthMode = AuthMode.UserNameAndPassword,
+                UserName = string.Empty,
+            })
             .Validate()
             .ShouldContain(p => p.Contains("user name"));
+    }
+
+    [Fact]
+    public void A_configuration_that_is_switched_off_does_not_stop_the_others()
+    {
+        // Most of the point of being able to switch one off. An instrument away for service
+        // leaves a configuration pointing at a folder that is not there, and that must not be a
+        // reason to refuse to transfer from the instrument next to it.
+        var settings = new AppSettings
+        {
+            Configurations =
+            [
+                new MonitoringConfiguration { LocalDirectory = Path.GetTempPath() },
+                new MonitoringConfiguration
+                {
+                    Name = "Away for service",
+                    Enabled = false,
+                    LocalDirectory = @"X:\not\here",
+                },
+            ],
+        };
+
+        settings.Validate().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_broken_configuration_is_named_when_there_is_more_than_one()
+    {
+        // "Choose a directory to monitor" says everything needed when there is one pairing and
+        // nothing at all when there are five.
+        var settings = new AppSettings
+        {
+            Configurations =
+            [
+                new MonitoringConfiguration { Name = "Lumos", LocalDirectory = Path.GetTempPath() },
+                new MonitoringConfiguration { Name = "Exploris", LocalDirectory = string.Empty },
+            ],
+        };
+
+        settings.Validate().ShouldContain(p => p.StartsWith("Exploris: "));
+    }
+
+    [Fact]
+    public void Turning_every_configuration_off_says_so()
+    {
+        // Rather than reporting no problems and then transferring nothing, which reads as a
+        // failure of the application instead of a setting.
+        var settings = new AppSettings
+        {
+            Configurations =
+            [
+                new MonitoringConfiguration
+                {
+                    Enabled = false,
+                    LocalDirectory = Path.GetTempPath(),
+                },
+            ],
+        };
+
+        settings.Validate().ShouldContain(p => p.Contains("turned off"));
+    }
+
+    [Fact]
+    public void A_configuration_is_named_for_the_folder_it_watches_when_it_has_no_name()
+    {
+        // What the migration calls the configuration it upgrades, and what the list shows for
+        // one somebody has not named yet.
+        MonitoringConfiguration.SuggestNameFor(@"D:\Data\QE-HF").ShouldBe("QE-HF");
+        MonitoringConfiguration.SuggestNameFor(@"D:\Data\QE-HF\").ShouldBe("QE-HF");
+        MonitoringConfiguration.SuggestNameFor(@"\\fileserver\instruments").ShouldBe("instruments");
+        MonitoringConfiguration.SuggestNameFor(@"D:\").ShouldBe("D:");
+        MonitoringConfiguration.SuggestNameFor(string.Empty).ShouldBe("Untitled");
+
+        new MonitoringConfiguration { LocalDirectory = @"D:\Data\QE-HF" }
+            .DisplayName.ShouldBe("QE-HF");
+        new MonitoringConfiguration { Name = "Chosen", LocalDirectory = @"D:\Data\QE-HF" }
+            .DisplayName.ShouldBe("Chosen");
     }
 }
 
@@ -203,14 +320,32 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         var saved = new AppSettings
         {
-            LocalDirectory = @"D:\Data",
-            Extensions = [".raw", ".d"],
-            ExcludedExtensions = [".skyd", ".blib"],
             MaxConcurrentTransfers = 5,
-            ConflictPolicy = ConflictPolicy.Overwrite,
-            AuthMode = AuthMode.UserNameAndPassword,
-            UserName = "someone@uw.edu",
             VerboseLogging = true,
+            Configurations =
+            [
+                new MonitoringConfiguration
+                {
+                    Name = "Lumos",
+                    Account = "config-lumos",
+                    CreatedUtc = new DateTimeOffset(2026, 9, 11, 12, 0, 0, TimeSpan.Zero),
+                    LocalDirectory = @"D:\Data",
+                    Extensions = [".raw", ".d"],
+                    ExcludedExtensions = [".skyd", ".blib"],
+                    ConflictPolicy = ConflictPolicy.Overwrite,
+                    AuthMode = AuthMode.UserNameAndPassword,
+                    UserName = "someone@uw.edu",
+                },
+                new MonitoringConfiguration
+                {
+                    Name = "Exploris",
+                    Account = "config-exploris",
+                    Enabled = false,
+                    LocalDirectory = @"E:\Data",
+                    ServerUrl = "https://labkey.partner.edu",
+                    RemotePath = "/_webdav/Partner/@files/",
+                },
+            ],
         };
 
         await store.SaveAsync(saved);
@@ -235,8 +370,8 @@ public sealed class JsonSettingsStoreTests : IDisposable
         // to read, copy or attach to a support request.
         var secretish = new[] { "password", "apikey", "secret", "token", "credential", "key" };
 
-        var offenders = typeof(AppSettings)
-            .GetProperties()
+        var offenders = typeof(AppSettings).GetProperties()
+            .Concat(typeof(MonitoringConfiguration).GetProperties())
             .Where(property =>
                 property.PropertyType == typeof(string)
                 && secretish.Any(word =>
@@ -252,7 +387,8 @@ public sealed class JsonSettingsStoreTests : IDisposable
     public async Task The_account_name_is_saved_but_it_is_not_a_secret()
     {
         var store = new JsonSettingsStore(SettingsPath);
-        await store.SaveAsync(new AppSettings { UserName = "someone@uw.edu" });
+        await store.SaveAsync(new AppSettings()
+            .Holding(new MonitoringConfiguration { UserName = "someone@uw.edu" }));
 
         var text = await File.ReadAllTextAsync(SettingsPath);
 
@@ -276,7 +412,8 @@ public sealed class JsonSettingsStoreTests : IDisposable
     public async Task Enums_are_written_by_name_so_the_file_stays_readable()
     {
         var store = new JsonSettingsStore(SettingsPath);
-        await store.SaveAsync(new AppSettings { ConflictPolicy = ConflictPolicy.Overwrite });
+        await store.SaveAsync(new AppSettings()
+            .Holding(new MonitoringConfiguration { ConflictPolicy = ConflictPolicy.Overwrite }));
 
         var text = await File.ReadAllTextAsync(SettingsPath);
 
@@ -300,8 +437,8 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         var loaded = await new JsonSettingsStore(SettingsPath).LoadAsync();
 
-        loaded.LocalDirectory.ShouldBe(@"D:\Data");
-        loaded.ConflictPolicy.ShouldBe(ConflictPolicy.Ask);
+        loaded.OnlyConfiguration().LocalDirectory.ShouldBe(@"D:\Data");
+        loaded.OnlyConfiguration().ConflictPolicy.ShouldBe(ConflictPolicy.Ask);
 
         var rewritten = await File.ReadAllTextAsync(SettingsPath);
         rewritten.ShouldNotContain("Rename");
@@ -326,8 +463,8 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         var loaded = await new JsonSettingsStore(SettingsPath).LoadAsync();
 
-        loaded.Extensions.ShouldBe([".raw"]);
-        loaded.ExcludedExtensions.ShouldContain(".skyd");
+        loaded.OnlyConfiguration().Extensions.ShouldBe([".raw"]);
+        loaded.OnlyConfiguration().ExcludedExtensions.ShouldContain(".skyd");
     }
 
     [Fact]
@@ -346,10 +483,10 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         var loaded = await new JsonSettingsStore(SettingsPath).LoadAsync();
 
-        loaded.LocalDirectory.ShouldBe(@"D:\Data");
-        loaded.Extensions.ShouldBeEmpty();
-        loaded.ExcludedExtensions.ShouldBeEmpty();
-        Should.NotThrow(() => loaded.FormatExcludedExtensions());
+        loaded.OnlyConfiguration().LocalDirectory.ShouldBe(@"D:\Data");
+        loaded.OnlyConfiguration().Extensions.ShouldBeEmpty();
+        loaded.OnlyConfiguration().ExcludedExtensions.ShouldBeEmpty();
+        Should.NotThrow(() => loaded.OnlyConfiguration().FormatExcludedExtensions());
     }
 
     [Fact]
@@ -358,9 +495,10 @@ public sealed class JsonSettingsStoreTests : IDisposable
         // Clearing the box is how somebody asks for every companion file, so it must not be
         // mistaken for "this file predates the setting" and quietly refilled with the defaults.
         var store = new JsonSettingsStore(SettingsPath);
-        await store.SaveAsync(new AppSettings { ExcludedExtensions = [] });
+        await store.SaveAsync(new AppSettings()
+            .Holding(new MonitoringConfiguration { ExcludedExtensions = [] }));
 
-        (await store.LoadAsync()).ExcludedExtensions.ShouldBeEmpty();
+        (await store.LoadAsync()).OnlyConfiguration().ExcludedExtensions.ShouldBeEmpty();
     }
 
     [Fact]

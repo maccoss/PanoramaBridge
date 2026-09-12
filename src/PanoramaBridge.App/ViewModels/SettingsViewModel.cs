@@ -30,11 +30,22 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly ISettingsStore _store;
     private AppSettings _saved;
 
-    public SettingsViewModel(ISettingsStore store, AppSettings initial)
+    /// <summary>Which configuration these two tabs are editing.</summary>
+    private readonly int _configurationIndex;
+
+    /// <param name="configurationIndex">
+    /// Which configuration to edit. The first one unless told otherwise, because nothing can yet
+    /// choose another: the Configurations tab arrives in phase 5. Taken as a parameter rather
+    /// than assumed at each use, so that adding the selector is a matter of passing it, and so
+    /// the assumption is written down in one place instead of spread through the tabs.
+    /// </param>
+    public SettingsViewModel(ISettingsStore store, AppSettings initial, int configurationIndex = 0)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _saved = (initial ?? throw new ArgumentNullException(nameof(initial)))
             .NormalizeWithdrawnValues();
+
+        _configurationIndex = configurationIndex;
 
         LoadFrom(_saved);
     }
@@ -162,32 +173,65 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>Problems that would prevent a transfer, or empty when the settings are usable.</summary>
     public IReadOnlyList<string> Problems => ToSettings().Validate();
 
+    /// <summary>The configuration being edited, as saved.</summary>
+    /// <remarks>
+    /// An empty one when there is nothing at that index, which is how a settings file with no
+    /// configurations at all still gives the tabs something to edit rather than throwing on the
+    /// way to showing the window.
+    /// </remarks>
+    private MonitoringConfiguration Saved => ConfigurationIn(_saved);
+
+    /// <summary>The configuration under edit within a particular settings record.</summary>
+    private MonitoringConfiguration ConfigurationIn(AppSettings settings) =>
+        _configurationIndex >= 0 && _configurationIndex < settings.Configurations.Count
+            ? settings.Configurations[_configurationIndex]
+            : new MonitoringConfiguration();
+
     /// <summary>The current edits as a settings record.</summary>
-    public AppSettings ToSettings() => _saved with
+    public AppSettings ToSettings()
     {
-        LocalDirectory = LocalDirectory,
-        IncludeSubdirectories = IncludeSubdirectories,
-        Extensions = AppSettings.ParseExtensions(ExtensionsText),
-        ExcludedExtensions = AppSettings.ParseExtensions(ExcludedExtensionsText),
-        StabilitySeconds = StabilitySeconds,
-        ReconcileMinutes = ReconcileMinutes,
-        LockedFileRetryIntervalSeconds = LockedFileRetryIntervalSeconds,
-        LockedFileMaxRetries = LockedFileMaxRetries,
-        MaxConcurrentTransfers = MaxConcurrentTransfers,
-        ConflictPolicy = ConflictPolicy,
-        VerifyUploads = VerifyUploads,
-        WriteChecksumSidecars = WriteChecksumSidecars,
-        ServerUrl = ServerUrl.Trim(),
-        AuthMode = AuthMode,
-        UserName = UserName.Trim(),
-        SaveCredentials = SaveCredentials,
-        RemotePath = RemotePath.Trim(),
-        TrustedRootCertificatePath = string.IsNullOrWhiteSpace(TrustedRootCertificatePath)
-            ? null
-            : TrustedRootCertificatePath,
-        VerboseLogging = VerboseLogging,
-        MinimizeToTray = MinimizeToTray,
-    };
+        var edited = Saved with
+        {
+            LocalDirectory = LocalDirectory,
+            IncludeSubdirectories = IncludeSubdirectories,
+            Extensions = AppSettings.ParseExtensions(ExtensionsText),
+            ExcludedExtensions = AppSettings.ParseExtensions(ExcludedExtensionsText),
+            StabilitySeconds = StabilitySeconds,
+            ReconcileMinutes = ReconcileMinutes,
+            LockedFileRetryIntervalSeconds = LockedFileRetryIntervalSeconds,
+            LockedFileMaxRetries = LockedFileMaxRetries,
+            ConflictPolicy = ConflictPolicy,
+            VerifyUploads = VerifyUploads,
+            WriteChecksumSidecars = WriteChecksumSidecars,
+            ServerUrl = ServerUrl.Trim(),
+            AuthMode = AuthMode,
+            UserName = UserName.Trim(),
+            SaveCredentials = SaveCredentials,
+            RemotePath = RemotePath.Trim(),
+        };
+
+        var configurations = _saved.Configurations.ToArray();
+
+        if (_configurationIndex >= 0 && _configurationIndex < configurations.Length)
+        {
+            configurations[_configurationIndex] = edited;
+        }
+        else
+        {
+            configurations = [.. configurations, edited];
+        }
+
+        return _saved with
+        {
+            Configurations = configurations,
+            MaxConcurrentTransfers = MaxConcurrentTransfers,
+            TrustedRootCertificatePath = string.IsNullOrWhiteSpace(TrustedRootCertificatePath)
+                ? null
+                : TrustedRootCertificatePath,
+            VerboseLogging = VerboseLogging,
+            MinimizeToTray = MinimizeToTray,
+        };
+    }
 
     /// <summary>Persists the current edits.</summary>
     public async Task<AppSettings> SaveAsync(CancellationToken cancellationToken = default)
@@ -248,11 +292,11 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     [RelayCommand]
     private void RestoreDefaultExtensions() =>
-        ExtensionsText = new AppSettings().FormatExtensions();
+        ExtensionsText = new MonitoringConfiguration().FormatExtensions();
 
     [RelayCommand]
     private void RestoreDefaultExcludedExtensions() =>
-        ExcludedExtensionsText = new AppSettings().FormatExcludedExtensions();
+        ExcludedExtensionsText = new MonitoringConfiguration().FormatExcludedExtensions();
 
     [RelayCommand]
     private static void OpenApiKeyPage()
@@ -269,23 +313,26 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private void LoadFrom(AppSettings settings)
     {
-        LocalDirectory = settings.LocalDirectory;
-        IncludeSubdirectories = settings.IncludeSubdirectories;
-        ExtensionsText = settings.FormatExtensions();
-        ExcludedExtensionsText = settings.FormatExcludedExtensions();
-        StabilitySeconds = settings.StabilitySeconds;
-        ReconcileMinutes = settings.ReconcileMinutes;
-        LockedFileRetryIntervalSeconds = settings.LockedFileRetryIntervalSeconds;
-        LockedFileMaxRetries = settings.LockedFileMaxRetries;
+        var configuration = ConfigurationIn(settings);
+
+        LocalDirectory = configuration.LocalDirectory;
+        IncludeSubdirectories = configuration.IncludeSubdirectories;
+        ExtensionsText = configuration.FormatExtensions();
+        ExcludedExtensionsText = configuration.FormatExcludedExtensions();
+        StabilitySeconds = configuration.StabilitySeconds;
+        ReconcileMinutes = configuration.ReconcileMinutes;
+        LockedFileRetryIntervalSeconds = configuration.LockedFileRetryIntervalSeconds;
+        LockedFileMaxRetries = configuration.LockedFileMaxRetries;
+        ConflictPolicy = configuration.ConflictPolicy;
+        VerifyUploads = configuration.VerifyUploads;
+        WriteChecksumSidecars = configuration.WriteChecksumSidecars;
+        ServerUrl = configuration.ServerUrl;
+        AuthMode = configuration.AuthMode;
+        UserName = configuration.UserName;
+        SaveCredentials = configuration.SaveCredentials;
+        RemotePath = configuration.RemotePath;
+
         MaxConcurrentTransfers = settings.MaxConcurrentTransfers;
-        ConflictPolicy = settings.ConflictPolicy;
-        VerifyUploads = settings.VerifyUploads;
-        WriteChecksumSidecars = settings.WriteChecksumSidecars;
-        ServerUrl = settings.ServerUrl;
-        AuthMode = settings.AuthMode;
-        UserName = settings.UserName;
-        SaveCredentials = settings.SaveCredentials;
-        RemotePath = settings.RemotePath;
         TrustedRootCertificatePath = settings.TrustedRootCertificatePath;
         VerboseLogging = settings.VerboseLogging;
         MinimizeToTray = settings.MinimizeToTray;

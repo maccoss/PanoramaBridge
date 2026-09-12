@@ -1,5 +1,4 @@
 using System.Text.Json.Serialization;
-using PanoramaBridge.Core.Transfer;
 
 namespace PanoramaBridge.Core.Storage;
 
@@ -14,151 +13,85 @@ public enum AuthMode
 }
 
 /// <summary>
-/// Everything the user can configure.
+/// Everything the user can configure: the application's own behavior, and the configurations it
+/// runs.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Contains no secrets. The API key and password live in Windows Credential Manager, so this
 /// file can be read, copied or attached to a support request without leaking anything.
+/// </para>
+/// <para>
+/// The division is by what a value describes. A watched folder, a destination and a sign-in
+/// describe one pairing, and there are several of those -- they live on
+/// <see cref="MonitoringConfiguration"/>. The concurrency limit, the yield to instrument software
+/// and the extra root certificate describe this computer, so they are here: a TLS-inspecting
+/// proxy intercepts every server alike, and a spinning disk is slow for every configuration at
+/// once.
+/// </para>
 /// </remarks>
 public sealed record AppSettings
 {
     /// <summary>The lab's usual destination, offered as the default.</summary>
     public const string MacCossFilesPath = "/_webdav/MacCoss/maccoss/@files/";
 
-    // -- Local monitoring ---------------------------------------------------------------------
-
-    /// <summary>Directory watched for new acquisitions.</summary>
-    public string LocalDirectory { get; init; } = string.Empty;
-
-    /// <summary>Whether to watch subdirectories as well.</summary>
-    public bool IncludeSubdirectories { get; init; } = true;
-
     /// <summary>
-    /// Extensions the companion walk will not look past unless a user says otherwise.
+    /// The current settings file format.
     /// </summary>
     /// <remarks>
-    /// Files another program derives from an acquisition and leaves beside it. They have exactly
-    /// the same shape as a genuine companion -- <c>run.raw.skyd</c> is built the same way as
-    /// <c>run.wiff.scan</c> -- so no rule about the shape of a name can tell them apart, and this
-    /// has to be knowledge rather than logic. A default rather than a constant, because the next
-    /// tool to write beside an acquisition should not need a release.
-    /// <para>
-    /// <c>.skyd</c> is Skyline's chromatogram cache. AutoQC commonly runs on the instrument
-    /// computer and imports each acquisition as it appears, leaving <c>run.raw.skyd</c> next to
-    /// <c>run.raw</c>. The walk reached <c>.raw</c> and took it, so a cache that can run to
-    /// gigabytes -- and is rebuilt on every re-import -- was transferred as though it were an
-    /// acquisition.
-    /// </para>
-    /// <para>
-    /// Nothing whose absence would be a safety failure belongs in here, because a user can empty
-    /// it. <c>.tmp</c> was briefly in this list and is now one of
-    /// <c>CandidateFilter.IsWorkingFile</c>'s own rules for exactly that reason.
-    /// </para>
+    /// 1 was a single configuration with its fields at the top level. 2 moved them into
+    /// <see cref="Configurations"/>. See <c>JsonSettingsStore</c> for the upgrade.
     /// </remarks>
-    public static IReadOnlyList<string> DefaultExcludedExtensions { get; } = [".skyd"];
+    public const int CurrentVersion = 2;
 
-    private readonly IReadOnlyList<string> _extensions =
-        [".raw", ".d", ".wiff", ".wiff2", ".mzml", ".mzxml", ".sld", ".csv"];
-
-    private readonly IReadOnlyList<string> _excludedExtensions = DefaultExcludedExtensions;
-
-    /// <summary>File extensions to transfer, with leading dots.</summary>
+    /// <summary>
+    /// One configuration, so a fresh install has something for the settings tabs to edit.
+    /// </summary>
     /// <remarks>
-    /// Null-coalescing on the way in, because a property initializer does not survive an explicit
-    /// <c>null</c> in the JSON file -- and that file is meant to be hand-editable. Without this,
-    /// one hand-typed null made <see cref="GetHashCode"/> and <see cref="FormatExtensions"/>
-    /// throw straight past the corrupt-file fallback, which only catches malformed JSON.
+    /// Shared rather than constructed per instance, which is safe because the record is immutable
+    /// and matters because two default <see cref="AppSettings"/> have to compare equal.
     /// </remarks>
-    public IReadOnlyList<string> Extensions
+    private static readonly IReadOnlyList<MonitoringConfiguration> OneEmptyConfiguration =
+        [new MonitoringConfiguration()];
+
+    private readonly IReadOnlyList<MonitoringConfiguration> _configurations = OneEmptyConfiguration;
+
+    private readonly IReadOnlyList<string> _recentRemotePaths = [MacCossFilesPath];
+
+    // -- Configurations -------------------------------------------------------------------------
+
+    /// <summary>
+    /// The folder-to-destination pairings, in the order the user arranged them.
+    /// </summary>
+    /// <remarks>
+    /// Ordered rather than keyed by name, because the name is the user's own label and renaming
+    /// one must not be a schema operation. Null-coalescing on the way in for the reason given on
+    /// <see cref="RecentRemotePaths"/>; an explicit empty list is allowed, and means the
+    /// Configurations tab is showing its empty state.
+    /// </remarks>
+    public IReadOnlyList<MonitoringConfiguration> Configurations
     {
-        get => _extensions;
-        init => _extensions = value ?? [];
+        get => _configurations;
+        init => _configurations = value ?? [];
     }
 
-    /// <summary>
-    /// Extensions that are never data even when they sit on top of one that is.
-    /// </summary>
-    /// <remarks>
-    /// Defaults to <see cref="DefaultExcludedExtensions"/>, so a settings file written before
-    /// this existed picks them up on load. Null-coalescing for the reason given on
-    /// <see cref="Extensions"/>.
-    /// </remarks>
-    public IReadOnlyList<string> ExcludedExtensions
-    {
-        get => _excludedExtensions;
-        init => _excludedExtensions = value ?? [];
-    }
+    // -- Transfers ------------------------------------------------------------------------------
 
     /// <summary>
-    /// How long a file must be unchanged before it is considered finished.
-    /// </summary>
-    /// <remarks>
-    /// Ten seconds by default. This setting existed in the Python UI but nothing ever read it;
-    /// the stability window was hardcoded to one second.
-    /// </remarks>
-    public int StabilitySeconds { get; init; } = 10;
-
-    /// <summary>
-    /// How often to re-walk the watched tree.
-    /// </summary>
-    /// <remarks>
-    /// Always on, not optional. File system notifications are a hint, not a guarantee -- they
-    /// are dropped on buffer overflow and are unreliable over SMB and in WSL2 -- so a periodic
-    /// sweep is the actual safety net rather than a checkbox someone has to know to tick.
-    /// </remarks>
-    public int ReconcileMinutes { get; init; } = 15;
-
-    // -- Locked files -------------------------------------------------------------------------
-
-    /// <summary>
-    /// How often to look again at a file another process is holding open.
-    /// </summary>
-    /// <remarks>
-    /// Thirty seconds. There was once a companion setting that waited half an hour before the
-    /// first re-check, on the reasoning that an instrument holds its output open for the whole
-    /// run. It was removed: there is no way to learn that a file has been released except by
-    /// looking, so not looking simply means the file sits there after it finishes. What the long
-    /// wait saved was two file opens per thirty seconds.
-    /// </remarks>
-    public int LockedFileRetryIntervalSeconds { get; init; } = 30;
-
-    /// <summary>
-    /// How many consecutive checks may find a file in use before it stops being watched closely.
-    /// </summary>
-    /// <remarks>
-    /// Not an abandonment. The file goes back to the periodic folder check, which offers it again
-    /// on its next pass, so a run lasting all afternoon is still transferred when it finishes.
-    /// </remarks>
-    public int LockedFileMaxRetries { get; init; } = 20;
-
-    // -- Transfers ----------------------------------------------------------------------------
-
-    /// <summary>
-    /// Files uploaded at once.
+    /// Files uploaded at once, across every configuration.
     /// </summary>
     /// <remarks>
     /// Three or four connections saturate a gigabit link to a single server. Lower it to one or
     /// two when the watched volume is a spinning disk, where concurrent sequential reads turn
     /// into seeking.
+    /// <para>
+    /// Shared rather than applied per configuration, and that is the whole reason it is not a
+    /// configuration setting: eight configurations each allowed three transfers would be
+    /// twenty-four concurrent reads from one disk, which on a spinning volume is slower than
+    /// three -- the application says so itself in <c>ConcurrencyAdvice</c>.
+    /// </para>
     /// </remarks>
     public int MaxConcurrentTransfers { get; init; } = 3;
-
-    /// <summary>What to do when a file we did not upload already occupies a destination.</summary>
-    public ConflictPolicy ConflictPolicy { get; init; } = ConflictPolicy.Ask;
-
-    /// <summary>Whether to confirm every upload against the server's own hash.</summary>
-    public bool VerifyUploads { get; init; } = true;
-
-    /// <summary>
-    /// Whether to write a <c>.md5</c> file beside each uploaded file on the server.
-    /// </summary>
-    /// <remarks>
-    /// On by default. It is the only record of the file's checksum that travels with the data:
-    /// the upload ledger lives on one instrument computer, and Panorama stamps an uploaded file
-    /// with the time it arrived rather than the time the instrument wrote it, so the acquisition
-    /// date survives only if something writes it down.
-    /// </remarks>
-    public bool WriteChecksumSidecars { get; init; } = true;
 
     /// <summary>
     /// Whether to stay out of the way of instrument software.
@@ -168,6 +101,10 @@ public sealed record AppSettings
     /// mass spectrometer. Lowers processor and disk priority so an acquisition always wins;
     /// transfers then take longer on a busy machine, which is the correct trade. Turn it off on a
     /// workstation being used for bulk uploads, where nothing else needs the machine.
+    /// <para>
+    /// A property of the process, not of any one configuration: priority is set once for the
+    /// whole application.
+    /// </para>
     /// </remarks>
     public bool YieldToInstrumentSoftware { get; init; } = true;
 
@@ -184,23 +121,17 @@ public sealed record AppSettings
 
     // -- Remote -------------------------------------------------------------------------------
 
-    /// <summary>Panorama server address.</summary>
-    public string ServerUrl { get; init; } = "https://panoramaweb.org";
-
-    /// <summary>Which credential type to use.</summary>
-    public AuthMode AuthMode { get; init; } = AuthMode.ApiKey;
-
-    /// <summary>Account name, when using a password. Never the secret itself.</summary>
-    public string UserName { get; init; } = string.Empty;
-
-    /// <summary>Whether the credential is kept in Windows Credential Manager between sessions.</summary>
-    public bool SaveCredentials { get; init; } = true;
-
-    /// <summary>Remote folder uploads are mirrored into.</summary>
-    public string RemotePath { get; init; } = MacCossFilesPath;
-
     /// <summary>Recently used destinations, most recent first.</summary>
-    public IReadOnlyList<string> RecentRemotePaths { get; init; } = [MacCossFilesPath];
+    /// <remarks>
+    /// One list across every configuration, because it exists to save typing in the destination
+    /// box and a path used by one configuration is exactly the kind of thing the next one wants
+    /// to start from.
+    /// </remarks>
+    public IReadOnlyList<string> RecentRemotePaths
+    {
+        get => _recentRemotePaths;
+        init => _recentRemotePaths = value ?? [];
+    }
 
     /// <summary>
     /// An extra trusted root certificate, for a site behind a TLS-inspecting proxy.
@@ -208,6 +139,11 @@ public sealed record AppSettings
     /// <remarks>
     /// Additive: the chain is still validated. There is deliberately no setting that disables
     /// certificate checking.
+    /// <para>
+    /// Application-level, because a proxy that inspects TLS intercepts everything leaving the
+    /// machine. Naming the certificate once per configuration would be five places to fix when
+    /// the site's root is replaced.
+    /// </para>
     /// </remarks>
     public string? TrustedRootCertificatePath { get; init; }
 
@@ -219,16 +155,20 @@ public sealed record AppSettings
     /// <summary>Whether closing the window leaves the application running in the tray.</summary>
     public bool MinimizeToTray { get; init; } = true;
 
-
     /// <summary>Schema marker, so a future format change can be recognized.</summary>
     [JsonPropertyName("$version")]
-    public int Version { get; init; } = 1;
+    public int Version { get; init; } = CurrentVersion;
+
+    /// <summary>The configurations that run when monitoring starts.</summary>
+    [JsonIgnore]
+    public IEnumerable<MonitoringConfiguration> EnabledConfigurations =>
+        Configurations.Where(c => c.Enabled);
 
     /// <summary>
     /// Value equality, including the list members.
     /// </summary>
     /// <remarks>
-    /// The compiler-generated version compares <see cref="Extensions"/> and
+    /// The compiler-generated version compares <see cref="Configurations"/> and
     /// <see cref="RecentRemotePaths"/> by reference, so two settings objects holding identical
     /// values would compare unequal. That would quietly break every "have the settings changed?"
     /// check in the UI, prompting to save when nothing was edited.
@@ -245,29 +185,14 @@ public sealed record AppSettings
             return true;
         }
 
-        return LocalDirectory == other.LocalDirectory
-            && IncludeSubdirectories == other.IncludeSubdirectories
-            && StabilitySeconds == other.StabilitySeconds
-            && ReconcileMinutes == other.ReconcileMinutes
-            && LockedFileRetryIntervalSeconds == other.LockedFileRetryIntervalSeconds
-            && LockedFileMaxRetries == other.LockedFileMaxRetries
-            && MaxConcurrentTransfers == other.MaxConcurrentTransfers
-            && ConflictPolicy == other.ConflictPolicy
-            && VerifyUploads == other.VerifyUploads
-            && WriteChecksumSidecars == other.WriteChecksumSidecars
+        return MaxConcurrentTransfers == other.MaxConcurrentTransfers
             && YieldToInstrumentSoftware == other.YieldToInstrumentSoftware
             && RecordSha256 == other.RecordSha256
-            && ServerUrl == other.ServerUrl
-            && AuthMode == other.AuthMode
-            && UserName == other.UserName
-            && SaveCredentials == other.SaveCredentials
-            && RemotePath == other.RemotePath
             && TrustedRootCertificatePath == other.TrustedRootCertificatePath
             && VerboseLogging == other.VerboseLogging
             && MinimizeToTray == other.MinimizeToTray
             && Version == other.Version
-            && Extensions.SequenceEqual(other.Extensions, StringComparer.Ordinal)
-            && ExcludedExtensions.SequenceEqual(other.ExcludedExtensions, StringComparer.Ordinal)
+            && Configurations.SequenceEqual(other.Configurations)
             && RecentRemotePaths.SequenceEqual(other.RecentRemotePaths, StringComparer.Ordinal);
     }
 
@@ -276,30 +201,17 @@ public sealed record AppSettings
     {
         var hash = new HashCode();
 
-        hash.Add(LocalDirectory);
-        hash.Add(IncludeSubdirectories);
-        hash.Add(StabilitySeconds);
-        hash.Add(ReconcileMinutes);
         hash.Add(MaxConcurrentTransfers);
-        hash.Add(ConflictPolicy);
-        hash.Add(VerifyUploads);
-        hash.Add(WriteChecksumSidecars);
         hash.Add(YieldToInstrumentSoftware);
         hash.Add(RecordSha256);
-        hash.Add(ServerUrl);
-        hash.Add(AuthMode);
-        hash.Add(UserName);
-        hash.Add(RemotePath);
+        hash.Add(TrustedRootCertificatePath);
+        hash.Add(VerboseLogging);
+        hash.Add(MinimizeToTray);
         hash.Add(Version);
 
-        foreach (var extension in Extensions)
+        foreach (var configuration in Configurations)
         {
-            hash.Add(extension, StringComparer.Ordinal);
-        }
-
-        foreach (var extension in ExcludedExtensions)
-        {
-            hash.Add(extension, StringComparer.Ordinal);
+            hash.Add(configuration);
         }
 
         foreach (var path in RecentRemotePaths)
@@ -314,17 +226,32 @@ public sealed record AppSettings
     /// Replaces persisted values for withdrawn settings with their safe current meaning.
     /// </summary>
     /// <remarks>
-    /// <see cref="ConflictPolicy.Rename"/> remains in the enum solely so an older JSON settings
-    /// file can be read. The current UI has no radio button for it and every transfer path already
-    /// treats it as <see cref="ConflictPolicy.Ask"/>, so carrying it forward would make the file
-    /// say something the application cannot do.
+    /// Returns <c>this</c> unchanged when nothing needed normalizing, which the settings store
+    /// relies on to decide whether to rewrite the file.
     /// </remarks>
-    public AppSettings NormalizeWithdrawnValues() =>
-        ConflictPolicy == ConflictPolicy.Rename ? this with { ConflictPolicy = ConflictPolicy.Ask } : this;
+    public AppSettings NormalizeWithdrawnValues()
+    {
+        MonitoringConfiguration[]? normalized = null;
+
+        for (var i = 0; i < Configurations.Count; i++)
+        {
+            var configuration = Configurations[i].NormalizeWithdrawnValues();
+
+            if (ReferenceEquals(configuration, Configurations[i]))
+            {
+                continue;
+            }
+
+            normalized ??= Configurations.ToArray();
+            normalized[i] = configuration;
+        }
+
+        return normalized is null ? this : this with { Configurations = normalized };
+    }
 
     /// <summary>
-    /// Parses <see cref="Extensions"/> from the comma-separated form the UI shows, normalizing
-    /// each entry to a lower-case leading-dot extension.
+    /// Parses a list of extensions from the comma-separated form the UI shows, normalizing each
+    /// entry to a lower-case leading-dot extension.
     /// </summary>
     public static IReadOnlyList<string> ParseExtensions(string commaSeparated)
     {
@@ -338,16 +265,15 @@ public sealed record AppSettings
             .ToArray();
     }
 
-    /// <summary>Renders <see cref="Extensions"/> for display in a single text box.</summary>
-    public string FormatExtensions() => string.Join(", ", Extensions);
-
-    /// <summary>Renders <see cref="ExcludedExtensions"/> for display in a single text box.</summary>
-    public string FormatExcludedExtensions() => string.Join(", ", ExcludedExtensions);
-
     /// <summary>
     /// Returns these settings with <paramref name="path"/> promoted to the front of the recent
     /// list, keeping the lab's default available.
     /// </summary>
+    /// <remarks>
+    /// Records the path only. Which destination a configuration uses is that configuration's own
+    /// <see cref="MonitoringConfiguration.RemotePath"/>; before configurations existed this method
+    /// set both, and doing that now would silently re-point whichever one happened to be first.
+    /// </remarks>
     public AppSettings WithRecentPath(string path, int keep = 8)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -364,59 +290,36 @@ public sealed record AppSettings
             recent.Add(MacCossFilesPath);
         }
 
-        return this with { RemotePath = path, RecentRemotePaths = recent.Take(keep).ToArray() };
+        return this with { RecentRemotePaths = recent.Take(keep).ToArray() };
     }
 
     /// <summary>
     /// Problems that would stop a transfer, phrased for the person who has to fix them.
     /// </summary>
+    /// <remarks>
+    /// Only enabled configurations are checked. A configuration someone switched off because its
+    /// instrument is away for service must not stop the others starting -- which is most of the
+    /// point of being able to switch one off.
+    /// </remarks>
     public IReadOnlyList<string> Validate()
     {
         var problems = new List<string>();
+        var enabled = EnabledConfigurations.ToArray();
 
-        if (string.IsNullOrWhiteSpace(LocalDirectory))
+        if (enabled.Length == 0)
         {
-            problems.Add("Choose a directory to monitor on the Local Monitoring tab.");
-        }
-        else if (!Directory.Exists(LocalDirectory))
-        {
-            problems.Add($"The monitored directory does not exist: {LocalDirectory}");
-        }
-
-        if (Extensions.Count == 0)
-        {
-            problems.Add("List at least one file extension to transfer.");
+            problems.Add(Configurations.Count == 0
+                ? "Add a configuration: a folder to monitor and a Panorama folder to send it to."
+                : "Every configuration is turned off. Tick one to start transferring.");
         }
 
-        // Excluding a suffix that a listed format needs is the 38 MB-of-13.7 GB truncation all
-        // over again, arrived at by configuration instead of by a bug: the .wiff uploads and
-        // records as verified while the spectra in the .wiff.scan stay behind, and nothing looks
-        // wrong until somebody opens it in Skyline. The walk cannot know which suffixes are
-        // load-bearing in general, so this says so for the one pairing that is known rather than
-        // staying silent about all of them.
-        if (Extensions.Any(e => e is ".wiff" or ".wiff2")
-            && ExcludedExtensions.Contains(".scan", StringComparer.OrdinalIgnoreCase))
-        {
-            problems.Add(
-                "Remove .scan from the never-transfer list, or stop transferring .wiff files. "
-                + "A Sciex acquisition keeps its spectra in the .wiff.scan beside the .wiff, so "
-                + "excluding it would upload the metadata on its own.");
-        }
+        // Labelled only when there is more than one, so the single-configuration case reads
+        // exactly as it always has: "Choose a directory to monitor on the Local Monitoring tab."
+        var label = enabled.Length > 1;
 
-        if (!Uri.TryCreate(ServerUrl, UriKind.Absolute, out var server)
-            || (server.Scheme != Uri.UriSchemeHttps && server.Scheme != Uri.UriSchemeHttp))
+        foreach (var configuration in enabled)
         {
-            problems.Add($"The server address is not a valid URL: {ServerUrl}");
-        }
-
-        if (string.IsNullOrWhiteSpace(RemotePath))
-        {
-            problems.Add("Choose a remote folder to upload into on the Remote Settings tab.");
-        }
-
-        if (AuthMode == AuthMode.UserNameAndPassword && string.IsNullOrWhiteSpace(UserName))
-        {
-            problems.Add("Enter your Panorama user name, or switch to an API key.");
+            problems.AddRange(configuration.Validate(label ? configuration.DisplayName : null));
         }
 
         if (MaxConcurrentTransfers is < 1 or > 8)

@@ -219,8 +219,8 @@ public sealed class LedgerRekeyMigrationTests : IDisposable
         // What must be true afterwards is the point: the rows are all there, and they are still
         // verified. A migration that loses this costs every instrument its entire upload history.
         WriteLegacyLedger(
-            (@"D:\Dataun1.raw", "/_webdav/p/@files/run1.raw", (int)TransferState.Verified),
-            (@"D:\Dataun2.raw", "/_webdav/p/@files/run2.raw", (int)TransferState.Verified));
+            (@"D:\Data\run1.raw", "/_webdav/p/@files/run1.raw", (int)TransferState.Verified),
+            (@"D:\Data\run2.raw", "/_webdav/p/@files/run2.raw", (int)TransferState.Verified));
 
         using (var planted = new SqliteConnection($"Data Source={LedgerPath}"))
         {
@@ -238,7 +238,7 @@ public sealed class LedgerRekeyMigrationTests : IDisposable
         counts[TransferState.Verified].ShouldBe(2, "no row may be lost to a retried migration");
 
         var row = await store.GetAsync(
-            new LedgerKey(@"D:\Dataun1.raw", "/_webdav/p/@files/run1.raw"));
+            new LedgerKey(@"D:\Data\run1.raw", "/_webdav/p/@files/run1.raw"));
 
         row.ShouldNotBeNull();
         row.VerifyMethod.ShouldBe(VerifyMethod.ServerMd5);

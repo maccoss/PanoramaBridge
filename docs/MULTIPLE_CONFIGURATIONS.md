@@ -139,14 +139,51 @@ Two things the ledger work surfaced that later phases have to deal with:
   would show two entries for one file, so this wants clearing on save before phase 5 puts that
   table in front of anyone.
 
-### Phase 3 — split settings into application and configurations
+### Phase 3 — split settings into application and configurations  **[done]**
 
-`AppSettings` becomes application-level settings plus an ordered list of named configurations.
-The settings file already carries a `$version`, so the migration has somewhere to hook: today's
-single configuration becomes the first entry, named for the folder it watches.
+`AppSettings` is now application-level settings plus an ordered list of `MonitoringConfiguration`.
+A configuration gained a name, an enabled flag, a created timestamp and an account; it kept every
+per-pairing field, with the reasoning on each one moved across intact.
 
-A configuration needs, beyond today's fields: a name, an enabled flag, and a created timestamp —
-the columns AutoQC shows.
+`$version` went to 2. A version 1 file — which is every file in the field — is read through a
+private `LegacySettings` view of the old flat shape and becomes configuration one: named for the
+folder it watches, enabled, with an empty account so it inherits the credential the machine
+already has. It is rewritten once, on load.
+
+Nothing here can lose data the way phase 1 could. The old file is rewritten only once the new
+shape exists, through a temporary file, so a crash leaves a version 1 file that the build which
+wrote it still reads. The risk is silence rather than loss: the properties that moved are simply
+gone from `AppSettings`, so a version 1 file read as the current shape does not fail — it loads
+with the monitored folder, the destination and the sign-in missing, and the first anyone knows of
+it is that an instrument stopped transferring. The tests therefore assert the upgraded settings
+property by property, from a settings file written out as text, rather than round-tripping a
+record against itself.
+
+Two things this settled that the plan did not say:
+
+- **An absent property and a `null` one are different answers.** Absent means the file predates
+  the setting, so the defaults apply; `null` is a mistake in a hand-edited file that the settings
+  screen is meant to report. Deserializing gives `null` for both, so presence is read from the
+  text instead. Conflating them would have refilled an emptied never-transfer list with the
+  defaults and re-armed collecting the `.skyd` caches somebody had deliberately allowed.
+- **A file written by a newer build is left alone.** This build cannot represent what it does not
+  know about, so stamping its own `$version` onto the part it understood would hand the newer
+  build back a file quietly missing settings. A rollback now reads what it can and writes nothing.
+
+**Which settings went where.** The division is by what a value describes. A watched folder, a
+destination and a sign-in describe one pairing. The concurrency limit, the yield to instrument
+software, the SHA-256 record, the extra root certificate, the recent-destinations list and the
+tray behavior describe this computer — a TLS-inspecting proxy intercepts everything leaving the
+machine, and the disk is as slow for one configuration as for five — so those stayed on
+`AppSettings`.
+
+`TrustedRootCertificatePath` is the one this page implied differently. Its control sits on the
+per-configuration Remote Settings tab today, so phase 5 has to move it when that tab splits up.
+
+**What still assumes a single configuration.** Named rather than hidden, because removing them is
+the work of phase 4: `TransferService.ActiveConfiguration`, `MainViewModel.ActiveConfiguration`,
+and the configuration index `SettingsViewModel` takes as a constructor parameter. Each takes the
+first enabled configuration and says in its remarks which phase replaces it.
 
 ### Phase 4 — `TransferService` runs a set
 

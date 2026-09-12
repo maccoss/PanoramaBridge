@@ -1,8 +1,7 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Core.Transfer;
+using PanoramaBridge.Tests.TestDoubles;
 
 namespace PanoramaBridge.Tests.Storage;
 
@@ -20,24 +19,23 @@ public sealed class UpgradeFromWithdrawnFeaturesTests : IDisposable
     private readonly string _dir = Directory.CreateTempSubdirectory("pb-upgrade-").FullName;
 
     [Fact]
-    public void A_settings_file_naming_the_withdrawn_rename_policy_still_loads()
+    public async Task A_settings_file_naming_the_withdrawn_rename_policy_still_loads()
     {
         // Settings are JSON with a string enum converter, so a file saying "Rename" throws while
         // parsing -- and the store's answer to an unreadable file is to move it aside and start
         // from defaults. Deleting the member would have cost anyone who chose it their server,
         // their monitored folder and every other setting, on the first launch after updating.
-        var json = """{"ConflictPolicy":"Rename","LocalDirectory":"/lab/instrument-data"}""";
+        var path = Path.Combine(_dir, "settings.json");
 
-        var options = new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true,
-            Converters = { new JsonStringEnumConverter() },
-        };
+        await File.WriteAllTextAsync(
+            path,
+            """{"ConflictPolicy":"Rename","LocalDirectory":"/lab/instrument-data"}""");
 
-        var settings = JsonSerializer.Deserialize<AppSettings>(json, options);
+        var settings = await new JsonSettingsStore(path).LoadAsync();
 
-        settings.ShouldNotBeNull();
-        settings!.LocalDirectory.ShouldBe("/lab/instrument-data", "the rest of the file must survive");
+        settings.OnlyConfiguration().ConflictPolicy.ShouldBe(ConflictPolicy.Ask);
+        settings.OnlyConfiguration().LocalDirectory.ShouldBe(
+            "/lab/instrument-data", "the rest of the file must survive");
     }
 
     [Theory]

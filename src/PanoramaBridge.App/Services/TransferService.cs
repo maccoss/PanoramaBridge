@@ -127,21 +127,23 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             return new ConnectionCheck(false, problems[0]);
         }
 
+        var configuration = ActiveConfiguration(settings);
+
         try
         {
-            var credential = ResolveCredential(settings, secret);
+            var credential = ResolveCredential(configuration, secret);
             if (credential is null)
             {
                 return new ConnectionCheck(
                     false,
-                    settings.AuthMode == AuthMode.ApiKey
+                    configuration.AuthMode == AuthMode.ApiKey
                         ? "Enter an API key, or generate one from Panorama's External Tool Access page."
                         : "Enter your Panorama password.");
             }
 
-            Connect(settings, credential);
+            Connect(settings, configuration, credential);
 
-            var destination = RemotePath.Parse(settings.RemotePath);
+            var destination = RemotePath.Parse(configuration.RemotePath);
             var capabilities = await _client!
                 .GetCapabilitiesAsync(destination, cancellationToken)
                 .ConfigureAwait(false);
@@ -157,15 +159,15 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             var writable = folder?.Permissions.CanUpload ?? capabilities.Allows("PUT");
 
             var detail = folder is null
-                ? $"{settings.RemotePath} does not exist yet; it will be created on the first upload."
+                ? $"{configuration.RemotePath} does not exist yet; it will be created on the first upload."
                 : writable
-                    ? $"You can upload to {settings.RemotePath}."
-                    : $"{settings.RemotePath} is read-only for this account. A Panorama "
+                    ? $"You can upload to {configuration.RemotePath}."
+                    : $"{configuration.RemotePath} is read-only for this account. A Panorama "
                       + "administrator needs to grant write access.";
 
             return new ConnectionCheck(
                 true,
-                $"Connected to {capabilities.ServerName ?? settings.ServerUrl}.",
+                $"Connected to {capabilities.ServerName ?? configuration.ServerUrl}.",
                 detail,
                 writable);
         }
@@ -177,7 +179,8 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Connection test failed.");
-            return new ConnectionCheck(false, $"Could not reach {settings.ServerUrl}: {ex.Message}");
+            return new ConnectionCheck(
+                false, $"Could not reach {configuration.ServerUrl}: {ex.Message}");
         }
     }
 
@@ -225,17 +228,19 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
                 "The folder is being monitored; ask for a check rather than starting a second scan.");
         }
 
-        var credential = ResolveCredential(settings, secret)
+        var configuration = ActiveConfiguration(settings);
+
+        var credential = ResolveCredential(configuration, secret)
             ?? throw new InvalidOperationException("No credential is available for this server.");
 
-        Connect(settings, credential);
+        Connect(settings, configuration, credential);
 
         _run = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         RunStateChanged?.Invoke();
 
         try
         {
-            await using var coordinator = NewCoordinator(settings);
+            await using var coordinator = NewCoordinator(settings, configuration);
 
             await coordinator.RecoverInterruptedAsync(_run.Token).ConfigureAwait(false);
 
@@ -243,7 +248,7 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             // while the rest of the folder is still being walked.
             var transfers = coordinator.RunAsync(_run.Token);
 
-            var monitorOptions = MonitorOptions.FromSettings(settings);
+            var monitorOptions = MonitorOptions.FromConfiguration(configuration);
 
             var scanner = new ReconciliationScanner(
                 _store,
@@ -353,13 +358,15 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
             throw new InvalidOperationException(problems[0]);
         }
 
-        var credential = ResolveCredential(settings, secret)
+        var configuration = ActiveConfiguration(settings);
+
+        var credential = ResolveCredential(configuration, secret)
             ?? throw new InvalidOperationException("No credential is available for this server.");
 
-        Connect(settings, credential);
+        Connect(settings, configuration, credential);
 
         var monitoring = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var engine = NewCoordinator(settings);
+        var engine = NewCoordinator(settings, configuration);
 
         try
         {
@@ -377,7 +384,7 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
 
         var monitor = new ContinuousMonitor(
             _store,
-            MonitorOptions.FromSettings(settings),
+            MonitorOptions.FromConfiguration(configuration),
             _loggerFactory);
 
         monitor.Swept += OnSwept;
@@ -392,9 +399,9 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
 
         _log.LogInformation(
             "Monitoring {Root} into {Destination}, re-checking every {Minutes} minute(s).",
-            settings.LocalDirectory,
-            settings.RemotePath,
-            settings.ReconcileMinutes);
+            configuration.LocalDirectory,
+            configuration.RemotePath,
+            configuration.ReconcileMinutes);
 
         RunStateChanged?.Invoke();
     }
@@ -561,19 +568,45 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         Waiting?.Invoke(report);
     }
 
-    private TransferCoordinator NewCoordinator(AppSettings settings)
+    /// <summary>
+    /// The configuration this service works on.
+    /// </summary>
+    /// <remarks>
+    /// The first enabled one, because the service still holds a single connection, engine and
+    /// monitor. Phase 4 replaces it with one runner per enabled configuration; until then this is
+    /// the single place that says which one the rest of the service means, rather than each
+    /// method reaching for the first configuration on its own.
+    /// <para>
+    /// Falls back to the first configuration whatever its state, and then to an empty one, so
+    /// that a caller reaches <c>Validate</c>'s sentence about what to fix rather than an index
+    /// out of range.
+    /// </para>
+    /// </remarks>
+    private static MonitoringConfiguration ActiveConfiguration(AppSettings settings) =>
+        settings.EnabledConfigurations.FirstOrDefault()
+        ?? settings.Configurations.FirstOrDefault()
+        ?? new MonitoringConfiguration();
+
+    private TransferCoordinator NewCoordinator(
+        AppSettings settings,
+        MonitoringConfiguration configuration)
     {
         var coordinator = new TransferCoordinator(
             _client!,
             _store,
             new TransferEngineOptions
             {
-                LocalBaseDirectory = settings.LocalDirectory,
-                DestinationRoot = RemotePath.Parse(settings.RemotePath),
+                LocalBaseDirectory = configuration.LocalDirectory,
+                DestinationRoot = RemotePath.Parse(configuration.RemotePath),
+
+                // From the application rather than the configuration: the limit describes the
+                // disk and the link, and phase 4 has to share it across configurations rather
+                // than hand each one its own.
                 MaxConcurrentTransfers = settings.MaxConcurrentTransfers,
-                ConflictPolicy = settings.ConflictPolicy,
-                VerifyUploads = settings.VerifyUploads,
-                WriteChecksumSidecars = settings.WriteChecksumSidecars,
+
+                ConflictPolicy = configuration.ConflictPolicy,
+                VerifyUploads = configuration.VerifyUploads,
+                WriteChecksumSidecars = configuration.WriteChecksumSidecars,
             },
             log: _loggerFactory.CreateLogger<TransferCoordinator>());
 
@@ -581,23 +614,26 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         return coordinator;
     }
 
-    private PanoramaCredential? ResolveCredential(AppSettings settings, string? secret)
+    private PanoramaCredential? ResolveCredential(
+        MonitoringConfiguration configuration,
+        string? secret)
     {
         if (!string.IsNullOrWhiteSpace(secret))
         {
-            return settings.AuthMode == AuthMode.ApiKey
+            return configuration.AuthMode == AuthMode.ApiKey
                 ? PanoramaCredential.ApiKey(secret)
-                : PanoramaCredential.UserNameAndPassword(settings.UserName, secret);
+                : PanoramaCredential.UserNameAndPassword(configuration.UserName, secret);
         }
 
-        // Nothing typed this session, so fall back to what was saved.
-        var stored = _credentials.Read(settings.ServerUrl);
+        // Nothing typed this session, so fall back to what was saved. Read under this
+        // configuration's account, so two of them on one server do not read each other's.
+        var stored = _credentials.Read(configuration.ServerUrl, configuration.Account);
         if (stored is null)
         {
             return null;
         }
 
-        return settings.AuthMode == AuthMode.ApiKey
+        return configuration.AuthMode == AuthMode.ApiKey
             ? PanoramaCredential.ApiKey(stored.Value.Secret)
             : PanoramaCredential.UserNameAndPassword(stored.Value.UserName, stored.Value.Secret);
     }
@@ -610,9 +646,13 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
     /// it is deliberately not rebuilt per operation. The identity string is compared rather than
     /// the credential itself so a secret is never held longer than needed.
     /// </remarks>
-    private void Connect(AppSettings settings, PanoramaCredential credential)
+    private void Connect(
+        AppSettings settings,
+        MonitoringConfiguration configuration,
+        PanoramaCredential credential)
     {
-        var identity = $"{settings.ServerUrl}|{credential.UserName}|{credential.Secret.GetHashCode()}";
+        var identity =
+            $"{configuration.ServerUrl}|{credential.UserName}|{credential.Secret.GetHashCode()}";
 
         if (_client is not null && _connectedTo == identity)
         {
@@ -623,7 +663,7 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
 
         var options = new WebDavClientOptions
         {
-            BaseAddress = new Uri(settings.ServerUrl, UriKind.Absolute),
+            BaseAddress = new Uri(configuration.ServerUrl, UriKind.Absolute),
             Credential = credential,
             MaxConcurrentTransfers = settings.MaxConcurrentTransfers,
             TrustedRootCertificatePath = settings.TrustedRootCertificatePath,
@@ -635,7 +675,7 @@ public sealed class TransferService : IAsyncDisposable, IDisposable
         _connectedTo = identity;
 
         _log.LogInformation(
-            "Using {Server} as {Credential}.", settings.ServerUrl, credential.ToString());
+            "Using {Server} as {Credential}.", configuration.ServerUrl, credential.ToString());
     }
 
     /// <summary>The connected client, for the remote folder browser.</summary>

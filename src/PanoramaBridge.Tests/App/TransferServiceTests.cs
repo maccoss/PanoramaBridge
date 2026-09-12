@@ -4,6 +4,7 @@ using PanoramaBridge.Core.Infrastructure;
 using PanoramaBridge.Core.Security;
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Core.Transfer;
+using PanoramaBridge.Tests.TestDoubles;
 
 namespace PanoramaBridge.Tests.App;
 
@@ -42,7 +43,9 @@ public sealed class TransferServiceTests : IAsyncLifetime
         new ResourceGovernor(NullLogger<ResourceGovernor>.Instance),
         NullLoggerFactory.Instance);
 
-    private AppSettings Settings() => new()
+    private AppSettings Settings() => new AppSettings().Holding(Configuration());
+
+    private MonitoringConfiguration Configuration() => new()
     {
         LocalDirectory = _watched,
         RemotePath = "/_webdav/MacCoss/maccoss/@files/uploads/",
@@ -252,7 +255,7 @@ public sealed class TransferServiceTests : IAsyncLifetime
 
         var refusal = await Should.ThrowAsync<InvalidOperationException>(
             () => service.StartMonitoringAsync(
-                Settings() with { LocalDirectory = string.Empty },
+                Settings().Holding(Configuration() with { LocalDirectory = string.Empty }),
                 "an-api-key"));
 
         refusal.Message.ShouldContain("Local Monitoring");
@@ -295,7 +298,7 @@ public sealed class TransferServiceTests : IAsyncLifetime
         await using var service = NewService();
 
         var check = await service.TestConnectionAsync(
-            Settings() with { LocalDirectory = string.Empty },
+            Settings().Holding(Configuration() with { LocalDirectory = string.Empty }),
             "an-api-key");
 
         check.Succeeded.ShouldBeFalse();

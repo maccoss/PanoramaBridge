@@ -1,6 +1,7 @@
 using PanoramaBridge.App.ViewModels;
 using PanoramaBridge.Core.Storage;
 using PanoramaBridge.Core.Transfer;
+using PanoramaBridge.Tests.TestDoubles;
 
 namespace PanoramaBridge.Tests.App;
 
@@ -34,8 +35,20 @@ public sealed class SettingsViewModelTests
     }
 
     /// <summary>Settings with every field moved off its default, so a dropped one shows up.</summary>
-    private static AppSettings Distinctive() => new()
+    private static AppSettings Distinctive() => new AppSettings
     {
+        MaxConcurrentTransfers = 6,
+        TrustedRootCertificatePath = @"C:\certs\extra.cer",
+        VerboseLogging = true,
+        MinimizeToTray = false,
+    }.Holding(DistinctiveConfiguration());
+
+    /// <inheritdoc cref="Distinctive" />
+    private static MonitoringConfiguration DistinctiveConfiguration() => new()
+    {
+        Name = "QE",
+        Account = "config-qe",
+        CreatedUtc = new DateTimeOffset(2026, 2, 3, 4, 5, 6, TimeSpan.Zero),
         LocalDirectory = @"\\fileserver\instruments\QE",
         IncludeSubdirectories = false,
         Extensions = [".wiff", ".d"],
@@ -44,7 +57,6 @@ public sealed class SettingsViewModelTests
         ReconcileMinutes = 7,
         LockedFileRetryIntervalSeconds = 11,
         LockedFileMaxRetries = 3,
-        MaxConcurrentTransfers = 6,
         ConflictPolicy = ConflictPolicy.Overwrite,
         VerifyUploads = false,
         WriteChecksumSidecars = false,
@@ -53,9 +65,6 @@ public sealed class SettingsViewModelTests
         UserName = "someone",
         SaveCredentials = false,
         RemotePath = "/_webdav/Somewhere/@files/",
-        TrustedRootCertificatePath = @"C:\certs\extra.cer",
-        VerboseLogging = true,
-        MinimizeToTray = false,
     };
 
     [Fact]
@@ -88,7 +97,8 @@ public sealed class SettingsViewModelTests
     {
         var view = new SettingsViewModel(
             new InMemorySettingsStore(),
-            Distinctive() with { ConflictPolicy = ConflictPolicy.Rename });
+            Distinctive().Holding(
+                DistinctiveConfiguration() with { ConflictPolicy = ConflictPolicy.Rename }));
 
         view.ConflictPolicy.ShouldBe(ConflictPolicy.Ask);
         view.HasUnsavedChanges.ShouldBeFalse();
@@ -139,8 +149,9 @@ public sealed class SettingsViewModelTests
         view.LocalDirectory = mapped!;
         var saved = await view.SaveAsync();
 
-        saved.LocalDirectory.ShouldStartWith(@"\\");
-        view.LocalDirectory.ShouldBe(saved.LocalDirectory, "and the box shows what was stored");
+        saved.OnlyConfiguration().LocalDirectory.ShouldStartWith(@"\\");
+        view.LocalDirectory.ShouldBe(
+            saved.OnlyConfiguration().LocalDirectory, "and the box shows what was stored");
     }
 
     [Fact]
@@ -151,7 +162,7 @@ public sealed class SettingsViewModelTests
         view.ExtensionsText.ShouldBe(".wiff, .d");
 
         view.ExtensionsText = "RAW; mzML  .d";
-        view.ToSettings().Extensions.ShouldBe([".raw", ".mzml", ".d"]);
+        view.ToSettings().OnlyConfiguration().Extensions.ShouldBe([".raw", ".mzml", ".d"]);
     }
 
     [Fact]
