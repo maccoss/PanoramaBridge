@@ -17,6 +17,11 @@ time and update the heading; see `README.md` in this directory for the process.
 - On the Configurations tab, turning a configuration on or off when the settings file could not be
   written left the tick showing a change that had not been saved. The tick now goes back and the
   reason is shown.
+- **Adding a configuration stopped monitoring starting at all.** A new configuration was switched
+  on, and it has no folder and no destination, so the settings as a whole were invalid and Start
+  monitoring refused on the first problem it found -- including for the configurations that were
+  already working. A configuration is now added switched off, and the list shows it as "Not set
+  up" until you have filled it in and ticked it.
 
 ## Performance
 

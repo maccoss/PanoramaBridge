@@ -97,12 +97,20 @@ public sealed partial class ConfigurationRowViewModel : ObservableObject
 
     /// <summary>What the status column says.</summary>
     /// <remarks>
+    /// <para>
     /// Whether it would run, not whether it is running. The Transfer Status tab is where what is
     /// happening now belongs, and saying "Running" here for a configuration whose folder had just
     /// been unplugged would be the kind of tick that means less than it appears to.
+    /// </para>
+    /// <para>
+    /// A configuration that is off and incomplete is told apart from one that is off on purpose.
+    /// Both used to read "Off", which for a configuration somebody had just added and not yet
+    /// filled in says it was a choice rather than something waiting on them. An instrument away
+    /// for service still reads as off, because nothing about it needs doing.
+    /// </para>
     /// </remarks>
     public string Status => !Enabled
-        ? "Off"
+        ? Problems.Count > 0 ? "Not set up" : "Off"
         : Problems.Count > 0 ? "Needs attention"
         : Checked ? "Ready" : "Checking...";
 
@@ -257,18 +265,32 @@ public sealed partial class ConfigurationsViewModel : ObservableObject
         }
     }
 
-    /// <summary>Adds an empty configuration and selects it for editing.</summary>
+    /// <summary>Adds an empty configuration, switched off, and selects it for editing.</summary>
     /// <remarks>
+    /// <para>
+    /// Off, because it has no folder and no destination and so there is nothing it could do. That
+    /// is not merely tidiness: an enabled configuration with no folder makes the whole settings
+    /// record invalid, and Start monitoring refuses on the first problem it finds. Adding a second
+    /// configuration to set up later therefore stopped the first one -- which was working --
+    /// from transferring at all.
+    /// </para>
+    /// <para>
+    /// Nothing turns it on by itself once the boxes are filled in. A configuration somebody is
+    /// still working on, or has deliberately left off, must stay off; the list says "Not set up"
+    /// until it is usable, so what is waiting on whom is visible without guessing.
+    /// </para>
+    /// <para>
     /// Stamped with the time it was created, unlike the one carried over from a settings file
     /// written before configurations existed -- that file never recorded when monitoring was set
     /// up, and inventing a date for it would be worse than leaving the column blank.
+    /// </para>
     /// </remarks>
     [RelayCommand]
     private async Task AddAsync()
     {
         var configurations = new List<MonitoringConfiguration>(_settings.Configurations)
         {
-            new() { CreatedUtc = DateTimeOffset.UtcNow },
+            new() { Enabled = false, CreatedUtc = DateTimeOffset.UtcNow },
         };
 
         await _settings

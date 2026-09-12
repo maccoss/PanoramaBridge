@@ -80,6 +80,51 @@ public sealed class ConfigurationsViewModelTests
     }
 
     [Fact]
+    public async Task A_new_configuration_is_off_until_somebody_fills_it_in()
+    {
+        // It has no folder and no destination, so there is nothing it could do. Added switched
+        // on, it is not merely useless: it is enabled and invalid, which makes the whole settings
+        // record invalid and stops monitoring starting for the configurations that were working.
+        var (settings, list) = New(Watching("Lumos", Path.GetTempPath()));
+
+        await list.AddCommand.ExecuteAsync(null);
+
+        settings.Configurations[1].Enabled.ShouldBeFalse();
+        settings.ToSettings().Validate().ShouldBeEmpty(
+            "adding one to set up later must not stop the others transferring");
+    }
+
+    [Fact]
+    public async Task A_new_configuration_says_it_needs_setting_up_rather_than_just_off()
+    {
+        // Off on its own reads as a deliberate choice, which for a configuration nobody has
+        // filled in yet is the wrong thing to say: the list is where somebody notices it is
+        // waiting on them.
+        var (_, list) = New(Watching("Lumos", Path.GetTempPath()));
+
+        await list.AddCommand.ExecuteAsync(null);
+        await list.StatusesChecked;
+
+        list.Rows[1].Status.ShouldBe("Not set up");
+        list.Rows[1].StatusDetail.ShouldNotBeNullOrWhiteSpace();
+
+        list.Rows[0].Status.ShouldBe("Ready", "and the one beside it is unaffected");
+    }
+
+    [Fact]
+    public async Task A_configuration_switched_off_on_purpose_still_reads_as_off()
+    {
+        // The distinction only helps if a complete configuration somebody turned off -- an
+        // instrument away for service -- still says so rather than claiming to need setting up.
+        var (_, list) = New(
+            Watching("Away for service", Path.GetTempPath()) with { Enabled = false });
+
+        await list.StatusesChecked;
+
+        list.Rows[0].Status.ShouldBe("Off");
+    }
+
+    [Fact]
     public async Task A_new_configuration_records_when_it_was_created()
     {
         var (settings, list) = New();
@@ -347,6 +392,7 @@ public sealed class ConfigurationsViewModelTests
 
         await list.AddCommand.ExecuteAsync(null);
 
-        list.Summary.ShouldBe("3 configurations, 2 on.");
+        // Still one on: a configuration added is one nobody has filled in yet.
+        list.Summary.ShouldBe("3 configurations, 1 on.");
     }
 }
